@@ -31,6 +31,8 @@ public:
     // שאילתא לבדיקה האם כלי ספציפי נמצא כרגע בתנועה
     bool isPieceMoving(const PiecePtr& piece) const noexcept;
 
+    std::optional<Motion> getMotionForPiece(const PiecePtr& piece) const noexcept;
+
 private:
     std::shared_ptr<IBoard> board_;
     std::vector<Motion> activeMotions_; // שינוי לוקטור לתמיכה בתנועה סימולטנית

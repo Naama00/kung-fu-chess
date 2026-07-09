@@ -1,7 +1,6 @@
 #include <catch2/catch_test_macros.hpp>
 #include "common/Position.hpp"
-#include "pieces/King.hpp"
-#include "pieces/Rook.hpp"
+#include "pieces/Piece.hpp"
 #include "board/Board.hpp"
 
 TEST_CASE("Position Model Behavior", "[model]") {
@@ -21,7 +20,7 @@ TEST_CASE("Position Model Behavior", "[model]") {
 }
 
 TEST_CASE("Piece Model Behavior", "[model]") {
-    auto piece = std::make_shared<kungfu::King>(kungfu::PlayerColor::White, kungfu::Position(0, 0));
+    auto piece = std::make_shared<kungfu::Piece>(kungfu::PieceType::King, kungfu::PlayerColor::White, kungfu::Position(0, 0));
 
     SECTION("Attributes and initial state") {
         REQUIRE(piece->type() == kungfu::PieceType::King);
@@ -41,8 +40,8 @@ TEST_CASE("Piece Model Behavior", "[model]") {
 
 TEST_CASE("Board Management and Mutators", "[model]") {
     kungfu::Board board(8, 8);
-    auto whiteKing = std::make_shared<kungfu::King>(kungfu::PlayerColor::White, kungfu::Position(0, 0));
-    auto blackKing = std::make_shared<kungfu::King>(kungfu::PlayerColor::Black, kungfu::Position(1, 1));
+    auto whiteKing = std::make_shared<kungfu::Piece>(kungfu::PieceType::King, kungfu::PlayerColor::White, kungfu::Position(0, 0));
+    auto blackKing = std::make_shared<kungfu::Piece>(kungfu::PieceType::King, kungfu::PlayerColor::Black, kungfu::Position(1, 1));
 
     SECTION("Placing and retrieving pieces") {
         REQUIRE(board.placePiece(whiteKing, kungfu::Position(0, 0)));

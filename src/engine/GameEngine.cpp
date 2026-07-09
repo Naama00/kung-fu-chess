@@ -1,47 +1,53 @@
 #include "engine/GameEngine.hpp"
-#include <cmath>
+#include "engine/GameSnapshot.hpp"
 #include <algorithm>
+#include <cmath>
 
 namespace kungfu {
 
 GameEngine::GameEngine(std::shared_ptr<IBoard> board, std::shared_ptr<RuleEngine> ruleEngine) noexcept
-    : board_(std::move(board)), ruleEngine_(std::move(ruleEngine)), arbiter_(board_) {}
+    : board_(std::move(board))
+    , ruleEngine_(std::move(ruleEngine))
+    , arbiter_(board_) {}
 
 MoveResult GameEngine::requestMove(const Position& from, const Position& to) {
     if (gameOver_) {
         return {false, "game_over"};
     }
 
-    auto pieceOpt = board_->pieceAt(from);
-    if (!pieceOpt.has_value() || !pieceOpt.value()) {
-        return {false, "empty_source"};
+    if (arbiter_.hasActiveMotion()) {
+        return {false, "motion_in_progress"};
     }
 
-    auto piece = pieceOpt.value();
-
-    // 1. מניעת תנועה של כלי שכבר נמצא כרגע בתנועה פעילה
-    if (arbiter_.isPieceMoving(piece)) {
-        return {false, "piece_already_moving"};
+    if (!board_ || !ruleEngine_) {
+        return {false, "internal_error"};
     }
 
-    // 2. בדיקה האם הכלי נמצא כרגע בזמן צינון (Cooldown)
-    if (arbiter_.isOnCooldown(piece, currentTimeMs_)) {
-        return {false, "piece_on_cooldown"};
-    }
-
-    // 3. בדיקת חוקיות מול RuleEngine
     auto validation = ruleEngine_->validateMove(from, to);
     if (!validation.isValid) {
         return {false, validation.reason};
     }
 
-    // חישוב מרחק תנועה דטרמיניסטי (Chebyshev Distance)
-    int rowDelta = std::abs(to.row() - from.row());
-    int colDelta = std::abs(to.col() - from.col());
-    int distance = std::max(rowDelta, colDelta);
+    auto sourcePieceOpt = board_->pieceAt(from);
+    if (!sourcePieceOpt.has_value() || !sourcePieceOpt.value()) {
+        return {false, "empty_source"};
+    }
+
+    auto piece = sourcePieceOpt.value();
+
+    if (arbiter_.isPieceMoving(piece)) {
+        return {false, "motion_in_progress"};
+    }
+
+    if (arbiter_.isOnCooldown(piece, currentTimeMs_)) {
+        return {false, "piece_on_cooldown"};
+    }
+
+    int dr = std::abs(to.row() - from.row());
+    int dc = std::abs(to.col() - from.col());
+    int distance = std::max(dr, dc);
     int durationMs = distance * 1000;
 
-    // תחילת התנועה
     piece->setState(PieceState::Moving);
     arbiter_.startMotion(piece, from, to, currentTimeMs_, durationMs);
 
@@ -49,8 +55,11 @@ MoveResult GameEngine::requestMove(const Position& from, const Position& to) {
 }
 
 bool GameEngine::hasPieceAt(const Position& pos) const {
-    if (!board_) return false;
-    return board_->pieceAt(pos).has_value();
+    if (!board_) {
+        return false;
+    }
+    auto pieceOpt = board_->pieceAt(pos);
+    return pieceOpt.has_value() && pieceOpt.value() != nullptr;
 }
 
 int GameEngine::getBoardRows() const {
@@ -62,18 +71,72 @@ int GameEngine::getBoardCols() const {
 }
 
 void GameEngine::wait(int ms) noexcept {
-    if (gameOver_ || ms <= 0) {
+    if (ms <= 0 || !board_) {
         return;
     }
 
-    // קידום הזמן וקבלת אירועי הגעה מהבורר
-    auto arrivalEvents = arbiter_.advanceTime(ms, currentTimeMs_);
-    
-    for (const auto& event : arrivalEvents) {
+    auto events = arbiter_.advanceTime(ms, currentTimeMs_);
+    for (const auto& event : events) {
         if (event.capturedKing) {
             gameOver_ = true;
         }
     }
+}
+
+GameSnapshot GameEngine::getSnapshot(std::optional<Position> selectedCell) const noexcept {
+    GameSnapshot snap;
+    snap.boardCols = getBoardCols();
+    snap.boardRows = getBoardRows();
+    snap.isGameOver = gameOver_;
+    snap.selectedCell = selectedCell;
+
+    if (!board_) {
+        return snap;
+    }
+
+    for (const auto& piece : board_->pieces()) {
+        if (!piece || piece->state() == PieceState::Captured) {
+            continue;
+        }
+
+        PieceSnapshot pSnap;
+        pSnap.type = piece->type();
+        pSnap.color = piece->color();
+        pSnap.logicalPosition = piece->position();
+        pSnap.state = piece->state();
+
+        float currentX = piece->position().col() * 100.0f;
+        float currentY = piece->position().row() * 100.0f;
+
+        pSnap.pixelX = currentX;
+        pSnap.pixelY = currentY;
+
+        if (piece->state() == PieceState::Moving) {
+            auto motionOpt = arbiter_.getMotionForPiece(piece);
+            if (motionOpt.has_value()) {
+                const auto& motion = motionOpt.value();
+                float startX = motion.from().col() * 100.0f;
+                float startY = motion.from().row() * 100.0f;
+                float endX = motion.to().col() * 100.0f;
+                float endY = motion.to().row() * 100.0f;
+
+                int duration = motion.arrivalTime() - motion.startTime();
+                if (duration > 0) {
+                    int elapsed = currentTimeMs_ - motion.startTime();
+                    float t = static_cast<float>(elapsed) / static_cast<float>(duration);
+
+                    t = std::max(0.0f, std::min(t, 1.0f));
+
+                    pSnap.pixelX = startX + t * (endX - startX);
+                    pSnap.pixelY = startY + t * (endY - startY);
+                }
+            }
+        }
+
+        snap.pieces.push_back(pSnap);
+    }
+
+    return snap;
 }
 
 }  // namespace kungfu

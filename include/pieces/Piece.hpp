@@ -19,7 +19,7 @@ public:
     void setPosition(const Position& position) { position_ = position; }
     void setState(PieceState state) { state_ = state; }
 
-    virtual bool isMovable() const = 0;
+    bool isMovable() const { return true; }
 
 protected:
     PieceType type_;

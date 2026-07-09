@@ -1,5 +1,6 @@
 #include "rules/RuleEngine.hpp"
 #include "rules/PieceRules.hpp"
+#include <algorithm>
 
 namespace kungfu {
 

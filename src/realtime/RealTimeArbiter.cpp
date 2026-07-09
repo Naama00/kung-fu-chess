@@ -81,4 +81,16 @@ bool RealTimeArbiter::isPieceMoving(const PiecePtr& piece) const noexcept {
     return false;
 }
 
+std::optional<Motion> RealTimeArbiter::getMotionForPiece(const PiecePtr& piece) const noexcept {
+    if (!piece) {
+        return std::nullopt;
+    }
+    for (const auto& motion : activeMotions_) {
+        if (motion.piece() == piece) {
+            return motion;
+        }
+    }
+    return std::nullopt;
+}
+
 }  // namespace kungfu

@@ -8,12 +8,6 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 add_library(kungfu_engine
     src/common/Position.cpp
     src/pieces/Piece.cpp
-    src/pieces/King.cpp
-    src/pieces/Queen.cpp
-    src/pieces/Rook.cpp
-    src/pieces/Bishop.cpp
-    src/pieces/Knight.cpp
-    src/pieces/Pawn.cpp
     src/board/Board.cpp
     src/io/BoardParser.cpp
     src/io/BoardPrinter.cpp
@@ -33,6 +27,7 @@ add_executable(kungfu_tests
     tests/unit/RuleEngineTests.cpp
     tests/unit/GameEngineAndRealTimeTests.cpp
     tests/integration/SimpleFlowTests.cpp
+    tests/unit/BoardIoTests.cpp
 )
 target_link_libraries(kungfu_tests PRIVATE kungfu_engine)
 target_include_directories(kungfu_tests PRIVATE include)

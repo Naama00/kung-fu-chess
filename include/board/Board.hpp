@@ -13,16 +13,15 @@ public:
     Board();
     Board(int rows, int cols); // בנאי חדש לתמיכה בממדים דינמיים
 
-    int rows() const { return rows_; }
-    int cols() const { return cols_; }
+    int rows() const override { return rows_; }
+    int cols() const override { return cols_; }
+    std::vector<PiecePtr> pieces() const override;
 
     std::optional<PiecePtr> pieceAt(const Position& position) const override;
     bool placePiece(const PiecePtr& piece, const Position& position) override;
     bool removePiece(const Position& position) override;
     bool movePiece(const Position& from, const Position& to) override;
     bool replacePiece(const Position& position, const PiecePtr& newPiece) override;
-
-    std::vector<PiecePtr> pieces() const;
 
 private:
     std::vector<PiecePtr> pieces_;

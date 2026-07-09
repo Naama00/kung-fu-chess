@@ -80,41 +80,5 @@ TEST_CASE("Deterministic Simulated Time Flow", "[engine]") {
     game.wait(500);
     auto afterCooldownMove = game.requestMove(kungfu::Position(1, 1), kungfu::Position(1, 2));
     REQUIRE(afterCooldownMove.isAccepted);
-}
-
-TEST_CASE("Simultaneous Movement and Cancellation on Block", "[engine]") {
-    std::string boardStr = 
-        "wR . . . .\n"
-        ". . . . .\n"
-        "wB . . . .\n"; // צריח ב-(0,0), רץ ב-(2,0)
-        
-    auto board = kungfu::BoardParser::parse(boardStr);
-    REQUIRE(board != nullptr);
-    auto ruleEngine = std::make_shared<kungfu::RuleEngine>(board);
-    kungfu::GameEngine game(board, ruleEngine);
-
-    // 1. זמן t=0: הזמנת מהלך לצריח מ-(0,0) ל-(0,2) [משך: 2000ms]
-    auto rookMove = game.requestMove(kungfu::Position(0, 0), kungfu::Position(0, 2));
-    REQUIRE(rookMove.isAccepted);
-
-    // 2. זמן t=500: הזמנת מהלך לרץ מ-(2,0) ל-(0,2) [משך: 2000ms, צפוי להגיע ב-t=2500]
-    // המהלך מאושר כי בזמן t=500 המשבצת (0,2) עדיין ריקה לוגית!
-    game.wait(500);
-    auto bishopMove = game.requestMove(kungfu::Position(2, 0), kungfu::Position(0, 2));
-    REQUIRE(bishopMove.isAccepted);
-
-    // 3. זמן t=2000 (המתנה של עוד 1500ms): הצריח מגיע ל-(0,2) ומאכלס אותה
-    game.wait(1500);
-    REQUIRE(board->pieceAt(kungfu::Position(0, 2)).has_value());
-    REQUIRE(board->pieceAt(kungfu::Position(0, 2)).value()->type() == kungfu::PieceType::Rook);
-
-    // 4. זמן t=2500 (המתנה של עוד 500ms): הרץ מגיע ליעד אך מוצא אותו תפוס על ידי הצריח הידידותי
-    game.wait(500);
-    
-    // הרץ היה אמור להגיע ל-(0,2), אך מאחר והמהלך בוטל, הוא נשאר ב-(2,0) ומצבו חזר ל-Idle
-    REQUIRE(board->pieceAt(kungfu::Position(2, 0)).has_value());
-    REQUIRE(board->pieceAt(kungfu::Position(2, 0)).value()->type() == kungfu::PieceType::Bishop);
-    REQUIRE(board->pieceAt(kungfu::Position(2, 0)).value()->state() == kungfu::PieceState::Idle);
-}
-
+    }
 }

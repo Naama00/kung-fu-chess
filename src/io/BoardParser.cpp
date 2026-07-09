@@ -1,10 +1,5 @@
 #include "io/BoardParser.hpp"
-#include "pieces/King.hpp"
-#include "pieces/Queen.hpp"
-#include "pieces/Rook.hpp"
-#include "pieces/Bishop.hpp"
-#include "pieces/Knight.hpp"
-#include "pieces/Pawn.hpp"
+#include "pieces/Piece.hpp"
 #include <sstream>
 #include <algorithm>
 #include <cctype>
@@ -63,12 +58,12 @@ std::shared_ptr<Piece> BoardParser::createPiece(const std::string& token, const 
     char type = token[1];
     
     switch (type) {
-        case 'K': return std::make_shared<King>(color, pos);
-        case 'Q': return std::make_shared<Queen>(color, pos);
-        case 'R': return std::make_shared<Rook>(color, pos);
-        case 'B': return std::make_shared<Bishop>(color, pos);
-        case 'N': return std::make_shared<Knight>(color, pos);
-        case 'P': return std::make_shared<Pawn>(color, pos);
+        case 'K': return std::make_shared<Piece>(PieceType::King,   color, pos);
+        case 'Q': return std::make_shared<Piece>(PieceType::Queen,  color, pos);
+        case 'R': return std::make_shared<Piece>(PieceType::Rook,   color, pos);
+        case 'B': return std::make_shared<Piece>(PieceType::Bishop, color, pos);
+        case 'N': return std::make_shared<Piece>(PieceType::Knight, color, pos);
+        case 'P': return std::make_shared<Piece>(PieceType::Pawn,   color, pos);
         default:  return nullptr;
     }
 }

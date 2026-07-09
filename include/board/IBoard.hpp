@@ -2,6 +2,7 @@
 
 #include <memory>
 #include <optional>
+#include <vector>
 #include "common/Position.hpp"
 #include "pieces/Piece.hpp"
 
@@ -10,6 +11,10 @@ namespace kungfu {
 class IBoard {
 public:
     virtual ~IBoard() = default;
+
+    virtual int rows() const = 0;
+    virtual int cols() const = 0;
+    virtual std::vector<PiecePtr> pieces() const = 0;
 
     virtual std::optional<PiecePtr> pieceAt(const Position& position) const = 0;
     virtual bool placePiece(const PiecePtr& piece, const Position& position) = 0;

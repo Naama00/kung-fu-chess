@@ -6,9 +6,7 @@ enum class GameState {
     NotStarted,
     Running,
     Paused,
-    Finished,
-    Check,
-    Checkmate
+    Finished
 };
 
 }  // namespace kungfu
