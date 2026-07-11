@@ -27,16 +27,19 @@ public:
     std::vector<ArrivalEvent> advanceTime(int ms, int& currentTimeMs) noexcept;
 
     bool isOnCooldown(const PiecePtr& piece, int currentTimeMs) const noexcept;
-
-    // שאילתא לבדיקה האם כלי ספציפי נמצא כרגע בתנועה
     bool isPieceMoving(const PiecePtr& piece) const noexcept;
-
     std::optional<Motion> getMotionForPiece(const PiecePtr& piece) const noexcept;
 
 private:
     std::shared_ptr<IBoard> board_;
-    std::vector<Motion> activeMotions_; // שינוי לוקטור לתמיכה בתנועה סימולטנית
+    std::vector<Motion> activeMotions_; 
     std::unordered_map<const Piece*, int> cooldowns_;
+
+    void handleMidRouteCollisions(std::vector<ArrivalEvent>& events) noexcept;
+    bool processSingleArrival(std::vector<Motion>::iterator it, int currentTimeMs, std::vector<ArrivalEvent>& events) noexcept;
+    
+    // פונקציית עזר לטיפול עצמאי בהכתרת רגלים
+    PiecePtr handlePawnPromotion(const PiecePtr& piece, const Position& to) noexcept;
 };
 
 }  // namespace kungfu

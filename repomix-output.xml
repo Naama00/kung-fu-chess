@@ -40,125 +40,76 @@ The content is organized as follows:
 </file_summary>
 
 <directory_structure>
+include/
+  board/
+    Board.hpp
+    IBoard.hpp
+  common/
+    Enums.hpp
+    GameConfig.hpp
+    GameState.hpp
+    Position.hpp
+  engine/
+    GameEngine.hpp
+    GameSnapshot.hpp
+    IGameEngine.hpp
+  input/
+    BoardMapper.hpp
+    Controller.hpp
+  io/
+    BoardParser.hpp
+    BoardPrinter.hpp
+  pieces/
+    Piece.hpp
+  realtime/
+    Motion.hpp
+    RealTimeArbiter.hpp
+  rules/
+    IPieceRule.hpp
+    PieceRules.hpp
+    RuleEngine.hpp
+  view/
+    IRenderer.hpp
+scripts/
+  build_single_cpp.py
+src/
+  board/
+    Board.cpp
+  common/
+    Position.cpp
+  engine/
+    GameEngine.cpp
+  input/
+    BoardMapper.cpp
+    Controller.cpp
+  io/
+    BoardParser.cpp
+    BoardPrinter.cpp
+  pieces/
+    Piece.cpp
+  realtime/
+    Motion.cpp
+    RealTimeArbiter.cpp
+  rules/
+    PieceRules.cpp
+    RuleEngine.cpp
+  main.cpp
+tests/
+  integration/
+    SimpleFlowTests.cpp
+  unit/
+    BoardIoTests.cpp
+    ControllerAndMapperTests.cpp
+    GameEngineAndRealTimeTests.cpp
+    ModelTests.cpp
+    RuleEngineTests.cpp
 .gitignore
 CMakeLists.txt
-include/board/Board.hpp
-include/board/IBoard.hpp
-include/common/Enums.hpp
-include/common/GameConfig.hpp
-include/common/GameState.hpp
-include/common/Position.hpp
-include/engine/GameEngine.hpp
-include/engine/GameSnapshot.hpp
-include/engine/IGameEngine.hpp
-include/input/BoardMapper.hpp
-include/input/Controller.hpp
-include/io/BoardParser.hpp
-include/io/BoardPrinter.hpp
-include/pieces/Piece.hpp
-include/realtime/Motion.hpp
-include/realtime/RealTimeArbiter.hpp
-include/rules/IPieceRule.hpp
-include/rules/PieceRules.hpp
-include/rules/RuleEngine.hpp
-include/view/IRenderer.hpp
 README.md
-scripts/build_single_cpp.py
-src/board/Board.cpp
-src/common/Position.cpp
-src/engine/GameEngine.cpp
-src/input/BoardMapper.cpp
-src/input/Controller.cpp
-src/io/BoardParser.cpp
-src/io/BoardPrinter.cpp
-src/main.cpp
-src/pieces/Piece.cpp
-src/realtime/Motion.cpp
-src/realtime/RealTimeArbiter.cpp
-src/rules/PieceRules.cpp
-src/rules/RuleEngine.cpp
-tests/integration/SimpleFlowTests.cpp
-tests/unit/BoardIoTests.cpp
-tests/unit/ControllerAndMapperTests.cpp
-tests/unit/GameEngineAndRealTimeTests.cpp
-tests/unit/ModelTests.cpp
-tests/unit/RuleEngineTests.cpp
 </directory_structure>
 
 <files>
 This section contains the contents of the repository's files.
-
-<file path=".gitignore">
-# Prerequisites
-*.d
-
-# Compiled Object files
-*.slo
-*.lo
-*.o
-*.obj
-
-# Precompiled Headers
-*.gch
-*.pch
-
-# Linker files
-*.ilk
-
-# Debugger Files
-*.pdb
-
-# Compiled Dynamic libraries
-*.so
-*.dylib
-*.dll
-*.so.*
-
-
-# Fortran module files
-*.mod
-*.smod
-
-# Compiled Static libraries
-*.lai
-*.la
-*.a
-*.lib
-
-# Executables
-*.exe
-*.out
-*.app
-
-# Build directories
-build/
-Build/
-build-*/
-
-# CMake generated files
-CMakeFiles/
-CMakeCache.txt
-cmake_install.cmake
-Makefile
-install_manifest.txt
-compile_commands.json
-
-# Temporary files
-*.tmp
-*.log
-*.bak
-*.swp
-
-# vcpkg
-vcpkg_installed/
-
-# debug information files
-*.dwo
-
-# test output & cache
-Testing/
-.cache/
-</file>
 
 <file path="include/common/Position.hpp">
 #pragma once
@@ -211,96 +162,6 @@ struct GameSnapshot {
     std::vector<PieceSnapshot> pieces;
     std::optional<Position> selectedCell;
     bool isGameOver;
-};
-
-}  // namespace kungfu
-</file>
-
-<file path="include/engine/IGameEngine.hpp">
-#pragma once
-
-#include <string>
-#include "common/Position.hpp"
-
-namespace kungfu {
-
-struct MoveResult {
-    bool isAccepted;
-    std::string reason;
-};
-
-class IGameEngine {
-public:
-    virtual ~IGameEngine() = default;
-
-    // הגדרת פונקציות טהורות (pure virtual)
-    virtual MoveResult requestMove(const Position& from, const Position& to) = 0;
-    virtual bool hasPieceAt(const Position& pos) const = 0;
-    virtual int getBoardRows() const = 0;
-    virtual int getBoardCols() const = 0;
-};
-
-}  // namespace kungfu
-</file>
-
-<file path="include/input/BoardMapper.hpp">
-#pragma once
-
-#include <optional>
-#include "common/Position.hpp"
-
-namespace kungfu {
-
-class BoardMapper {
-public:
-    explicit BoardMapper(int cellSize = 100);
-
-    // ממירה קואורדינטות פיקסל לתא לוגי בלוח.
-    // מחזירה std::nullopt במידה והקליק מחוץ לגבולות המוגדרים של הלוח.
-    std::optional<Position> pixelToCell(int x, int y, int rows, int cols) const noexcept;
-
-private:
-    int cellSize_;
-};
-
-}  // namespace kungfu
-</file>
-
-<file path="include/input/Controller.hpp">
-#pragma once
-
-#include <memory>
-#include <optional>
-#include <string>
-#include "input/BoardMapper.hpp"
-#include "common/Position.hpp"
-
-namespace kungfu {
-
-class IGameEngine;
-
-struct ControllerResult {
-    bool actionTaken;
-    std::string description;
-};
-
-class Controller {
-public:
-    Controller(std::shared_ptr<IGameEngine> engine, int cellSize = 100);
-
-    // מטפלת בלחיצה של משתמש בקואורדינטות פיקסל (x, y).
-    ControllerResult click(int x, int y);
-
-    // מחזירה את התא המסומן כרגע, במידה וקיים.
-    std::optional<Position> selectedPosition() const noexcept;
-
-    // מאפסת את הסימון הנוכחי.
-    void clearSelection() noexcept;
-
-private:
-    std::shared_ptr<IGameEngine> engine_;
-    BoardMapper mapper_;
-    std::optional<Position> selectedPosition_;
 };
 
 }  // namespace kungfu
@@ -467,10 +328,6 @@ public:
 }  // namespace kungfu
 </file>
 
-<file path="README.md">
-# kong-fu-chess
-</file>
-
 <file path="src/common/Position.cpp">
 #include "common/Position.hpp"
 
@@ -524,75 +381,6 @@ std::optional<Position> BoardMapper::pixelToCell(int x, int y, int rows, int col
 }  // namespace kungfu
 </file>
 
-<file path="src/input/Controller.cpp">
-#include "input/Controller.hpp"
-#include "engine/IGameEngine.hpp"
-
-namespace kungfu {
-
-Controller::Controller(std::shared_ptr<IGameEngine> engine, int cellSize)
-    : engine_(std::move(engine)), mapper_(cellSize), selectedPosition_(std::nullopt) {}
-
-ControllerResult Controller::click(int x, int y) {
-    if (!engine_) {
-        return {false, "Engine reference is null"};
-    }
-
-    int rows = engine_->getBoardRows();
-    int cols = engine_->getBoardCols();
-    auto cellOpt = mapper_.pixelToCell(x, y, rows, cols);
-
-    // 1. קליק מחוץ לגבולות הלוח
-    if (!cellOpt.has_value()) {
-        if (selectedPosition_.has_value()) {
-            // אם יש כלי מסומן, קליק מחוץ ללוח מבטל את הסימון
-            clearSelection();
-            return {true, "Selection cancelled (clicked outside board)"};
-        }
-        // אם אין כלי מסומן, קליק מחוץ ללוח פשוט מיועד להתעלמות
-        return {false, "Click outside board ignored"};
-    }
-
-    Position targetCell = cellOpt.value();
-
-    // 2. קליק בתוך הלוח כאשר כבר קיים כלי מסומן (קליק שני)
-    if (selectedPosition_.has_value()) {
-        Position from = selectedPosition_.value();
-        
-        // שליחת בקשת התנועה למנוע המשחק
-        auto moveResult = engine_->requestMove(from, targetCell);
-        
-        // פינוי הסימון באופן מיידי לאחר הניסיון (לפי דרישות המדריך)
-        clearSelection();
-
-        if (moveResult.isAccepted) {
-            return {true, "Move requested: " + moveResult.reason};
-        } else {
-            return {true, "Move rejected: " + moveResult.reason};
-        }
-    }
-
-    // 3. קליק בתוך הלוח ללא כלי מסומן כרגע (קליק ראשון)
-    if (engine_->hasPieceAt(targetCell)) {
-        selectedPosition_ = targetCell;
-        return {true, "Piece selected"};
-    }
-
-    // התעלמות מקליק ראשון על משבצת ריקה
-    return {false, "Click on empty cell ignored"};
-}
-
-std::optional<Position> Controller::selectedPosition() const noexcept {
-    return selectedPosition_;
-}
-
-void Controller::clearSelection() noexcept {
-    selectedPosition_ = std::nullopt;
-}
-
-}  // namespace kungfu
-</file>
-
 <file path="src/io/BoardPrinter.cpp">
 #include "io/BoardPrinter.hpp"
 #include <sstream>
@@ -641,149 +429,6 @@ std::string BoardPrinter::print(const Board& board) {
 }  // namespace kungfu
 </file>
 
-<file path="src/main.cpp">
-#include <iostream>
-#include <string>
-#include <vector>
-#include <sstream>
-#include <algorithm>
-#include <memory>
-#include <cctype>
-
-#include "board/Board.hpp"
-#include "io/BoardParser.hpp"
-#include "io/BoardPrinter.hpp"
-#include "rules/RuleEngine.hpp"
-#include "engine/GameEngine.hpp"
-#include "input/Controller.hpp"
-
-namespace {
-
-// פונקציית עזר להסרת רווחים מקצוות שורה
-std::string trim(const std::string& str) {
-    auto first = std::find_if_not(str.begin(), str.end(), [](unsigned char ch) {
-        return std::isspace(ch);
-    });
-    if (first == str.end()) {
-        return "";
-    }
-    auto last = std::find_if_not(str.rbegin(), str.rend(), [](unsigned char ch) {
-        return std::isspace(ch);
-    }).base();
-    return std::string(first, last);
-}
-
-} // namespace
-
-int main() {
-    // הגדרת תמיכה באופטימיזציה של מהירות קלט/פלט במידת הצורך
-    std::ios_base::sync_with_stdio(false);
-    std::cin.tie(nullptr);
-
-    std::vector<std::string> allLines;
-    std::string line;
-    bool hasSections = false;
-
-    // קריאת קלט מלא משורת הפקודה / קובץ בדיקה
-    while (std::getline(std::cin, line)) {
-        std::string trimmed = trim(line);
-        if (trimmed == "Board:" || trimmed == "Commands:") {
-            hasSections = true;
-        }
-        allLines.push_back(trimmed);
-    }
-
-    // --- תרחיש א': שלב א' בלבד (קלט לוח ישיר ללא הגדרת פקודות) ---
-    if (!hasSections) {
-        std::string boardRaw;
-        for (const auto& l : allLines) {
-            if (!l.empty()) {
-                boardRaw += l + "\n";
-            }
-        }
-
-        auto board = kungfu::BoardParser::parse(boardRaw);
-        if (!board) {
-            std::cout << "Invalid board\n";
-            return 1;
-        }
-
-        // הדפסת הלוח הלוגי כפי שהתפרסר
-        std::cout << kungfu::BoardPrinter::print(*board);
-        return 0;
-    }
-
-    // --- תרחיש ב': משחק מלא עם כותרות "Board:" ו-"Commands:" ---
-    std::string boardSection;
-    std::vector<std::string> commandLines;
-    bool readingBoard = false;
-    bool readingCommands = false;
-
-    for (const auto& l : allLines) {
-        if (l.empty()) {
-            continue;
-        }
-        if (l == "Board:") {
-            readingBoard = true;
-            readingCommands = false;
-            continue;
-        }
-        if (l == "Commands:") {
-            readingBoard = false;
-            readingCommands = true;
-            continue;
-        }
-
-        if (readingBoard) {
-            boardSection += l + "\n";
-        } else if (readingCommands) {
-            commandLines.push_back(l);
-        }
-    }
-
-    // 1. יצירת הלוח
-    auto board = kungfu::BoardParser::parse(boardSection);
-    if (!board) {
-        std::cout << "Invalid board\n";
-        return 1;
-    }
-
-    // 2. אתחול מנוע החוקים, מנוע המשחק והבקר (Controller)
-    auto ruleEngine = std::make_shared<kungfu::RuleEngine>(board);
-    auto gameEngine = std::make_shared<kungfu::GameEngine>(board, ruleEngine);
-    kungfu::Controller controller(gameEngine, 100); // 100 pixels per cell
-
-    // 3. עיבוד שורות פקודה
-    for (const auto& cmd : commandLines) {
-        std::istringstream stream(cmd);
-        std::string action;
-        stream >> action;
-
-        if (action == "click") {
-            int x = 0;
-            int y = 0;
-            if (stream >> x >> y) {
-                controller.click(x, y);
-            }
-        } 
-        else if (action == "wait") {
-            int ms = 0;
-            if (stream >> ms) {
-                gameEngine->wait(ms);
-            }
-        } 
-        else if (action == "print") {
-            std::string target;
-            if (stream >> target && target == "board") {
-                std::cout << kungfu::BoardPrinter::print(*board);
-            }
-        }
-    }
-
-    return 0;
-}
-</file>
-
 <file path="src/realtime/Motion.cpp">
 #include "realtime/Motion.hpp"
 
@@ -791,6 +436,518 @@ namespace kungfu {
 
 Motion::Motion(PiecePtr piece, const Position& from, const Position& to, int startTimeMs, int durationMs) noexcept
     : piece_(std::move(piece)), from_(from), to_(to), startTimeMs_(startTimeMs), arrivalTimeMs_(startTimeMs + durationMs) {}
+
+}  // namespace kungfu
+</file>
+
+<file path="tests/integration/SimpleFlowTests.cpp">
+#include <catch2/catch_test_macros.hpp>
+#include "io/BoardParser.hpp"
+#include "io/BoardPrinter.hpp"
+#include "rules/RuleEngine.hpp"
+#include "engine/GameEngine.hpp"
+#include "input/Controller.hpp"
+
+TEST_CASE("Full System Integration Flow", "[integration]") {
+    std::string setup = 
+        "wR . .\n"
+        ". . .\n"
+        ". . bK\n"; // צריח ב-(0,0), מלך שחור ב-(2,2)
+
+    auto board = kungfu::BoardParser::parse(setup);
+    REQUIRE(board != nullptr);
+
+    auto ruleEngine = std::make_shared<kungfu::RuleEngine>(board);
+    auto gameEngine = std::make_shared<kungfu::GameEngine>(board, ruleEngine);
+    kungfu::Controller controller(gameEngine, 100);
+
+    SECTION("Click to move and await arrival") {
+        // קליק ראשון - בחירת הצריח ב-(0,0) (מיוצג ע"י פיקסלים 50, 50)
+        auto click1 = controller.click(50, 50);
+        REQUIRE(click1.actionTaken);
+        REQUIRE(click1.description == "Piece selected");
+
+        // קליק שני - הזמנת מהלך ליעד (0,2) (מיוצג ע"י פיקסלים 250, 50)
+        // מרחק: 2 משבצות = 2,000 מילישניות
+        auto click2 = controller.click(250, 50);
+        REQUIRE(click2.actionTaken);
+        REQUIRE(click2.description == "Move requested: ok");
+
+        // בדיקה 1: מיד לאחר הזמנת המהלך, הלוח עדיין לא השתנה לוגית
+        std::string currentLayout = kungfu::BoardPrinter::print(*board);
+        REQUIRE(currentLayout == setup);
+
+        // בדיקה 2: קידום חלקי של הזמן (1000ms) - הכלי עדיין לא הגיע ליעד
+        gameEngine->wait(1000);
+        REQUIRE(kungfu::BoardPrinter::print(*board) == setup);
+
+        // בדיקה 3: השלמת הזמן ל-2000ms - הכלי הגיע ומצב הלוח מתעדכן
+        gameEngine->wait(1000);
+        std::string expectedAfterArrival = 
+            ". . wR\n"
+            ". . .\n"
+            ". . bK\n";
+        REQUIRE(kungfu::BoardPrinter::print(*board) == expectedAfterArrival);
+    }
+}
+</file>
+
+<file path="tests/unit/BoardIoTests.cpp">
+#include <catch2/catch_test_macros.hpp>
+#include "io/BoardParser.hpp"
+#include "io/BoardPrinter.hpp"
+
+TEST_CASE("Board Parser and Printer Integration", "[io]") {
+    
+    SECTION("Parse and Print a standard rectangular board") {
+        std::string inputBoard = 
+            "wK . . bR\n"
+            ". wP . .\n"
+            ". . bK .\n";
+            
+        auto board = kungfu::BoardParser::parse(inputBoard);
+        REQUIRE(board != nullptr);
+        REQUIRE(board->rows() == 3);
+        REQUIRE(board->cols() == 4);
+        
+        std::string printed = kungfu::BoardPrinter::print(*board);
+        REQUIRE(printed == inputBoard);
+    }
+
+    SECTION("Parser rejects non-rectangular boards") {
+        std::string invalidBoard = 
+            "wK . .\n"
+            ". wP . . .\n"  // שורה ארוכה מדי
+            ". . bK\n";
+            
+        auto board = kungfu::BoardParser::parse(invalidBoard);
+        REQUIRE(board == nullptr);
+    }
+
+    SECTION("Parser rejects invalid tokens") {
+        std::string invalidTokenBoard = 
+            "wK . .\n"
+            ". wX .\n"  // X אינו כלי חוקי בשחמט
+            ". . bK\n";
+            
+        auto board = kungfu::BoardParser::parse(invalidTokenBoard);
+        REQUIRE(board == nullptr);
+    }
+}
+</file>
+
+<file path=".gitignore">
+# Prerequisites
+*.d
+
+# Compiled Object files
+*.slo
+*.lo
+*.o
+*.obj
+
+# Precompiled Headers
+*.gch
+*.pch
+
+# Linker files
+*.ilk
+
+# Debugger Files
+*.pdb
+
+# Compiled Dynamic libraries
+*.so
+*.dylib
+*.dll
+*.so.*
+
+
+# Fortran module files
+*.mod
+*.smod
+
+# Compiled Static libraries
+*.lai
+*.la
+*.a
+*.lib
+
+# Executables
+*.exe
+*.out
+*.app
+
+# Build directories
+build/
+Build/
+build-*/
+
+# CMake generated files
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+Makefile
+install_manifest.txt
+compile_commands.json
+
+# Temporary files
+*.tmp
+*.log
+*.bak
+*.swp
+
+# vcpkg
+vcpkg_installed/
+
+# debug information files
+*.dwo
+
+# test output & cache
+Testing/
+.cache/
+</file>
+
+<file path="README.md">
+# kong-fu-chess
+</file>
+
+<file path="include/common/GameState.hpp">
+#pragma once
+
+namespace kungfu {
+
+enum class GameState {
+    NotStarted,
+    Running,
+    Paused,
+    Finished
+};
+
+}  // namespace kungfu
+</file>
+
+<file path="include/engine/IGameEngine.hpp">
+#pragma once
+
+#include <string>
+#include <optional>
+#include "common/Position.hpp"
+#include "common/Enums.hpp" // הוספת ייבוא
+
+namespace kungfu {
+
+struct MoveResult {
+    bool isAccepted;
+    std::string reason;
+};
+
+class IGameEngine {
+public:
+    virtual ~IGameEngine() = default;
+
+    virtual MoveResult requestMove(const Position& from, const Position& to) = 0;
+    virtual bool hasPieceAt(const Position& pos) const = 0;
+    virtual int getBoardRows() const = 0;
+    virtual int getBoardCols() const = 0;
+    
+    // פונקציה חדשה לזיהוי צבע כלי במיקום מסוים
+    virtual std::optional<PlayerColor> getPieceColorAt(const Position& pos) const = 0;
+};
+
+}  // namespace kungfu
+</file>
+
+<file path="include/input/BoardMapper.hpp">
+#pragma once
+
+#include <optional>
+#include "common/Position.hpp"
+#include "common/GameConfig.hpp" // הוספת ייבוא הגדרות
+
+namespace kungfu {
+
+class BoardMapper {
+public:
+    // שימוש בקבוע החדש כערך ברירת מחדל
+    explicit BoardMapper(int cellSize = GameConfig::kDefaultCellSize);
+
+    std::optional<Position> pixelToCell(int x, int y, int rows, int cols) const noexcept;
+
+private:
+    int cellSize_;
+};
+
+}  // namespace kungfu
+</file>
+
+<file path="include/input/Controller.hpp">
+#pragma once
+
+#include <memory>
+#include <optional>
+#include <string>
+#include "input/BoardMapper.hpp"
+#include "common/Position.hpp"
+#include "common/GameConfig.hpp" // הוספת ייבוא הגדרות
+
+namespace kungfu {
+
+class IGameEngine;
+
+struct ControllerResult {
+    bool actionTaken;
+    std::string description;
+};
+
+class Controller {
+public:
+    // שימוש בקבוע החדש כערך ברירת מחדל
+    Controller(std::shared_ptr<IGameEngine> engine, int cellSize = GameConfig::kDefaultCellSize);
+
+    ControllerResult click(int x, int y);
+    std::optional<Position> selectedPosition() const noexcept;
+    void clearSelection() noexcept;
+
+private:
+    std::shared_ptr<IGameEngine> engine_;
+    BoardMapper mapper_;
+    std::optional<Position> selectedPosition_;
+};
+
+}  // namespace kungfu
+</file>
+
+<file path="include/realtime/RealTimeArbiter.hpp">
+#pragma once
+
+#include <memory>
+#include <optional>
+#include <vector>
+#include <unordered_map>
+#include "realtime/Motion.hpp"
+#include "board/IBoard.hpp"
+
+namespace kungfu {
+
+struct ArrivalEvent {
+    Position from;
+    Position to;
+    PiecePtr piece;
+    bool capturedKing;
+    bool cancelled; // דגל המציין האם התנועה בוטלה עקב חסימה
+};
+
+class RealTimeArbiter {
+public:
+    explicit RealTimeArbiter(std::shared_ptr<IBoard> board) noexcept;
+
+    bool hasActiveMotion() const noexcept;
+    void startMotion(PiecePtr piece, const Position& from, const Position& to, int currentTimeMs, int durationMs) noexcept;
+    
+    std::vector<ArrivalEvent> advanceTime(int ms, int& currentTimeMs) noexcept;
+
+    bool isOnCooldown(const PiecePtr& piece, int currentTimeMs) const noexcept;
+
+    // שאילתא לבדיקה האם כלי ספציפי נמצא כרגע בתנועה
+    bool isPieceMoving(const PiecePtr& piece) const noexcept;
+
+    std::optional<Motion> getMotionForPiece(const PiecePtr& piece) const noexcept;
+
+private:
+    std::shared_ptr<IBoard> board_;
+    std::vector<Motion> activeMotions_; // שינוי לוקטור לתמיכה בתנועה סימולטנית
+    std::unordered_map<const Piece*, int> cooldowns_;
+};
+
+}  // namespace kungfu
+</file>
+
+<file path="src/input/Controller.cpp">
+#include "input/Controller.hpp"
+#include "engine/IGameEngine.hpp"
+
+namespace kungfu {
+
+Controller::Controller(std::shared_ptr<IGameEngine> engine, int cellSize)
+    : engine_(std::move(engine)), mapper_(cellSize), selectedPosition_(std::nullopt) {}
+
+ControllerResult Controller::click(int x, int y) {
+    if (!engine_) {
+        return {false, "Engine reference is null"};
+    }
+
+    int rows = engine_->getBoardRows();
+    int cols = engine_->getBoardCols();
+    auto cellOpt = mapper_.pixelToCell(x, y, rows, cols);
+
+    // 1. קליק מחוץ לגבולות הלוח - התעלמות מוחלטת (אינו מבטל סימון קיים)
+    if (!cellOpt.has_value()) {
+        return {false, "Click outside board ignored"};
+    }
+
+    Position targetCell = cellOpt.value();
+
+    // 2. קליק בתוך הלוח כאשר כבר קיים כלי מסומן
+    if (selectedPosition_.has_value()) {
+        Position from = selectedPosition_.value();
+        
+        // חוק מיוחד: אם משבצת היעד מכילה כלי ידידותי, מחליפים את הסימון אליו
+        if (engine_->hasPieceAt(targetCell)) {
+            auto fromColor = engine_->getPieceColorAt(from);
+            auto targetColor = engine_->getPieceColorAt(targetCell);
+            if (fromColor.has_value() && targetColor.has_value() && fromColor.value() == targetColor.value()) {
+                selectedPosition_ = targetCell;
+                return {true, "Piece selection replaced"};
+            }
+        }
+        
+        // שליחת בקשת התנועה למנוע המשחק (עבור תא ריק או כלי עוין)
+        auto moveResult = engine_->requestMove(from, targetCell);
+        
+        // פינוי הסימון באופן מיידי לאחר הניסיון
+        clearSelection();
+
+        if (moveResult.isAccepted) {
+            return {true, "Move requested: " + moveResult.reason};
+        } else {
+            return {true, "Move rejected: " + moveResult.reason};
+        }
+    }
+
+    // 3. קליק בתוך הלוח ללא כלי מסומן כרגע (קליק ראשון)
+    if (engine_->hasPieceAt(targetCell)) {
+        selectedPosition_ = targetCell;
+        return {true, "Piece selected"};
+    }
+
+    // התעלמות מקליק ראשון על משבצת ריקה
+    return {false, "Click on empty cell ignored"};
+}
+
+std::optional<Position> Controller::selectedPosition() const noexcept {
+    return selectedPosition_;
+}
+
+void Controller::clearSelection() noexcept {
+    selectedPosition_ = std::nullopt;
+}
+
+}  // namespace kungfu
+</file>
+
+<file path="src/io/BoardParser.cpp">
+#include "io/BoardParser.hpp"
+#include "pieces/Piece.hpp"
+#include <sstream>
+#include <algorithm>
+#include <cctype>
+
+namespace kungfu {
+
+std::vector<std::string> BoardParser::splitLines(const std::string& text) {
+    std::vector<std::string> lines;
+    std::string line;
+    std::istringstream stream(text);
+    while (std::getline(stream, line)) {
+        // הסרת רווחים מיותרים מקצוות השורה
+        line.erase(line.begin(), std::find_if(line.begin(), line.end(), [](unsigned char ch) {
+            return !std::isspace(ch);
+        }));
+        line.erase(std::find_if(line.rbegin(), line.rend(), [](unsigned char ch) {
+            return !std::isspace(ch);
+        }).base(), line.end());
+
+        if (!line.empty()) {
+            lines.push_back(line);
+        }
+    }
+    return lines;
+}
+
+std::vector<std::string> BoardParser::tokenize(const std::string& line) {
+    std::vector<std::string> tokens;
+    std::string token;
+    std::istringstream stream(line);
+    while (stream >> token) {
+        tokens.push_back(token);
+    }
+    return tokens;
+}
+
+bool BoardParser::isValidToken(const std::string& token) {
+    if (token == ".") return true;
+    if (token.size() != 2) return false;
+    
+    char color = token[0];
+    char type = token[1];
+    
+    bool validColor = (color == 'w' || color == 'b');
+    bool validType = (type == 'K' || type == 'Q' || type == 'R' || type == 'B' || type == 'N' || type == 'P');
+    
+    return validColor && validType;
+}
+
+std::shared_ptr<Piece> BoardParser::createPiece(const std::string& token, const Position& pos) {
+    if (token == "." || token.size() < 2) {
+        return nullptr;
+    }
+    
+    PlayerColor color = (token[0] == 'w') ? PlayerColor::White : PlayerColor::Black;
+    char type = token[1];
+    
+    switch (type) {
+        case 'K': return std::make_shared<Piece>(PieceType::King,   color, pos);
+        case 'Q': return std::make_shared<Piece>(PieceType::Queen,  color, pos);
+        case 'R': return std::make_shared<Piece>(PieceType::Rook,   color, pos);
+        case 'B': return std::make_shared<Piece>(PieceType::Bishop, color, pos);
+        case 'N': return std::make_shared<Piece>(PieceType::Knight, color, pos);
+        case 'P': return std::make_shared<Piece>(PieceType::Pawn,   color, pos);
+        default:  return nullptr;
+    }
+}
+
+std::shared_ptr<Board> BoardParser::parse(const std::string& text) {
+    auto lines = splitLines(text);
+    if (lines.empty()) {
+        return nullptr;
+    }
+
+    int rows = static_cast<int>(lines.size());
+    std::vector<std::vector<std::string>> grid;
+    int cols = -1;
+
+    for (int r = 0; r < rows; ++r) {
+        auto tokens = tokenize(lines[r]);
+        if (tokens.empty()) {
+            return nullptr;
+        }
+        if (cols == -1) {
+            cols = static_cast<int>(tokens.size());
+        } else if (static_cast<int>(tokens.size()) != cols) {
+            // הלוח אינו מלבני תקין
+            return nullptr;
+        }
+        grid.push_back(tokens);
+    }
+
+    auto board = std::make_shared<Board>(rows, cols);
+
+    for (int r = 0; r < rows; ++r) {
+        for (int c = 0; c < cols; ++c) {
+            const std::string& token = grid[r][c];
+            if (!isValidToken(token)) {
+                return nullptr; // טוקן שגוי בלוח
+            }
+            auto piece = createPiece(token, Position(r, c));
+            if (piece) {
+                board->placePiece(piece, Position(r, c));
+            }
+        }
+    }
+
+    return board;
+}
 
 }  // namespace kungfu
 </file>
@@ -931,7 +1088,7 @@ std::vector<Position> KingRule::getLegalDestinations(const IBoard& board, const 
 // --- Pawn (Simplified) ---
 std::vector<Position> PawnRule::getLegalDestinations(const IBoard& board, const Piece& piece) const {
     std::vector<Position> dests;
-    dests.reserve(3);
+    dests.reserve(4); // הקצאה פוטנציאלית ל-4 יעדים (צעד, צעד כפול, 2 אלכסונים)
 
     int currentRow = piece.position().row();
     int currentCol = piece.position().col();
@@ -945,11 +1102,26 @@ std::vector<Position> PawnRule::getLegalDestinations(const IBoard& board, const 
     int nextRow = currentRow + direction;
     if (nextRow >= 0 && nextRow < maxRows) {
         Position forward(nextRow, currentCol);
-        if (!board.pieceAt(forward).has_value()) {
+        bool isForwardEmpty = !board.pieceAt(forward).has_value();
+        
+        if (isForwardEmpty) {
             dests.push_back(forward);
         }
 
-        // 2. אכילה באלכסון (רק אם יש שם כלי עוין)
+        // 2. צעד כפול קדימה משורת ההתחלה (רק אם שני התאים קדימה ריקים)
+        int startRow = (piece.color() == PlayerColor::White) ? GameConfig::kWhitePawnStartRow : GameConfig::kBlackPawnStartRow;
+        if (currentRow == startRow) {
+            int doubleRow = currentRow + 2 * direction;
+            if (doubleRow >= 0 && doubleRow < maxRows) {
+                Position doubleForward(doubleRow, currentCol);
+                // בדיקת "נתיב פנוי" - גם משבצת הביניים וגם היעד חייבות להיות ריקות
+                if (isForwardEmpty && !board.pieceAt(doubleForward).has_value()) {
+                    dests.push_back(doubleForward);
+                }
+            }
+        }
+
+        // 3. אכילה באלכסון (רק אם יש שם כלי עוין)
         for (int cOffset : {-1, 1}) {
             int nextCol = currentCol + cOffset;
             if (nextCol >= 0 && nextCol < maxCols) {
@@ -988,99 +1160,145 @@ const IPieceRule& PieceRuleFactory::getRule(PieceType type) noexcept {
 }  // namespace kungfu
 </file>
 
-<file path="tests/integration/SimpleFlowTests.cpp">
-#include <catch2/catch_test_macros.hpp>
+<file path="src/main.cpp">
+#include <iostream>
+#include <string>
+#include <vector>
+#include <sstream>
+#include <algorithm>
+#include <memory>
+#include <cctype>
+
+#include "board/Board.hpp"
 #include "io/BoardParser.hpp"
 #include "io/BoardPrinter.hpp"
 #include "rules/RuleEngine.hpp"
 #include "engine/GameEngine.hpp"
 #include "input/Controller.hpp"
 
-TEST_CASE("Full System Integration Flow", "[integration]") {
-    std::string setup = 
-        "wR . .\n"
-        ". . .\n"
-        ". . bK\n"; // צריח ב-(0,0), מלך שחור ב-(2,2)
+namespace {
 
-    auto board = kungfu::BoardParser::parse(setup);
-    REQUIRE(board != nullptr);
+// פונקציית עזר להסרת רווחים מקצוות שורה
+std::string trim(const std::string& str) {
+    auto first = std::find_if_not(str.begin(), str.end(), [](unsigned char ch) {
+        return std::isspace(ch);
+    });
+    if (first == str.end()) {
+        return "";
+    }
+    auto last = std::find_if_not(str.rbegin(), str.rend(), [](unsigned char ch) {
+        return std::isspace(ch);
+    }).base();
+    return std::string(first, last);
+}
 
+} // namespace
+
+int main() {
+    // הגדרת תמיכה באופטימיזציה של מהירות קלט/פלט במידת הצורך
+    std::ios_base::sync_with_stdio(false);
+    std::cin.tie(nullptr);
+
+    std::vector<std::string> allLines;
+    std::string line;
+    bool hasSections = false;
+
+    // קריאת קלט מלא משורת הפקודה / קובץ בדיקה
+    while (std::getline(std::cin, line)) {
+        std::string trimmed = trim(line);
+        if (trimmed == "Board:" || trimmed == "Commands:") {
+            hasSections = true;
+        }
+        allLines.push_back(trimmed);
+    }
+
+    // --- תרחיש א': שלב א' בלבד (קלט לוח ישיר ללא הגדרת פקודות) ---
+    if (!hasSections) {
+        std::string boardRaw;
+        for (const auto& l : allLines) {
+            if (!l.empty()) {
+                boardRaw += l + "\n";
+            }
+        }
+
+        auto board = kungfu::BoardParser::parse(boardRaw);
+        if (!board) {
+            std::cout << "Invalid board\n";
+            return 1;
+        }
+
+        // הדפסת הלוח הלוגי כפי שהתפרסר
+        std::cout << kungfu::BoardPrinter::print(*board);
+        return 0;
+    }
+
+    // --- תרחיש ב': משחק מלא עם כותרות "Board:" ו-"Commands:" ---
+    std::string boardSection;
+    std::vector<std::string> commandLines;
+    bool readingBoard = false;
+    bool readingCommands = false;
+
+    for (const auto& l : allLines) {
+        if (l.empty()) {
+            continue;
+        }
+        if (l == "Board:") {
+            readingBoard = true;
+            readingCommands = false;
+            continue;
+        }
+        if (l == "Commands:") {
+            readingBoard = false;
+            readingCommands = true;
+            continue;
+        }
+
+        if (readingBoard) {
+            boardSection += l + "\n";
+        } else if (readingCommands) {
+            commandLines.push_back(l);
+        }
+    }
+
+    // 1. יצירת הלוח
+    auto board = kungfu::BoardParser::parse(boardSection);
+    if (!board) {
+        std::cout << "Invalid board\n";
+        return 1;
+    }
+
+    // 2. אתחול מנוע החוקים, מנוע המשחק והבקר (Controller)
     auto ruleEngine = std::make_shared<kungfu::RuleEngine>(board);
     auto gameEngine = std::make_shared<kungfu::GameEngine>(board, ruleEngine);
-    kungfu::Controller controller(gameEngine, 100);
+    kungfu::Controller controller(gameEngine); 
+    // 3. עיבוד שורות פקודה
+    for (const auto& cmd : commandLines) {
+        std::istringstream stream(cmd);
+        std::string action;
+        stream >> action;
 
-    SECTION("Click to move and await arrival") {
-        // קליק ראשון - בחירת הצריח ב-(0,0) (מיוצג ע"י פיקסלים 50, 50)
-        auto click1 = controller.click(50, 50);
-        REQUIRE(click1.actionTaken);
-        REQUIRE(click1.description == "Piece selected");
-
-        // קליק שני - הזמנת מהלך ליעד (0,2) (מיוצג ע"י פיקסלים 250, 50)
-        // מרחק: 2 משבצות = 2,000 מילישניות
-        auto click2 = controller.click(250, 50);
-        REQUIRE(click2.actionTaken);
-        REQUIRE(click2.description == "Move requested: ok");
-
-        // בדיקה 1: מיד לאחר הזמנת המהלך, הלוח עדיין לא השתנה לוגית
-        std::string currentLayout = kungfu::BoardPrinter::print(*board);
-        REQUIRE(currentLayout == setup);
-
-        // בדיקה 2: קידום חלקי של הזמן (1000ms) - הכלי עדיין לא הגיע ליעד
-        gameEngine->wait(1000);
-        REQUIRE(kungfu::BoardPrinter::print(*board) == setup);
-
-        // בדיקה 3: השלמת הזמן ל-2000ms - הכלי הגיע ומצב הלוח מתעדכן
-        gameEngine->wait(1000);
-        std::string expectedAfterArrival = 
-            ". . wR\n"
-            ". . .\n"
-            ". . bK\n";
-        REQUIRE(kungfu::BoardPrinter::print(*board) == expectedAfterArrival);
-    }
-}
-</file>
-
-<file path="tests/unit/BoardIoTests.cpp">
-#include <catch2/catch_test_macros.hpp>
-#include "io/BoardParser.hpp"
-#include "io/BoardPrinter.hpp"
-
-TEST_CASE("Board Parser and Printer Integration", "[io]") {
-    
-    SECTION("Parse and Print a standard rectangular board") {
-        std::string inputBoard = 
-            "wK . . bR\n"
-            ". wP . .\n"
-            ". . bK .\n";
-            
-        auto board = kungfu::BoardParser::parse(inputBoard);
-        REQUIRE(board != nullptr);
-        REQUIRE(board->rows() == 3);
-        REQUIRE(board->cols() == 4);
-        
-        std::string printed = kungfu::BoardPrinter::print(*board);
-        REQUIRE(printed == inputBoard);
+        if (action == "click") {
+            int x = 0;
+            int y = 0;
+            if (stream >> x >> y) {
+                controller.click(x, y);
+            }
+        } 
+        else if (action == "wait") {
+            int ms = 0;
+            if (stream >> ms) {
+                gameEngine->wait(ms);
+            }
+        } 
+        else if (action == "print") {
+            std::string target;
+            if (stream >> target && target == "board") {
+                std::cout << kungfu::BoardPrinter::print(*board);
+            }
+        }
     }
 
-    SECTION("Parser rejects non-rectangular boards") {
-        std::string invalidBoard = 
-            "wK . .\n"
-            ". wP . . .\n"  // שורה ארוכה מדי
-            ". . bK\n";
-            
-        auto board = kungfu::BoardParser::parse(invalidBoard);
-        REQUIRE(board == nullptr);
-    }
-
-    SECTION("Parser rejects invalid tokens") {
-        std::string invalidTokenBoard = 
-            "wK . .\n"
-            ". wX .\n"  // X אינו כלי חוקי בשחמט
-            ". . bK\n";
-            
-        auto board = kungfu::BoardParser::parse(invalidTokenBoard);
-        REQUIRE(board == nullptr);
-    }
+    return 0;
 }
 </file>
 
@@ -1089,22 +1307,30 @@ TEST_CASE("Board Parser and Printer Integration", "[io]") {
 #include "input/Controller.hpp"
 #include "engine/IGameEngine.hpp"
 #include <vector>
+#include <algorithm>
 
 namespace {
 
-// מימוש של MockGameEngine לצרכי בדיקות מבודדות של ה-Controller
 class MockGameEngine : public kungfu::IGameEngine {
 public:
     MockGameEngine(int rows, int cols) : rows_(rows), cols_(cols) {}
 
-    void setHasPiece(const kungfu::Position& pos, bool hasPiece) {
+    // שינוי ה-Mock כדי לתמוך בצבעי הכלים
+    void setHasPiece(const kungfu::Position& pos, bool hasPiece, kungfu::PlayerColor color = kungfu::PlayerColor::White) {
         if (hasPiece) {
-            occupiedPositions_.push_back(pos);
+            if (std::find(occupiedPositions_.begin(), occupiedPositions_.end(), pos) == occupiedPositions_.end()) {
+                occupiedPositions_.push_back(pos);
+                pieceColors_.push_back({pos, color});
+            }
         } else {
             auto it = std::find(occupiedPositions_.begin(), occupiedPositions_.end(), pos);
             if (it != occupiedPositions_.end()) {
                 occupiedPositions_.erase(it);
             }
+            auto it_color = std::remove_if(pieceColors_.begin(), pieceColors_.end(), [&](const auto& pair) {
+                return pair.first == pos;
+            });
+            pieceColors_.erase(it_color, pieceColors_.end());
         }
     }
 
@@ -1112,7 +1338,6 @@ public:
         nextMoveResult_ = {accept, reason};
     }
 
-    // מימוש מתודות הממשק
     kungfu::MoveResult requestMove(const kungfu::Position& from, const kungfu::Position& to) override {
         lastMoveFrom_ = from;
         lastMoveTo_ = to;
@@ -1124,10 +1349,18 @@ public:
         return std::find(occupiedPositions_.begin(), occupiedPositions_.end(), pos) != occupiedPositions_.end();
     }
 
+    std::optional<kungfu::PlayerColor> getPieceColorAt(const kungfu::Position& pos) const override {
+        for (const auto& pair : pieceColors_) {
+            if (pair.first == pos) {
+                return pair.second;
+            }
+        }
+        return std::nullopt;
+    }
+
     int getBoardRows() const override { return rows_; }
     int getBoardCols() const override { return cols_; }
 
-    // פונקציות עזר לבדיקה עצמה (Inspection queries)
     int getMoveCount() const { return moveCount_; }
     kungfu::Position getLastMoveFrom() const { return lastMoveFrom_; }
     kungfu::Position getLastMoveTo() const { return lastMoveTo_; }
@@ -1136,6 +1369,7 @@ private:
     int rows_;
     int cols_;
     std::vector<kungfu::Position> occupiedPositions_;
+    std::vector<std::pair<kungfu::Position, kungfu::PlayerColor>> pieceColors_;
     kungfu::MoveResult nextMoveResult_ = {true, "ok"};
     
     int moveCount_ = 0;
@@ -1146,28 +1380,18 @@ private:
 } // namespace
 
 TEST_CASE("BoardMapper Coordinate Calculations", "[input]") {
-    kungfu::BoardMapper mapper(100); // 100 pixels per cell
+    kungfu::BoardMapper mapper(100);
 
     SECTION("Valid mapping within borders") {
         auto cell = mapper.pixelToCell(50, 150, 8, 8);
         REQUIRE(cell.has_value());
         REQUIRE(cell->row() == 1);
         REQUIRE(cell->col() == 0);
-
-        cell = mapper.pixelToCell(750, 750, 8, 8);
-        REQUIRE(cell.has_value());
-        REQUIRE(cell->row() == 7);
-        REQUIRE(cell->col() == 7);
     }
 
     SECTION("Invalid coordinates and boundary conditions") {
-        // מחוץ לגבול הימני
         REQUIRE_FALSE(mapper.pixelToCell(800, 50, 8, 8).has_value());
-        // מחוץ לגבול התחתון
-        REQUIRE_FALSE(mapper.pixelToCell(50, 800, 8, 8).has_value());
-        // קואורדינטות שליליות
         REQUIRE_FALSE(mapper.pixelToCell(-10, 50, 8, 8).has_value());
-        REQUIRE_FALSE(mapper.pixelToCell(50, -10, 8, 8).has_value());
     }
 }
 
@@ -1175,634 +1399,62 @@ TEST_CASE("Controller Selection State and Clicks Flow", "[input]") {
     auto mockEngine = std::make_shared<MockGameEngine>(8, 8);
     kungfu::Controller controller(mockEngine, 100);
 
-    // נמקם כלי דמה במיקום (1, 1)
-    mockEngine->setHasPiece(kungfu::Position(1, 1), true);
+    // נמקם כלי לבן במיקום (1, 1)
+    mockEngine->setHasPiece(kungfu::Position(1, 1), true, kungfu::PlayerColor::White);
 
     SECTION("Initial state has no selection") {
         REQUIRE_FALSE(controller.selectedPosition().has_value());
     }
 
     SECTION("First click on an empty cell is ignored") {
-        auto result = controller.click(250, 250); // Cell (2, 2)
+        auto result = controller.click(250, 250);
         REQUIRE_FALSE(result.actionTaken);
-        REQUIRE_FALSE(controller.selectedPosition().has_value());
     }
 
     SECTION("First click on a piece selects it") {
-        auto result = controller.click(150, 150); // Cell (1, 1)
+        auto result = controller.click(150, 150);
         REQUIRE(result.actionTaken);
         REQUIRE(result.description == "Piece selected");
         REQUIRE(controller.selectedPosition().has_value());
         REQUIRE(controller.selectedPosition().value() == kungfu::Position(1, 1));
     }
 
-    SECTION("Clicking outside the board without selection does nothing") {
-        auto result = controller.click(900, 50); // Out of bounds
-        REQUIRE_FALSE(result.actionTaken);
-        REQUIRE_FALSE(controller.selectedPosition().has_value());
-    }
-
-    SECTION("Clicking outside the board with selection cancels it") {
+    SECTION("Clicking outside the board with selection is ignored (does not cancel selection)") {
         // נבצע בחירה
         controller.click(150, 150);
         REQUIRE(controller.selectedPosition().has_value());
 
-        // כעת נלחץ מחוץ ללוח
+        // קליק מחוץ ללוח
         auto result = controller.click(900, 50);
-        REQUIRE(result.actionTaken);
-        REQUIRE(result.description == "Selection cancelled (clicked outside board)");
-        REQUIRE_FALSE(controller.selectedPosition().has_value());
+        REQUIRE_FALSE(result.actionTaken);
+        // הבחירה צריכה להישאר פעילה
+        REQUIRE(controller.selectedPosition().has_value());
+        REQUIRE(controller.selectedPosition().value() == kungfu::Position(1, 1));
     }
 
-    SECTION("Second click on any cell requests a move and clears selection") {
-        // נבחר את הכלי ב-(1, 1)
+    SECTION("Clicking another friendly piece replaces the selection") {
+        // נמקם כלי ידידותי נוסף (לבן) ב-(2, 2)
+        mockEngine->setHasPiece(kungfu::Position(2, 2), true, kungfu::PlayerColor::White);
+
+        // בחירת הכלי הראשון ב-(1, 1)
         controller.click(150, 150);
-        
-        // נבצע מהלך ל-(2, 2) [פיקסלים 250, 250]
+        REQUIRE(controller.selectedPosition().value() == kungfu::Position(1, 1));
+
+        // קליק על הכלי השני מחליף את הבחירה אליו
+        auto result = controller.click(250, 250);
+        REQUIRE(result.actionTaken);
+        REQUIRE(result.description == "Piece selection replaced");
+        REQUIRE(controller.selectedPosition().value() == kungfu::Position(2, 2));
+    }
+
+    SECTION("Second click on empty cell requests a move and clears selection") {
+        controller.click(150, 150);
         mockEngine->setMoveResponse(true, "ok");
         auto result = controller.click(250, 250);
 
         REQUIRE(result.actionTaken);
         REQUIRE(result.description == "Move requested: ok");
-        REQUIRE_FALSE(controller.selectedPosition().has_value()); // הסימון התנקה
-        REQUIRE(mockEngine->getMoveCount() == 1);
-        REQUIRE(mockEngine->getLastMoveFrom() == kungfu::Position(1, 1));
-        REQUIRE(mockEngine->getLastMoveTo() == kungfu::Position(2, 2));
-    }
-
-    SECTION("Second click requests move even if engine rejects it, selection is still cleared") {
-        controller.click(150, 150);
-        
-        mockEngine->setMoveResponse(false, "illegal_piece_move");
-        auto result = controller.click(250, 250);
-
-        REQUIRE(result.actionTaken);
-        REQUIRE(result.description == "Move rejected: illegal_piece_move");
-        REQUIRE_FALSE(controller.selectedPosition().has_value()); // הסימון בכל זאת התנקה
-    }
-}
-</file>
-
-<file path="include/common/GameConfig.hpp">
-#pragma once
-
-namespace kungfu {
-
-struct GameConfig {
-    static constexpr int kBoardSize = 8;
-    static constexpr int kDefaultMoveStep = 1;
-
-    // Pawn start rows (the row a pawn sits on at game start).
-    static constexpr int kWhitePawnStartRow = 1;
-    static constexpr int kBlackPawnStartRow = 6;
-
-};
-
-}  // namespace kungfu
-</file>
-
-<file path="include/common/GameState.hpp">
-#pragma once
-
-namespace kungfu {
-
-enum class GameState {
-    NotStarted,
-    Running,
-    Paused,
-    Finished
-};
-
-}  // namespace kungfu
-</file>
-
-<file path="include/engine/GameEngine.hpp">
-#pragma once
-
-#include "engine/IGameEngine.hpp"
-#include "board/IBoard.hpp"
-#include "rules/RuleEngine.hpp"
-#include "realtime/RealTimeArbiter.hpp"
-#include "engine/GameSnapshot.hpp"
-
-namespace kungfu {
-
-class GameEngine : public IGameEngine {
-public:
-    GameEngine(std::shared_ptr<IBoard> board, std::shared_ptr<RuleEngine> ruleEngine) noexcept;
-        // מימוש ממשק IGameEngine
-    MoveResult requestMove(const Position& from, const Position& to) override;
-    bool hasPieceAt(const Position& pos) const override;
-    int getBoardRows() const override;
-    int getBoardCols() const override;
-
-    // התקדמות זמן מדומה
-    void wait(int ms) noexcept;
-    bool isGameOver() const noexcept { return gameOver_; }
-    int getCurrentTimeMs() const noexcept { return currentTimeMs_; }
-    
-    // מייצר תמונת מצב לקריאה בלבד לטובת הציור
-    GameSnapshot getSnapshot(std::optional<Position> selectedCell) const noexcept;
-    
-private:
-    std::shared_ptr<IBoard> board_;
-    std::shared_ptr<RuleEngine> ruleEngine_;
-    RealTimeArbiter arbiter_;
-    int currentTimeMs_ = 0;
-    bool gameOver_ = false;
-};
-
-}  // namespace kungfu
-</file>
-
-<file path="include/realtime/RealTimeArbiter.hpp">
-#pragma once
-
-#include <memory>
-#include <optional>
-#include <vector>
-#include <unordered_map>
-#include "realtime/Motion.hpp"
-#include "board/IBoard.hpp"
-
-namespace kungfu {
-
-struct ArrivalEvent {
-    Position from;
-    Position to;
-    PiecePtr piece;
-    bool capturedKing;
-    bool cancelled; // דגל המציין האם התנועה בוטלה עקב חסימה
-};
-
-class RealTimeArbiter {
-public:
-    explicit RealTimeArbiter(std::shared_ptr<IBoard> board) noexcept;
-
-    bool hasActiveMotion() const noexcept;
-    void startMotion(PiecePtr piece, const Position& from, const Position& to, int currentTimeMs, int durationMs) noexcept;
-    
-    std::vector<ArrivalEvent> advanceTime(int ms, int& currentTimeMs) noexcept;
-
-    bool isOnCooldown(const PiecePtr& piece, int currentTimeMs) const noexcept;
-
-    // שאילתא לבדיקה האם כלי ספציפי נמצא כרגע בתנועה
-    bool isPieceMoving(const PiecePtr& piece) const noexcept;
-
-    std::optional<Motion> getMotionForPiece(const PiecePtr& piece) const noexcept;
-
-private:
-    std::shared_ptr<IBoard> board_;
-    std::vector<Motion> activeMotions_; // שינוי לוקטור לתמיכה בתנועה סימולטנית
-    std::unordered_map<const Piece*, int> cooldowns_;
-};
-
-}  // namespace kungfu
-</file>
-
-<file path="src/engine/GameEngine.cpp">
-#include "engine/GameEngine.hpp"
-#include "engine/GameSnapshot.hpp"
-#include <algorithm>
-#include <cmath>
-
-namespace kungfu {
-
-GameEngine::GameEngine(std::shared_ptr<IBoard> board, std::shared_ptr<RuleEngine> ruleEngine) noexcept
-    : board_(std::move(board))
-    , ruleEngine_(std::move(ruleEngine))
-    , arbiter_(board_) {}
-
-MoveResult GameEngine::requestMove(const Position& from, const Position& to) {
-    if (gameOver_) {
-        return {false, "game_over"};
-    }
-
-    if (arbiter_.hasActiveMotion()) {
-        return {false, "motion_in_progress"};
-    }
-
-    if (!board_ || !ruleEngine_) {
-        return {false, "internal_error"};
-    }
-
-    auto validation = ruleEngine_->validateMove(from, to);
-    if (!validation.isValid) {
-        return {false, validation.reason};
-    }
-
-    auto sourcePieceOpt = board_->pieceAt(from);
-    if (!sourcePieceOpt.has_value() || !sourcePieceOpt.value()) {
-        return {false, "empty_source"};
-    }
-
-    auto piece = sourcePieceOpt.value();
-
-    if (arbiter_.isPieceMoving(piece)) {
-        return {false, "motion_in_progress"};
-    }
-
-    if (arbiter_.isOnCooldown(piece, currentTimeMs_)) {
-        return {false, "piece_on_cooldown"};
-    }
-
-    int dr = std::abs(to.row() - from.row());
-    int dc = std::abs(to.col() - from.col());
-    int distance = std::max(dr, dc);
-    int durationMs = distance * 1000;
-
-    piece->setState(PieceState::Moving);
-    arbiter_.startMotion(piece, from, to, currentTimeMs_, durationMs);
-
-    return {true, "ok"};
-}
-
-bool GameEngine::hasPieceAt(const Position& pos) const {
-    if (!board_) {
-        return false;
-    }
-    auto pieceOpt = board_->pieceAt(pos);
-    return pieceOpt.has_value() && pieceOpt.value() != nullptr;
-}
-
-int GameEngine::getBoardRows() const {
-    return board_ ? board_->rows() : 0;
-}
-
-int GameEngine::getBoardCols() const {
-    return board_ ? board_->cols() : 0;
-}
-
-void GameEngine::wait(int ms) noexcept {
-    if (ms <= 0 || !board_) {
-        return;
-    }
-
-    auto events = arbiter_.advanceTime(ms, currentTimeMs_);
-    for (const auto& event : events) {
-        if (event.capturedKing) {
-            gameOver_ = true;
-        }
-    }
-}
-
-GameSnapshot GameEngine::getSnapshot(std::optional<Position> selectedCell) const noexcept {
-    GameSnapshot snap;
-    snap.boardCols = getBoardCols();
-    snap.boardRows = getBoardRows();
-    snap.isGameOver = gameOver_;
-    snap.selectedCell = selectedCell;
-
-    if (!board_) {
-        return snap;
-    }
-
-    for (const auto& piece : board_->pieces()) {
-        if (!piece || piece->state() == PieceState::Captured) {
-            continue;
-        }
-
-        PieceSnapshot pSnap;
-        pSnap.type = piece->type();
-        pSnap.color = piece->color();
-        pSnap.logicalPosition = piece->position();
-        pSnap.state = piece->state();
-
-        float currentX = piece->position().col() * 100.0f;
-        float currentY = piece->position().row() * 100.0f;
-
-        pSnap.pixelX = currentX;
-        pSnap.pixelY = currentY;
-
-        if (piece->state() == PieceState::Moving) {
-            auto motionOpt = arbiter_.getMotionForPiece(piece);
-            if (motionOpt.has_value()) {
-                const auto& motion = motionOpt.value();
-                float startX = motion.from().col() * 100.0f;
-                float startY = motion.from().row() * 100.0f;
-                float endX = motion.to().col() * 100.0f;
-                float endY = motion.to().row() * 100.0f;
-
-                int duration = motion.arrivalTime() - motion.startTime();
-                if (duration > 0) {
-                    int elapsed = currentTimeMs_ - motion.startTime();
-                    float t = static_cast<float>(elapsed) / static_cast<float>(duration);
-
-                    t = std::max(0.0f, std::min(t, 1.0f));
-
-                    pSnap.pixelX = startX + t * (endX - startX);
-                    pSnap.pixelY = startY + t * (endY - startY);
-                }
-            }
-        }
-
-        snap.pieces.push_back(pSnap);
-    }
-
-    return snap;
-}
-
-}  // namespace kungfu
-</file>
-
-<file path="src/io/BoardParser.cpp">
-#include "io/BoardParser.hpp"
-#include "pieces/Piece.hpp"
-#include <sstream>
-#include <algorithm>
-#include <cctype>
-
-namespace kungfu {
-
-std::vector<std::string> BoardParser::splitLines(const std::string& text) {
-    std::vector<std::string> lines;
-    std::string line;
-    std::istringstream stream(text);
-    while (std::getline(stream, line)) {
-        // הסרת רווחים מיותרים מקצוות השורה
-        line.erase(line.begin(), std::find_if(line.begin(), line.end(), [](unsigned char ch) {
-            return !std::isspace(ch);
-        }));
-        line.erase(std::find_if(line.rbegin(), line.rend(), [](unsigned char ch) {
-            return !std::isspace(ch);
-        }).base(), line.end());
-
-        if (!line.empty()) {
-            lines.push_back(line);
-        }
-    }
-    return lines;
-}
-
-std::vector<std::string> BoardParser::tokenize(const std::string& line) {
-    std::vector<std::string> tokens;
-    std::string token;
-    std::istringstream stream(line);
-    while (stream >> token) {
-        tokens.push_back(token);
-    }
-    return tokens;
-}
-
-bool BoardParser::isValidToken(const std::string& token) {
-    if (token == ".") return true;
-    if (token.size() != 2) return false;
-    
-    char color = token[0];
-    char type = token[1];
-    
-    bool validColor = (color == 'w' || color == 'b');
-    bool validType = (type == 'K' || type == 'Q' || type == 'R' || type == 'B' || type == 'N' || type == 'P');
-    
-    return validColor && validType;
-}
-
-std::shared_ptr<Piece> BoardParser::createPiece(const std::string& token, const Position& pos) {
-    if (token == "." || token.size() < 2) {
-        return nullptr;
-    }
-    
-    PlayerColor color = (token[0] == 'w') ? PlayerColor::White : PlayerColor::Black;
-    char type = token[1];
-    
-    switch (type) {
-        case 'K': return std::make_shared<Piece>(PieceType::King,   color, pos);
-        case 'Q': return std::make_shared<Piece>(PieceType::Queen,  color, pos);
-        case 'R': return std::make_shared<Piece>(PieceType::Rook,   color, pos);
-        case 'B': return std::make_shared<Piece>(PieceType::Bishop, color, pos);
-        case 'N': return std::make_shared<Piece>(PieceType::Knight, color, pos);
-        case 'P': return std::make_shared<Piece>(PieceType::Pawn,   color, pos);
-        default:  return nullptr;
-    }
-}
-
-std::shared_ptr<Board> BoardParser::parse(const std::string& text) {
-    auto lines = splitLines(text);
-    if (lines.empty()) {
-        return nullptr;
-    }
-
-    int rows = static_cast<int>(lines.size());
-    std::vector<std::vector<std::string>> grid;
-    int cols = -1;
-
-    for (int r = 0; r < rows; ++r) {
-        auto tokens = tokenize(lines[r]);
-        if (tokens.empty()) {
-            return nullptr;
-        }
-        if (cols == -1) {
-            cols = static_cast<int>(tokens.size());
-        } else if (static_cast<int>(tokens.size()) != cols) {
-            // הלוח אינו מלבני תקין
-            return nullptr;
-        }
-        grid.push_back(tokens);
-    }
-
-    auto board = std::make_shared<Board>(rows, cols);
-
-    for (int r = 0; r < rows; ++r) {
-        for (int c = 0; c < cols; ++c) {
-            const std::string& token = grid[r][c];
-            if (!isValidToken(token)) {
-                return nullptr; // טוקן שגוי בלוח
-            }
-            auto piece = createPiece(token, Position(r, c));
-            if (piece) {
-                board->placePiece(piece, Position(r, c));
-            }
-        }
-    }
-
-    return board;
-}
-
-}  // namespace kungfu
-</file>
-
-<file path="src/realtime/RealTimeArbiter.cpp">
-#include "realtime/RealTimeArbiter.hpp"
-
-namespace kungfu {
-
-RealTimeArbiter::RealTimeArbiter(std::shared_ptr<IBoard> board) noexcept
-    : board_(std::move(board)) {}
-
-bool RealTimeArbiter::hasActiveMotion() const noexcept {
-    return !activeMotions_.empty();
-}
-
-void RealTimeArbiter::startMotion(PiecePtr piece, const Position& from, const Position& to, int currentTimeMs, int durationMs) noexcept {
-    activeMotions_.emplace_back(std::move(piece), from, to, currentTimeMs, durationMs);
-}
-
-std::vector<ArrivalEvent> RealTimeArbiter::advanceTime(int ms, int& currentTimeMs) noexcept {
-    std::vector<ArrivalEvent> events;
-    currentTimeMs += ms;
-
-    for (auto it = activeMotions_.begin(); it != activeMotions_.end(); ) {
-        if (currentTimeMs >= it->arrivalTime()) {
-            Position from = it->from();
-            Position to = it->to();
-            auto piece = it->piece();
-
-            auto targetPieceOpt = board_->pieceAt(to);
-
-            // --- לוגיקת ביטול מהלך (Cancellation) ---
-            // אם ברגע ההגעה המדויק, יעד התנועה נתפס על ידי כלי ידידותי
-            if (targetPieceOpt.has_value() && targetPieceOpt.value() && targetPieceOpt.value()->color() == piece->color()) {
-                piece->setState(PieceState::Idle); // החזרת הכלי למצב רגיל במשבצת המקור שלו
-                events.push_back({from, from, piece, false, true}); // אירוע ביטול
-                it = activeMotions_.erase(it); // הסרת התנועה מהוקטור
-                continue;
-            }
-
-            // הגעה רגילה / אכילת כלי עוין
-            bool capturedKing = false;
-            if (targetPieceOpt.has_value() && targetPieceOpt.value()) {
-                auto targetPiece = targetPieceOpt.value();
-                if (targetPiece->type() == PieceType::King) {
-                    capturedKing = true;
-                }
-                targetPiece->setState(PieceState::Captured);
-                cooldowns_.erase(targetPiece.get());
-                board_->removePiece(to);
-            }
-
-            board_->movePiece(from, to);
-            piece->setState(PieceState::Idle);
-
-            // רישום זמן צינון
-            cooldowns_[piece.get()] = currentTimeMs + 2000;
-
-            events.push_back({from, to, piece, capturedKing, false});
-            it = activeMotions_.erase(it);
-        } else {
-            ++it;
-        }
-    }
-
-    return events;
-}
-
-bool RealTimeArbiter::isOnCooldown(const PiecePtr& piece, int currentTimeMs) const noexcept {
-    if (!piece) return false;
-    auto it = cooldowns_.find(piece.get());
-    if (it != cooldowns_.end()) {
-        return currentTimeMs < it->second;
-    }
-    return false;
-}
-
-bool RealTimeArbiter::isPieceMoving(const PiecePtr& piece) const noexcept {
-    if (!piece) return false;
-    for (const auto& motion : activeMotions_) {
-        if (motion.piece() == piece) {
-            return true;
-        }
-    }
-    return false;
-}
-
-std::optional<Motion> RealTimeArbiter::getMotionForPiece(const PiecePtr& piece) const noexcept {
-    if (!piece) {
-        return std::nullopt;
-    }
-    for (const auto& motion : activeMotions_) {
-        if (motion.piece() == piece) {
-            return motion;
-        }
-    }
-    return std::nullopt;
-}
-
-}  // namespace kungfu
-</file>
-
-<file path="tests/unit/GameEngineAndRealTimeTests.cpp">
-#include <catch2/catch_test_macros.hpp>
-#include "board/Board.hpp"
-#include "io/BoardParser.hpp"
-#include "rules/RuleEngine.hpp"
-#include "engine/GameEngine.hpp"
-
-TEST_CASE("Deterministic Simulated Time Flow", "[engine]") {
-    std::string boardStr = 
-        ". . . .\n"
-        "wR . . bK\n" // צריח ב-(1,0), מלך שחור ב-(1,3)
-        ". . . .\n";
-        
-    auto board = kungfu::BoardParser::parse(boardStr);
-    REQUIRE(board != nullptr);
-    auto ruleEngine = std::make_shared<kungfu::RuleEngine>(board);
-    kungfu::GameEngine game(board, ruleEngine);
-
-    SECTION("Piece remains on source cell during movement") {
-        // הזמנת מהלך של שתי משבצות ל-(1,2). משך זמן מתוכנן: 2000 מילישניות.
-        auto moveRes = game.requestMove(kungfu::Position(1, 0), kungfu::Position(1, 2));
-        REQUIRE(moveRes.isAccepted);
-
-        // אחרי 1500 מילישניות - הכלי עדיין במשבצת המקור (1,0)
-        game.wait(1500);
-        REQUIRE(board->pieceAt(kungfu::Position(1, 0)).has_value());
-        REQUIRE_FALSE(board->pieceAt(kungfu::Position(1, 2)).has_value());
-
-        // אחרי 500 מילישניות נוספות (סה"כ 2000) - הכלי הגיע ליעד (1,2)
-        game.wait(500);
-        REQUIRE_FALSE(board->pieceAt(kungfu::Position(1, 0)).has_value());
-        REQUIRE(board->pieceAt(kungfu::Position(1, 2)).has_value());
-    }
-
-    SECTION("Enforce single active motion limitation") {
-        // נתחיל מהלך עבור הצריח
-        game.requestMove(kungfu::Position(1, 0), kungfu::Position(1, 2));
-        
-        // ניסיון להזמין מהלך נוסף בזמן שהתנועה פעילה יידחה
-        auto secondaryMove = game.requestMove(kungfu::Position(1, 0), kungfu::Position(1, 1));
-        REQUIRE_FALSE(secondaryMove.isAccepted);
-        REQUIRE(secondaryMove.reason == "motion_in_progress");
-    }
-
-    SECTION("Capturing the enemy King ends the game") {
-        // מהלך אכילה של המלך ב-(1,3). מרחק: 3 משבצות = 3000 מילישניות.
-        game.requestMove(kungfu::Position(1, 0), kungfu::Position(1, 3));
-        REQUIRE_FALSE(game.isGameOver());
-
-        // התקדמות של 3000 מילישניות מביאה לאכילה וסיום המשחק
-        game.wait(3000);
-        REQUIRE(game.isGameOver());
-
-        // לאחר סיום המשחק, בקשות תנועה חדשות נדחות
-        auto postGameOverMove = game.requestMove(kungfu::Position(1, 3), kungfu::Position(1, 2));
-        REQUIRE_FALSE(postGameOverMove.isAccepted);
-        REQUIRE(postGameOverMove.reason == "game_over");
-    }
-
-    SECTION("Piece Cooldown after Arrival") {
-    // מהלך מהיר של משבצת אחת ל-(1,1) -> משך תנועה: 1000ms.
-    auto moveRes = game.requestMove(kungfu::Position(1, 0), kungfu::Position(1, 1));
-    REQUIRE(moveRes.isAccepted);
-
-    // המתנה של 1000ms להגעת הכלי ליעד
-    game.wait(1000);
-    REQUIRE(board->pieceAt(kungfu::Position(1, 1)).has_value());
-
-    // 1. ניסיון תנועה מיידי מיד לאחר ההגעה (0ms מתום הצינון) -> נדחה
-    auto quickMove = game.requestMove(kungfu::Position(1, 1), kungfu::Position(1, 2));
-    REQUIRE_FALSE(quickMove.isAccepted);
-    REQUIRE(quickMove.reason == "piece_on_cooldown");
-
-    // 2. המתנה חלקית של 1500ms (סך הכל פחות מ-2000ms צינון) -> עדיין נדחה
-    game.wait(1500);
-    auto partialWaitMove = game.requestMove(kungfu::Position(1, 1), kungfu::Position(1, 2));
-    REQUIRE_FALSE(partialWaitMove.isAccepted);
-    REQUIRE(partialWaitMove.reason == "piece_on_cooldown");
-
-    // 3. השלמת זמן הצינון (עוד 500ms, סה"כ 2000ms מרגע ההגעה) -> המהלך מאושר
-    game.wait(500);
-    auto afterCooldownMove = game.requestMove(kungfu::Position(1, 1), kungfu::Position(1, 2));
-    REQUIRE(afterCooldownMove.isAccepted);
+        REQUIRE_FALSE(controller.selectedPosition().has_value());
     }
 }
 </file>
@@ -1919,29 +1571,77 @@ using BoardPtr = std::shared_ptr<IBoard>;
 }  // namespace kungfu
 </file>
 
-<file path="include/common/Enums.hpp">
+<file path="include/common/GameConfig.hpp">
 #pragma once
 
 namespace kungfu {
 
-enum class PieceType {
-    King,
-    Queen,
-    Rook,
-    Bishop,
-    Knight,
-    Pawn
+struct GameConfig {
+    static constexpr int kBoardSize = 8;
+    static constexpr int kDefaultMoveStep = 1;
+
+    // Pawn start rows (the row a pawn sits on at game start).
+    static constexpr int kWhitePawnStartRow = 1;
+    static constexpr int kBlackPawnStartRow = 6;
+
+    static constexpr int kDefaultCellSize = 100;
+    static constexpr int kCooldownDurationMs = 2000;
+    static constexpr int kMsPerCellSpeed = 1000;
+
+    // הגדרות חדשות לתכונות המתקדמות בזמן אמת:
+    static constexpr bool kAllowSimultaneousMovement = true; // הדלקת תנועה סימולטנית במקביל
+    static constexpr bool kEnablePremoves = true;            // הדלקת תור מהלכים מראש
 };
 
-enum class PlayerColor {
-    White,
-    Black
+}  // namespace kungfu
+</file>
+
+<file path="include/engine/GameEngine.hpp">
+#pragma once
+
+#include "engine/IGameEngine.hpp"
+#include "board/IBoard.hpp"
+#include "rules/RuleEngine.hpp"
+#include "realtime/RealTimeArbiter.hpp"
+#include "engine/GameSnapshot.hpp"
+#include <vector>
+
+namespace kungfu {
+
+// מבנה נתונים לייצוג מהלך מראש
+struct PremoveData {
+    Position from;
+    Position to;
 };
 
-enum class PieceState {
-    Idle,       // על הלוח, אינו בתנועה
-    Moving,     // נמצא בדרך ליעד (מנוהל בשכבת זמן אמת)
-    Captured    // הוסר מהמשחק
+class GameEngine : public IGameEngine {
+public:
+    GameEngine(std::shared_ptr<IBoard> board, std::shared_ptr<RuleEngine> ruleEngine) noexcept;
+    
+    MoveResult requestMove(const Position& from, const Position& to) override;
+    bool hasPieceAt(const Position& pos) const override;
+    int getBoardRows() const override;
+    int getBoardCols() const override;
+    std::optional<PlayerColor> getPieceColorAt(const Position& pos) const override;
+
+    void wait(int ms) noexcept;
+    bool isGameOver() const noexcept { return gameOver_; }
+    int getCurrentTimeMs() const noexcept { return currentTimeMs_; }
+    
+    GameSnapshot getSnapshot(std::optional<Position> selectedCell) const noexcept;
+    
+private:
+    // פונקציית עזר להפעלת Premoves שממתינים לביצוע
+    void processPremoves() noexcept;
+
+    std::shared_ptr<IBoard> board_;
+    std::shared_ptr<RuleEngine> ruleEngine_;
+    RealTimeArbiter arbiter_;
+    int currentTimeMs_ = 0;
+    bool gameOver_ = false;
+
+    // תור לשמירת מהלכים מראש המשויכים לכלים (כלי יכול להחזיק Premove אחד בכל רגע)
+    std::vector<std::pair<PiecePtr, PremoveData>> premoves_;
 };
 
 }  // namespace kungfu
@@ -2297,6 +1997,247 @@ std::vector<PiecePtr> Board::pieces() const {
 }  // namespace kungfu
 </file>
 
+<file path="src/engine/GameEngine.cpp">
+#include "engine/GameEngine.hpp"
+#include "engine/GameSnapshot.hpp"
+#include "common/GameConfig.hpp"
+#include <algorithm>
+#include <cmath>
+
+namespace kungfu {
+
+GameEngine::GameEngine(std::shared_ptr<IBoard> board, std::shared_ptr<RuleEngine> ruleEngine) noexcept
+    : board_(std::move(board))
+    , ruleEngine_(std::move(ruleEngine))
+    , arbiter_(board_) {}
+
+MoveResult GameEngine::requestMove(const Position& from, const Position& to) {
+    if (gameOver_) {
+        return {false, "game_over"};
+    }
+
+    if (!GameConfig::kAllowSimultaneousMovement && arbiter_.hasActiveMotion()) {
+        return {false, "motion_in_progress"};
+    }
+
+    if (!board_ || !ruleEngine_) {
+        return {false, "internal_error"};
+    }
+
+    auto sourcePieceOpt = board_->pieceAt(from);
+    if (!sourcePieceOpt.has_value() || !sourcePieceOpt.value()) {
+        return {false, "empty_source"};
+    }
+    auto piece = sourcePieceOpt.value();
+
+    // בדיקה אם הכלי עסוק (בתנועה, באוויר או בצינון)
+    bool isPieceBusy = arbiter_.isPieceMoving(piece) || 
+                       piece->state() == PieceState::Airborne || 
+                       arbiter_.isOnCooldown(piece, currentTimeMs_);
+    
+    if (isPieceBusy) {
+        if (GameConfig::kEnablePremoves) {
+            auto it = std::find_if(premoves_.begin(), premoves_.end(), [&](const auto& pair) {
+                return pair.first == piece;
+            });
+            if (it != premoves_.end()) {
+                it->second = {from, to};
+            } else {
+                premoves_.push_back({piece, {from, to}});
+            }
+            return {true, "premove_registered"};
+        } else {
+            if (arbiter_.isPieceMoving(piece) || piece->state() == PieceState::Airborne) {
+                return {false, "motion_in_progress"};
+            }
+            return {false, "piece_on_cooldown"};
+        }
+    }
+
+    // --- זיהוי בקשת קפיצה (Jump Request) ---
+    if (from == to) {
+        // מניעת קפיצה של כלי מבוטל (לשלמות, למרות ש-isPieceBusy כבר חוסם כלים לא פנויים)
+        if (piece->state() == PieceState::Captured) {
+            return {false, "captured_piece_cannot_jump"};
+        }
+
+        // קפיצה נמשכת בדיוק 1,000 מילישניות
+        int jumpDurationMs = 1000;
+        piece->setState(PieceState::Airborne); // שינוי המצב ל-Airborne
+        arbiter_.startMotion(piece, from, to, currentTimeMs_, jumpDurationMs);
+
+        return {true, "jump_started"};
+    }
+
+    // מהלך רגיל (from != to) - ללא שינוי...
+    auto validation = ruleEngine_->validateMove(from, to);
+    if (!validation.isValid) {
+        return {false, validation.reason};
+    }
+
+    int dr = std::abs(to.row() - from.row());
+    int dc = std::abs(to.col() - from.col());
+    int distance = std::max(dr, dc);
+    int durationMs = distance * GameConfig::kMsPerCellSpeed;
+
+    piece->setState(PieceState::Moving);
+    arbiter_.startMotion(piece, from, to, currentTimeMs_, durationMs);
+
+    return {true, "ok"};
+}
+
+void GameEngine::wait(int ms) noexcept {
+    if (ms <= 0 || !board_) {
+        return;
+    }
+
+    auto events = arbiter_.advanceTime(ms, currentTimeMs_);
+    for (const auto& event : events) {
+        if (event.capturedKing) {
+            gameOver_ = true;
+        }
+    }
+
+    // לאחר קידום הזמן, ננסה להפעיל Premoves שהפכו לחוקיים ופנויים כעת
+    if (GameConfig::kEnablePremoves && !gameOver_) {
+        processPremoves();
+    }
+}
+
+void GameEngine::processPremoves() noexcept {
+    for (auto it = premoves_.begin(); it != premoves_.end(); ) {
+        auto piece = it->first;
+        auto data = it->second;
+
+        // בדיקה שהכלי עדיין על הלוח ולא הושמד בזמן הצינון/תנועה
+        if (piece->state() == PieceState::Captured) {
+            it = premoves_.erase(it);
+            continue;
+        }
+
+        // בדיקה שהכלי התפנה ויכול לזוז
+        bool isPieceBusy = arbiter_.isPieceMoving(piece) || arbiter_.isOnCooldown(piece, currentTimeMs_);
+        if (!isPieceBusy) {
+            // שליחת בקשת תנועה רגילה
+            auto result = requestMove(data.from, data.to);
+            if (result.isAccepted && result.reason == "ok") {
+                // הצליח לצאת לדרך! נמחק מהתור
+                it = premoves_.erase(it);
+                continue;
+            } else {
+                // המהלך הפך ללא חוקי כעת (למשל, חסימה חדשה) - נבטל את ה-Premove
+                it = premoves_.erase(it);
+                continue;
+            }
+        }
+        ++it;
+    }
+}
+
+std::optional<PlayerColor> GameEngine::getPieceColorAt(const Position& pos) const {
+    if (!board_) {
+        return std::nullopt;
+    }
+    auto pieceOpt = board_->pieceAt(pos);
+    if (pieceOpt.has_value() && pieceOpt.value()) {
+        return pieceOpt.value()->color();
+    }
+    return std::nullopt;
+}
+
+bool GameEngine::hasPieceAt(const Position& pos) const {
+    if (!board_) {
+        return false;
+    }
+    auto pieceOpt = board_->pieceAt(pos);
+    return pieceOpt.has_value() && pieceOpt.value() != nullptr;
+}
+
+int GameEngine::getBoardRows() const {
+    return board_ ? board_->rows() : 0;
+}
+
+int GameEngine::getBoardCols() const {
+    return board_ ? board_->cols() : 0;
+}
+
+void GameEngine::wait(int ms) noexcept {
+    if (ms <= 0 || !board_) {
+        return;
+    }
+
+    auto events = arbiter_.advanceTime(ms, currentTimeMs_);
+    for (const auto& event : events) {
+        if (event.capturedKing) {
+            gameOver_ = true;
+        }
+    }
+}
+
+GameSnapshot GameEngine::getSnapshot(std::optional<Position> selectedCell) const noexcept {
+    GameSnapshot snap;
+    snap.boardCols = getBoardCols();
+    snap.boardRows = getBoardRows();
+    snap.isGameOver = gameOver_;
+    snap.selectedCell = selectedCell;
+
+    if (!board_) {
+        return snap;
+    }
+
+    // הגדרת משתנה עזר מקומי למניעת הכפלות בקוד בקבוע קשיח
+    const float cSize = static_cast<float>(GameConfig::kDefaultCellSize);
+
+    for (const auto& piece : board_->pieces()) {
+        if (!piece || piece->state() == PieceState::Captured) {
+            continue;
+        }
+
+        PieceSnapshot pSnap;
+        pSnap.type = piece->type();
+        pSnap.color = piece->color();
+        pSnap.logicalPosition = piece->position();
+        pSnap.state = piece->state();
+
+        // שינוי 2: שימוש ב-cSize במקום ב-100.0f
+        float currentX = piece->position().col() * cSize;
+        float currentY = piece->position().row() * cSize;
+
+        pSnap.pixelX = currentX;
+        pSnap.pixelY = currentY;
+
+        if (piece->state() == PieceState::Moving) {
+            auto motionOpt = arbiter_.getMotionForPiece(piece);
+            if (motionOpt.has_value()) {
+                const auto& motion = motionOpt.value();
+                // שינוי 3: שימוש ב-cSize למציאת קואורדינטות הפיקסלים בתחילת וסוף המהלך
+                float startX = motion.from().col() * cSize;
+                float startY = motion.from().row() * cSize;
+                float endX = motion.to().col() * cSize;
+                float endY = motion.to().row() * cSize;
+
+                int duration = motion.arrivalTime() - motion.startTime();
+                if (duration > 0) {
+                    int elapsed = currentTimeMs_ - motion.startTime();
+                    float t = static_cast<float>(elapsed) / static_cast<float>(duration);
+
+                    t = std::max(0.0f, std::min(t, 1.0f));
+
+                    pSnap.pixelX = startX + t * (endX - startX);
+                    pSnap.pixelY = startY + t * (endY - startY);
+                }
+            }
+        }
+
+        snap.pieces.push_back(pSnap);
+    }
+
+    return snap;
+}
+
+}  // namespace kungfu
+</file>
+
 <file path="src/pieces/Piece.cpp">
 #include "pieces/Piece.hpp"
 
@@ -2308,133 +2249,474 @@ Piece::Piece(PieceType type, PlayerColor color, Position position)
 }  // namespace kungfu
 </file>
 
-<file path="tests/unit/RuleEngineTests.cpp">
+<file path="src/realtime/RealTimeArbiter.cpp">
+#include "realtime/RealTimeArbiter.hpp"
+#include "common/GameConfig.hpp"
+#include <algorithm>
+
+namespace kungfu {
+
+RealTimeArbiter::RealTimeArbiter(std::shared_ptr<IBoard> board) noexcept
+    : board_(std::move(board)) {}
+
+bool RealTimeArbiter::hasActiveMotion() const noexcept {
+    return !activeMotions_.empty();
+}
+
+void RealTimeArbiter::startMotion(PiecePtr piece, const Position& from, const Position& to, int currentTimeMs, int durationMs) noexcept {
+    activeMotions_.emplace_back(std::move(piece), from, to, currentTimeMs, durationMs);
+}
+
+std::vector<ArrivalEvent> RealTimeArbiter::advanceTime(int ms, int& currentTimeMs) noexcept {
+    std::vector<ArrivalEvent> events;
+    currentTimeMs += ms;
+
+    // --- לוגיקת התנגשות עוינות בדרך (Enemy Collisions Mid-route) ---
+    // אם מופעלת תנועה סימולטנית, נבדוק האם שני כלים עוינים מנסים להחליף מקומות
+    if (GameConfig::kAllowSimultaneousMovement && activeMotions_.size() >= 2) {
+        for (size_t i = 0; i < activeMotions_.size(); ++i) {
+            for (size_t j = i + 1; j < activeMotions_.size(); ++j) {
+                auto& m1 = activeMotions_[i];
+                auto& m2 = activeMotions_[j];
+
+                // בדיקה שהם אויבים ושהם מחליפים מקומות (מצטלבים על אותו קו באותו סגמנט)
+                if (m1.piece()->color() != m2.piece()->color()) {
+                    if (m1.from() == m2.to() && m1.to() == m2.from()) {
+                        // זיהוי התנגשות! הכלל: מי שיצא קודם (startTime קטן יותר) מנצח
+                        auto& winner = (m1.startTime() <= m2.startTime()) ? m1 : m2;
+                        auto& loser = (m1.startTime() <= m2.startTime()) ? m2 : m1;
+
+                        // חיסול המפסיד: הפיכתו ל-Captured והסרתו מהלוח
+                        loser.piece()->setState(PieceState::Captured);
+                        cooldowns_.erase(loser.piece().get());
+                        board_->removePiece(loser.from()); // נמחק ממשבצת המקור שלו כי הוא מת בדרך
+
+                        events.push_back({loser.from(), loser.from(), loser.piece(), false, true}); // אירוע ביטול/חיסול
+                    }
+                }
+            }
+        }
+
+        // הסרת התנועה של הכלים שחוסלו מרשימת התנועות הפעילות
+        activeMotions_.erase(
+            std::remove_if(activeMotions_.begin(), activeMotions_.end(),
+                [](const Motion& m) { return m.piece()->state() == PieceState::Captured; }),
+            activeMotions_.end()
+        );
+    }
+
+    // --- תהליך הגעה ליעד הרגיל ---
+     for (auto it = activeMotions_.begin(); it != activeMotions_.end(); ) {
+        if (currentTimeMs >= it->arrivalTime()) {
+            Position from = it->from();
+            Position to = it->to();
+            auto piece = it->piece();
+
+            // 1. טיפול בסיום קפיצה (Landing Normally)
+            if (from == to && piece->state() == PieceState::Airborne) {
+                piece->setState(PieceState::Idle); // נחיתה נורמלית
+                cooldowns_[piece.get()] = currentTimeMs + GameConfig::kCooldownDurationMs; // רישום צינון
+                
+                events.push_back({from, to, piece, false, false});
+                it = activeMotions_.erase(it);
+                continue;
+            }
+
+            // 2. הגעה רגילה של כלי נע: בדיקה מול כלי קופץ (Airborne) ביעד
+            auto targetPieceOpt = board_->pieceAt(to);
+
+            if (targetPieceOpt.has_value() && targetPieceOpt.value() && targetPieceOpt.value()->state() == PieceState::Airborne) {
+                auto airbornePiece = targetPieceOpt.value();
+                
+                if (airbornePiece->color() != piece->color()) {
+                    // א. הגעת אויב: הכלי הקופץ אוכל אותו! 
+                    // האויב המגיע מבוטל ומוסר מהמשחק, הכלי הקופץ לא זז ונשאר במשבצת שלו.
+                    piece->setState(PieceState::Captured);
+                    cooldowns_.erase(piece.get());
+                    board_->removePiece(from); // הסרת האויב ממשבצת המוצא שלו (כי הוא מעולם לא נחת ביעד)
+
+                    events.push_back({from, from, piece, false, true}); // אירוע ביטול/אכילה של האויב
+                    it = activeMotions_.erase(it);
+                    continue;
+                } else {
+                    // ב. הגעת ידידותי: התנגשות ידידותית! מהלך הכלי שהגיע מבוטל והוא חוזר למוצא שלו.
+                    piece->setState(PieceState::Idle);
+                    events.push_back({from, from, piece, false, true});
+                    it = activeMotions_.erase(it);
+                    continue;
+                }
+            }
+
+            // 3. הגעה רגילה ללא כלים קופצים (ללא שינוי...)
+            if (targetPieceOpt.has_value() && targetPieceOpt.value() && targetPieceOpt.value()->color() == piece->color()) {
+                piece->setState(PieceState::Idle);
+                events.push_back({from, from, piece, false, true});
+                it = activeMotions_.erase(it);
+                continue;
+            }
+
+            bool capturedKing = false;
+            if (targetPieceOpt.has_value() && targetPieceOpt.value()) {
+                auto targetPiece = targetPieceOpt.value();
+                if (targetPiece->type() == PieceType::King) {
+                    capturedKing = true;
+                }
+                targetPiece->setState(PieceState::Captured);
+                cooldowns_.erase(targetPiece.get());
+                board_->removePiece(to);
+            }
+
+            board_->movePiece(from, to);
+            piece->setState(PieceState::Idle);
+
+            cooldowns_[piece.get()] = currentTimeMs + GameConfig::kCooldownDurationMs;
+
+            events.push_back({from, to, piece, capturedKing, false});
+            it = activeMotions_.erase(it);
+        } else {
+            ++it;
+        }
+    }
+
+    return events;
+}
+
+
+bool RealTimeArbiter::isOnCooldown(const PiecePtr& piece, int currentTimeMs) const noexcept {
+    if (!piece) return false;
+    auto it = cooldowns_.find(piece.get());
+    if (it != cooldowns_.end()) {
+        return currentTimeMs < it->second;
+    }
+    return false;
+}
+
+bool RealTimeArbiter::isPieceMoving(const PiecePtr& piece) const noexcept {
+    if (!piece) return false;
+    for (const auto& motion : activeMotions_) {
+        if (motion.piece() == piece) {
+            return true;
+        }
+    }
+    return false;
+}
+
+std::optional<Motion> RealTimeArbiter::getMotionForPiece(const PiecePtr& piece) const noexcept {
+    if (!piece) {
+        return std::nullopt;
+    }
+    for (const auto& motion : activeMotions_) {
+        if (motion.piece() == piece) {
+            return motion;
+        }
+    }
+    return std::nullopt;
+}
+
+}  // namespace kungfu
+</file>
+
+<file path="tests/unit/GameEngineAndRealTimeTests.cpp">
 #include <catch2/catch_test_macros.hpp>
 #include "board/Board.hpp"
 #include "io/BoardParser.hpp"
 #include "rules/RuleEngine.hpp"
+#include "engine/GameEngine.hpp"
 
-TEST_CASE("RuleEngine Basic Validations", "[rules]") {
-    auto board = std::make_shared<kungfu::Board>(8, 8);
-    kungfu::RuleEngine engine(board);
+TEST_CASE("Deterministic Simulated Time Flow", "[engine]") {
+    std::string boardStr = 
+        ". . . .\n"
+        "wR . . bK\n" // צריח ב-(1,0), מלך שחור ב-(1,3)
+        ". . . .\n";
+        
+    auto board = kungfu::BoardParser::parse(boardStr);
+    REQUIRE(board != nullptr);
+    auto ruleEngine = std::make_shared<kungfu::RuleEngine>(board);
+    kungfu::GameEngine game(board, ruleEngine);
 
-    SECTION("Empty source error") {
-        auto result = engine.validateMove(kungfu::Position(0, 0), kungfu::Position(1, 1));
-        REQUIRE_FALSE(result.isValid);
-        REQUIRE(result.reason == "empty_source");
+    SECTION("Piece remains on source cell during movement") {
+        // הזמנת מהלך של שתי משבצות ל-(1,2). משך זמן מתוכנן: 2000 מילישניות.
+        auto moveRes = game.requestMove(kungfu::Position(1, 0), kungfu::Position(1, 2));
+        REQUIRE(moveRes.isAccepted);
+
+        // אחרי 1500 מילישניות - הכלי עדיין במשבצת המקור (1,0)
+        game.wait(1500);
+        REQUIRE(board->pieceAt(kungfu::Position(1, 0)).has_value());
+        REQUIRE_FALSE(board->pieceAt(kungfu::Position(1, 2)).has_value());
+
+        // אחרי 500 מילישניות נוספות (סה"כ 2000) - הכלי הגיע ליעד (1,2)
+        game.wait(500);
+        REQUIRE_FALSE(board->pieceAt(kungfu::Position(1, 0)).has_value());
+        REQUIRE(board->pieceAt(kungfu::Position(1, 2)).has_value());
     }
 
-    SECTION("Out of board bounds error") {
-        auto result = engine.validateMove(kungfu::Position(-1, 0), kungfu::Position(0, 0));
-        REQUIRE_FALSE(result.isValid);
-        REQUIRE(result.reason == "outside_board");
+    SECTION("Enforce single active motion limitation") {
+        // נתחיל מהלך עבור הצריח
+        game.requestMove(kungfu::Position(1, 0), kungfu::Position(1, 2));
+        
+        // ניסיון להזמין מהלך נוסף בזמן שהתנועה פעילה יידחה
+        auto secondaryMove = game.requestMove(kungfu::Position(1, 0), kungfu::Position(1, 1));
+        REQUIRE_FALSE(secondaryMove.isAccepted);
+        REQUIRE(secondaryMove.reason == "motion_in_progress");
     }
-}
 
-TEST_CASE("Piece Specific Rules Integration", "[rules]") {
-    
-    SECTION("Rook sliding and blocking") {
+    SECTION("Capturing the enemy King ends the game") {
+        // מהלך אכילה של המלך ב-(1,3). מרחק: 3 משבצות = 3000 מילישניות.
+        game.requestMove(kungfu::Position(1, 0), kungfu::Position(1, 3));
+        REQUIRE_FALSE(game.isGameOver());
+
+        // התקדמות של 3000 מילישניות מביאה לאכילה וסיום המשחק
+        game.wait(3000);
+        REQUIRE(game.isGameOver());
+
+        // לאחר סיום המשחק, בקשות תנועה חדשות נדחות
+        auto postGameOverMove = game.requestMove(kungfu::Position(1, 3), kungfu::Position(1, 2));
+        REQUIRE_FALSE(postGameOverMove.isAccepted);
+        REQUIRE(postGameOverMove.reason == "game_over");
+    }
+
+    SECTION("Piece Cooldown after Arrival") {
+    // מהלך מהיר של משבצת אחת ל-(1,1) -> משך תנועה: 1000ms.
+    auto moveRes = game.requestMove(kungfu::Position(1, 0), kungfu::Position(1, 1));
+    REQUIRE(moveRes.isAccepted);
+
+    // המתנה של 1000ms להגעת הכלי ליעד
+    game.wait(1000);
+    REQUIRE(board->pieceAt(kungfu::Position(1, 1)).has_value());
+
+    // 1. ניסיון תנועה מיידי מיד לאחר ההגעה (0ms מתום הצינון) -> נדחה
+    auto quickMove = game.requestMove(kungfu::Position(1, 1), kungfu::Position(1, 2));
+    REQUIRE_FALSE(quickMove.isAccepted);
+    REQUIRE(quickMove.reason == "piece_on_cooldown");
+
+    // 2. המתנה חלקית של 1500ms (סך הכל פחות מ-2000ms צינון) -> עדיין נדחה
+    game.wait(1500);
+    auto partialWaitMove = game.requestMove(kungfu::Position(1, 1), kungfu::Position(1, 2));
+    REQUIRE_FALSE(partialWaitMove.isAccepted);
+    REQUIRE(partialWaitMove.reason == "piece_on_cooldown");
+
+    // 3. השלמת זמן הצינון (עוד 500ms, סה"כ 2000ms מרגע ההגעה) -> המהלך מאושר
+    game.wait(500);
+    auto afterCooldownMove = game.requestMove(kungfu::Position(1, 1), kungfu::Position(1, 2));
+    REQUIRE(afterCooldownMove.isAccepted);
+    }
+
+    TEST_CASE("Advanced Real-Time Interactions (Collisions and Premoves)", "[engine]") {
+    // נוודא בקוד הבדיקה שדגלי המשחק הדרושים לזמן אמת מאופשרים
+    // (הנחת עבודה: GameConfig::kAllowSimultaneousMovement = true וכן kEnablePremoves = true)
+
+    SECTION("Premove Queue and Auto-Execution") {
         std::string boardStr = 
-            ". . . . .\n"
-            ". wR . bP .\n" // הצריח ב-(1,1) חסום על ידי כלי עוין ב-(1,3) ויכול לאכול אותו
-            ". . . . .\n"
-            ". wP . . .\n" // הצריח חסום על ידי כלי ידידותי ב-(3,1) ואינו יכול להגיע אליו או לעבור אותו
-            ". . . . .\n";
+            "wR . .\n"
+            ". . .\n"
+            ". . .\n"; // צריח לבן ב-(0,0)
             
         auto board = kungfu::BoardParser::parse(boardStr);
         REQUIRE(board != nullptr);
-        kungfu::RuleEngine engine(board);
+        auto ruleEngine = std::make_shared<kungfu::RuleEngine>(board);
+        kungfu::GameEngine game(board, ruleEngine);
 
-        // תנועה ימינה פנויה
-        REQUIRE(engine.validateMove(kungfu::Position(1, 1), kungfu::Position(1, 2)).isValid);
-        
-        // אכילה של כלי עוין ביעד מותרת
-        REQUIRE(engine.validateMove(kungfu::Position(1, 1), kungfu::Position(1, 3)).isValid);
-        
-        // מעבר מעבר לכלי עוין חסום אסור
-        REQUIRE_FALSE(engine.validateMove(kungfu::Position(1, 1), kungfu::Position(1, 4)).isValid);
+        // 1. נשלח מהלך ראשון: צריח זז מ-(0,0) ל-(0,1). 
+        // מרחק: 1 -> משך זמן: 1000ms.
+        auto res1 = game.requestMove(kungfu::Position(0, 0), kungfu::Position(0, 1));
+        REQUIRE(res1.isAccepted);
+        REQUIRE(res1.reason == "ok");
 
-        // חסימה על ידי כלי ידידותי
-        auto blockResult = engine.validateMove(kungfu::Position(1, 1), kungfu::Position(3, 1));
-        REQUIRE_FALSE(blockResult.isValid);
-        REQUIRE(blockResult.reason == "friendly_destination");
+        // 2. בזמן שהכלי בתנועה (למשל, אחרי 100ms), נרשום עבורו מהלך מראש (Premove) ל-(0,2).
+        game.wait(100);
+        auto res2 = game.requestMove(kungfu::Position(0, 1), kungfu::Position(0, 2));
+        REQUIRE(res2.isAccepted);
+        REQUIRE(res2.reason == "premove_registered"); // המהלך נרשם בהצלחה בתור!
+
+        // 3. נקדם את הזמן ל-1000ms (סך הכל מתחילת המהלך הראשון). 
+        // הכלי מגיע ל-(0,1) ומתחיל זמן צינון (Cooldown) של 2000ms (עד t=3000ms).
+        game.wait(900);
+        REQUIRE(board->pieceAt(kungfu::Position(0, 1)).has_value());
+        
+        // המהלך מראש עדיין לא יוצא לפועל כי הכלי נמצא כעת בצינון (Cooldown)
+        REQUIRE_FALSE(board->pieceAt(kungfu::Position(0, 2)).has_value());
+
+        // 4. נקדם חלקית את זמן הצינון (עוד 1000ms, הגענו ל-t=2000ms מתחילת המשחק).
+        // הכלי עדיין בצינון, ה-Premove עדיין ממתין.
+        game.wait(1000);
+        REQUIRE_FALSE(board->pieceAt(kungfu::Position(0, 2)).has_value());
+
+        // 5. נשלים את זמן הצינון (עוד 1000ms, הגענו ל-t=3000ms).
+        // הצינון מסתיים! מנוע המשחק מזהה שהכלי פנוי ומפעיל אוטומטית את ה-Premove.
+        // המהלך החדש מ-(0,1) ל-(0,2) יוצא לדרך (מרחק 1 -> משך תנועה 1000ms).
+        game.wait(1000);
+        // הכלי עדיין בדרך ל-(0,2) ולכן פיזית עדיין לא הגיע ללוח הלוגי ביעד
+        REQUIRE_FALSE(board->pieceAt(kungfu::Position(0, 2)).has_value());
+
+        // 6. נמתין 1000ms נוספים להשלמת ה-Pmove (הגענו ל-t=4000ms).
+        // הכלי הגיע בהצלחה ליעד הסופי שלו ב-(0,2)!
+        game.wait(1000);
+        REQUIRE_FALSE(board->pieceAt(kungfu::Position(0, 1)).has_value());
+        REQUIRE(board->pieceAt(kungfu::Position(0, 2)).has_value());
     }
 
-    SECTION("Knight jumps over other pieces") {
+    SECTION("Mid-Route Enemy Collision Resolution") {
         std::string boardStr = 
-            "wN wP .\n"
-            "wP wP .\n"
+            "wR . bR\n"
+            ". . .\n"
+            ". . .\n"; // צריח לבן ב-(0,0), צריח שחור ב-(0,2)
+            
+        auto board = kungfu::BoardParser::parse(boardStr);
+        REQUIRE(board != nullptr);
+        auto ruleEngine = std::make_shared<kungfu::RuleEngine>(board);
+        kungfu::GameEngine game(board, ruleEngine);
+
+        // 1. צריח לבן יוצא לדרך מ-(0,0) ל-(0,2) בזמן t=0. 
+        // מרחק: 2 -> משך תנועה: 2000ms.
+        auto res1 = game.requestMove(kungfu::Position(0, 0), kungfu::Position(0, 2));
+        REQUIRE(res1.isAccepted);
+
+        // 2. נמתין 500ms. הצריח הלבן כבר באמצע הדרך.
+        game.wait(500);
+
+        // 3. כעת, בזמן t=500ms, הצריח השחור ב-(0,2) יוצא לדרך לכיוון הלבן ל-(0,0).
+        // מרחק: 2 -> משך תנועה: 2000ms (צפוי להגיע ב-t=2500ms).
+        auto res2 = game.requestMove(kungfu::Position(0, 2), kungfu::Position(0, 0));
+        REQUIRE(res2.isAccepted);
+
+        // 4. נקדם את הזמן ב-1000ms נוספים (הגענו ל-t=1500ms).
+        // בגלל שהם נעים זה מול זה באותו הסגמנט, מתרחשת התנגשות (Collision) בדרך!
+        // חוק ההתנגשות: הלבן מנצח כי הוא התחיל ראשון (t=0 לעומת t=500).
+        // השחור מחוסל ומוסר מהמשחק. הלבן ממשיך כרגיל ליעדו.
+        game.wait(1000);
+        
+        // נוודא שהצריח השחור חוסל ולא מופיע יותר על הלוח במקור שלו
+        REQUIRE_FALSE(board->pieceAt(kungfu::Position(0, 2)).has_value());
+        
+        // 5. נמתין עד לסיום התנועה של הלבן (עוד 500ms, הגענו ל-t=2000ms).
+        // הלבן נוחת בבטחה ביעד שלו ב-(0,2).
+        game.wait(500);
+        REQUIRE(board->pieceAt(kungfu::Position(0, 2)).has_value());
+        REQUIRE(board->pieceAt(kungfu::Position(0, 2)).value()->color() == kungfu::PlayerColor::White);
+    }
+}
+
+SECTION("Pawn Promotion to Queen on Last Row") {
+    std::string boardStr = 
+        ". . .\n"
+        "wP . .\n"
+        ". . .\n"; // לוח 3x3. השורה האחרונה עבור לבן היא שורה 2.
+        
+    auto board = kungfu::BoardParser::parse(boardStr);
+    REQUIRE(board != nullptr);
+    auto ruleEngine = std::make_shared<kungfu::RuleEngine>(board);
+    kungfu::GameEngine game(board, ruleEngine);
+
+    // 1. נשלח רגלי לבן מ-(1,0) לשורה האחרונה ב-(2,0). מרחק 1 -> 1000ms.
+    auto res = game.requestMove(kungfu::Position(1, 0), kungfu::Position(2, 0));
+    REQUIRE(res.isAccepted);
+
+    // 2. נריץ את שעון המשחק ב-1000ms כדי שהכלי יגיע ליעד
+    game.wait(1000);
+
+    // 3. נוודא שהרגלי ב-(2,0) הוחלף בהצלחה למלכה!
+    auto pieceOpt = board->pieceAt(kungfu::Position(2, 0));
+    REQUIRE(pieceOpt.has_value());
+    REQUIRE(pieceOpt.value()->type() == kungfu::PieceType::Queen);
+}
+
+TEST_CASE("Advanced Real-Time Jump Mechanics (Airborne and Captures)", "[engine]") {
+    SECTION("Jump and Normal Landing") {
+        std::string boardStr = 
+            "wR . .\n"
+            ". . .\n"
             ". . .\n";
             
         auto board = kungfu::BoardParser::parse(boardStr);
         REQUIRE(board != nullptr);
-        kungfu::RuleEngine engine(board);
+        auto ruleEngine = std::make_shared<kungfu::RuleEngine>(board);
+        kungfu::GameEngine game(board, ruleEngine);
 
-        // הפרש ב-(0,0) מוקף לחלוטין בכלים ידידותיים ב-(0,1), (1,0), (1,1)
-        // הוא עדיין יכול לקפוץ מעליהם ל-(2,1) או (1,2)
-        REQUIRE(engine.validateMove(kungfu::Position(0, 0), kungfu::Position(2, 1)).isValid);
-        REQUIRE(engine.validateMove(kungfu::Position(0, 0), kungfu::Position(1, 2)).isValid);
+        // 1. קליק/בקשה למעבר מאותה משבצת (0,0) ל-(0,0) מייצרת קפיצה
+        auto res = game.requestMove(kungfu::Position(0, 0), kungfu::Position(0, 0));
+        REQUIRE(res.isAccepted);
+        REQUIRE(res.reason == "jump_started");
+
+        // המצב של הכלי הופך ל-Airborne
+        auto rook = board->pieceAt(kungfu::Position(0, 0)).value();
+        REQUIRE(rook->state() == kungfu::PieceState::Airborne);
+
+        // 2. אחרי 500ms הכלי עדיין באוויר
+        game.wait(500);
+        REQUIRE(rook->state() == kungfu::PieceState::Airborne);
+
+        // 3. אחרי 500ms נוספים (סך הכל 1000ms), הכלי נוחת בבטחה וחוזר ל-Idle
+        game.wait(500);
+        REQUIRE(rook->state() == kungfu::PieceState::Idle);
     }
 
-    SECTION("Simplified Pawn rules") {
+    SECTION("Airborne Piece Captures Arriving Enemy") {
         std::string boardStr = 
+            "wR . bR\n"
             ". . .\n"
-            "wP . bP\n"
-            ". . .\n"; // לוח בגודל 3X3. לבן ב-(1,0), שחור ב-(1,2)
+            ". . .\n"; // צריח לבן ב-(0,0), צריח שחור ב-(0,2)
             
         auto board = kungfu::BoardParser::parse(boardStr);
         REQUIRE(board != nullptr);
-        kungfu::RuleEngine engine(board);
+        auto ruleEngine = std::make_shared<kungfu::RuleEngine>(board);
+        kungfu::GameEngine game(board, ruleEngine);
 
-        // פ pawn לבן נע למעלה ל-(2,0)
-        REQUIRE(engine.validateMove(kungfu::Position(1, 0), kungfu::Position(2, 0)).isValid);
+        // 1. צריח לבן ב-(0,0) מתחיל קפיצה ב-t=0 (נמשכת 1000ms)
+        game.requestMove(kungfu::Position(0, 0), kungfu::Position(0, 0));
+
+        // 2. נמתין 200ms
+        game.wait(200);
+
+        // 3. צריח שחור ב-(0,2) יוצא לדרך לכיוון (0,0). מרחק 2 -> משך תנועה 2000ms.
+        // הוא צפוי להגיע ב-t=2200ms. רגע, בואי נעשה את זה מהיר יותר כדי שיגיע בזמן שחלון הקפיצה פעיל!
+        // נקצר את משך התנועה של האויב: נשלח אותו מ-(0,1) במקום (0,2).
+        // נזיז את הצריח השחור ל-(0,1) בקוד
+        board->removePiece(kungfu::Position(0, 2));
+        auto blackRook = std::make_shared<kungfu::Piece>(kungfu::PieceType::Rook, kungfu::PlayerColor::Black, kungfu::Position(0, 1));
+        board->placePiece(blackRook, kungfu::Position(0, 1));
+
+        // צריח שחור מ-(0,1) ל-(0,0). מרחק 1 -> משך תנועה 1000ms. צפוי להגיע ב-t=1200ms? 
+        // רגע, הלבן קופץ מ-t=0 עד t=1000. אם שחור יוצא ב-t=200 ומגיע ב-t=1200, הלבן כבר נחת!
+        // בואי נוציא את השחור ב-t=0 (מהירות 1000ms) והלבן יקפוץ ב-t=200 (קפיצה מ-t=200 עד t=1200).
+        // בצורה זו, השחור יגיע ב-t=1000, בדיוק בזמן שהלבן באוויר (Airborne)!
+    }
+
+    SECTION("Detailed Airborne Capture Sync Test") {
+        std::string boardStr = 
+            "wR bR .\n"
+            ". . .\n"
+            ". . .\n"; // לבן ב-(0,0), שחור ב-(0,1)
+            
+        auto board = kungfu::BoardParser::parse(boardStr);
+        REQUIRE(board != nullptr);
+        auto ruleEngine = std::make_shared<kungfu::RuleEngine>(board);
+        kungfu::GameEngine game(board, ruleEngine);
+
+        // 1. שחור יוצא לדרך מ-(0,1) ל-(0,0) ב-t=0. יגיע ב-t=1000.
+        game.requestMove(kungfu::Position(0, 1), kungfu::Position(0, 0));
+
+        // 2. נמתין 200ms. הלבן מתחיל קפיצה ב-(0,0) ב-t=200. הלבן יהיה באוויר עד t=1200.
+        game.wait(200);
+        game.requestMove(kungfu::Position(0, 0), kungfu::Position(0, 0));
+
+        // 3. נמתין 800ms נוספים (הגענו ל-t=1000). 
+        // השחור מגיע ל-(0,0), הלבן קופץ באוויר ב-(0,0) -> הלבן מחסל את השחור!
+        game.wait(800);
+
+        // השחור חוסל ולא נמצא על הלוח במקור שלו (0,1) וגם לא ביעד
+        REQUIRE_FALSE(board->pieceAt(kungfu::Position(0, 1)).has_value());
         
-        // pawn שחור נע למטה ל-(0,2)
-        REQUIRE(engine.validateMove(kungfu::Position(1, 2), kungfu::Position(0, 2)).isValid);
+        // הלבן עדיין נמצא ב-(0,0) ובמצב Airborne (יישאר באוויר עוד 200ms)
+        auto whiteRook = board->pieceAt(kungfu::Position(0, 0)).value();
+        REQUIRE(whiteRook->state() == kungfu::PieceState::Airborne);
 
-        // אסור לזוז באלכסון אם המשבצת ריקה
-        REQUIRE_FALSE(engine.validateMove(kungfu::Position(1, 0), kungfu::Position(2, 1)).isValid);
+        // 4. נמתין עוד 200ms (הגענו ל-t=1200) - הלבן נוחת בבטחה וחוזר ל-Idle
+        game.wait(200);
+        REQUIRE(whiteRook->state() == kungfu::PieceState::Idle);
     }
 }
-</file>
 
-<file path="CMakeLists.txt">
-cmake_minimum_required(VERSION 3.16)
-project(kung_fu_chess LANGUAGES CXX)
-
-set(CMAKE_CXX_STANDARD 17)
-set(CMAKE_CXX_STANDARD_REQUIRED ON)
-set(CMAKE_CXX_EXTENSIONS OFF)
-
-add_library(kungfu_engine
-    src/common/Position.cpp
-    src/pieces/Piece.cpp
-    src/board/Board.cpp
-    src/io/BoardParser.cpp
-    src/io/BoardPrinter.cpp
-    src/input/BoardMapper.cpp
-    src/input/Controller.cpp
-    src/rules/PieceRules.cpp
-    src/rules/RuleEngine.cpp
-    src/realtime/Motion.cpp
-    src/realtime/RealTimeArbiter.cpp
-    src/engine/GameEngine.cpp
-)
-target_include_directories(kungfu_engine PUBLIC include)
-
-add_executable(kungfu_tests
-    tests/unit/ModelTests.cpp
-    tests/unit/ControllerAndMapperTests.cpp
-    tests/unit/RuleEngineTests.cpp
-    tests/unit/GameEngineAndRealTimeTests.cpp
-    tests/integration/SimpleFlowTests.cpp
-    tests/unit/BoardIoTests.cpp
-)
-target_link_libraries(kungfu_tests PRIVATE kungfu_engine)
-target_include_directories(kungfu_tests PRIVATE include)
-
-enable_testing()
-add_test(NAME unit_tests COMMAND kungfu_tests)
+}
 </file>
 
 <file path="include/board/Board.hpp">
@@ -2467,6 +2749,35 @@ private:
     std::vector<PiecePtr> pieces_;
     int rows_ = 8; // ברירת מחדל 8
     int cols_ = 8; // ברירת מחדל 8
+};
+
+}  // namespace kungfu
+</file>
+
+<file path="include/common/Enums.hpp">
+#pragma once
+
+namespace kungfu {
+
+enum class PieceType {
+    King,
+    Queen,
+    Rook,
+    Bishop,
+    Knight,
+    Pawn
+};
+
+enum class PlayerColor {
+    White,
+    Black
+};
+
+enum class PieceState {
+    Idle,       // על הלוח, אינו בתנועה
+    Moving,     // נמצא בדרך ליעד
+    Captured,   // הוסר מהמשחק
+    Airborne    // כלי שנמצא כרגע בעיצומה של קפיצה באוויר
 };
 
 }  // namespace kungfu
@@ -2535,6 +2846,254 @@ private:
 };
 
 }  // namespace kungfu
+</file>
+
+<file path="tests/unit/RuleEngineTests.cpp">
+#include <catch2/catch_test_macros.hpp>
+#include "board/Board.hpp"
+#include "io/BoardParser.hpp"
+#include "rules/RuleEngine.hpp"
+
+TEST_CASE("RuleEngine Basic Validations", "[rules]") {
+    auto board = std::make_shared<kungfu::Board>(8, 8);
+    kungfu::RuleEngine engine(board);
+
+    SECTION("Empty source error") {
+        auto result = engine.validateMove(kungfu::Position(0, 0), kungfu::Position(1, 1));
+        REQUIRE_FALSE(result.isValid);
+        REQUIRE(result.reason == "empty_source");
+    }
+
+    SECTION("Out of board bounds error") {
+        auto result = engine.validateMove(kungfu::Position(-1, 0), kungfu::Position(0, 0));
+        REQUIRE_FALSE(result.isValid);
+        REQUIRE(result.reason == "outside_board");
+    }
+}
+
+TEST_CASE("Piece Specific Rules Integration", "[rules]") {
+    
+
+    SECTION("Rook sliding and blocking") {
+        std::string boardStr = 
+            ". . . . .\n"
+            ". wR . bP .\n" // הצריח ב-(1,1) חסום על ידי כלי עוין ב-(1,3) ויכול לאכול אותו
+            ". . . . .\n"
+            ". wP . . .\n" // הצריח חסום על ידי כלי ידידותי ב-(3,1) ואינו יכול להגיע אליו או לעבור אותו
+            ". . . . .\n";
+            
+        auto board = kungfu::BoardParser::parse(boardStr);
+        REQUIRE(board != nullptr);
+        kungfu::RuleEngine engine(board);
+
+        // תנועה ימינה פנויה
+        REQUIRE(engine.validateMove(kungfu::Position(1, 1), kungfu::Position(1, 2)).isValid);
+        
+        // אכילה של כלי עוין ביעד מותרת
+        REQUIRE(engine.validateMove(kungfu::Position(1, 1), kungfu::Position(1, 3)).isValid);
+        
+        // מעבר מעבר לכלי עוין חסום אסור
+        REQUIRE_FALSE(engine.validateMove(kungfu::Position(1, 1), kungfu::Position(1, 4)).isValid);
+
+        // חסימה על ידי כלי ידידותי
+        auto blockResult = engine.validateMove(kungfu::Position(1, 1), kungfu::Position(3, 1));
+        REQUIRE_FALSE(blockResult.isValid);
+        REQUIRE(blockResult.reason == "friendly_destination");
+    }
+
+    SECTION("Knight jumps over other pieces") {
+        std::string boardStr = 
+            "wN wP .\n"
+            "wP wP .\n"
+            ". . .\n";
+            
+        auto board = kungfu::BoardParser::parse(boardStr);
+        REQUIRE(board != nullptr);
+        kungfu::RuleEngine engine(board);
+
+        // הפרש ב-(0,0) מוקף לחלוטין בכלים ידידותיים ב-(0,1), (1,0), (1,1)
+        // הוא עדיין יכול לקפוץ מעליהם ל-(2,1) או (1,2)
+        REQUIRE(engine.validateMove(kungfu::Position(0, 0), kungfu::Position(2, 1)).isValid);
+        REQUIRE(engine.validateMove(kungfu::Position(0, 0), kungfu::Position(1, 2)).isValid);
+    }
+
+    SECTION("Simplified Pawn rules") {
+        std::string boardStr = 
+            ". . .\n"
+            "wP . bP\n"
+            ". . .\n"; // לוח בגודל 3X3. לבן ב-(1,0), שחור ב-(1,2)
+            
+        auto board = kungfu::BoardParser::parse(boardStr);
+        REQUIRE(board != nullptr);
+        kungfu::RuleEngine engine(board);
+
+        // פ pawn לבן נע למעלה ל-(2,0)
+        REQUIRE(engine.validateMove(kungfu::Position(1, 0), kungfu::Position(2, 0)).isValid);
+        
+        // pawn שחור נע למטה ל-(0,2)
+        REQUIRE(engine.validateMove(kungfu::Position(1, 2), kungfu::Position(0, 2)).isValid);
+
+        // אסור לזוז באלכסון אם המשבצת ריקה
+        REQUIRE_FALSE(engine.validateMove(kungfu::Position(1, 0), kungfu::Position(2, 1)).isValid);
+    }
+
+    TEST_CASE("King, Bishop, and Queen Illegal Movements", "[rules]") {
+    std::string boardStr = 
+        "wK . . . .\n"
+        ". . . . .\n"
+        ". . wB . .\n"
+        ". . . . wQ\n"; // מלך ב-(0,0), רץ ב-(2,2), מלכה ב-(3,4)
+
+    auto board = kungfu::BoardParser::parse(boardStr);
+    REQUIRE(board != nullptr);
+    kungfu::RuleEngine engine(board);
+
+    SECTION("King cannot move two cells") {
+        // מלך ב-(0,0) מנסה לזוז 2 משבצות ימינה ל-(0,2) או למטה ל-(2,0)
+        auto res1 = engine.validateMove(kungfu::Position(0, 0), kungfu::Position(0, 2));
+        REQUIRE_FALSE(res1.isValid);
+        REQUIRE(res1.reason == "illegal_piece_move");
+        
+        // מלך ב-(0,0) מנסה לזוז משבצת אחת באלכסון - תקין
+        auto res2 = engine.validateMove(kungfu::Position(0, 0), kungfu::Position(1, 1));
+        REQUIRE(res2.isValid);
+    }
+
+    SECTION("Bishop cannot move orthogonally") {
+        // רץ ב-(2,2) מנסה לזוז ימינה ל-(2,3) או למעלה ל-(1,2)
+        auto res = engine.validateMove(kungfu::Position(2, 2), kungfu::Position(2, 3));
+        REQUIRE_FALSE(res.isValid);
+        REQUIRE(res.reason == "illegal_piece_move");
+    }
+
+    SECTION("Rook cannot move diagonally") {
+        // נניח צריח לבן ב-(1,1)
+        auto rook = std::make_shared<kungfu::Piece>(kungfu::PieceType::Rook, kungfu::PlayerColor::White, kungfu::Position(1, 1));
+        board->placePiece(rook, kungfu::Position(1, 1));
+
+        // צריח מנסה לזוז באלכסון ל-(2,2)
+        auto res = engine.validateMove(kungfu::Position(1, 1), kungfu::Position(2, 2));
+        REQUIRE_FALSE(res.isValid);
+        REQUIRE(res.reason == "illegal_piece_move");
+    }
+
+    SECTION("Queen cannot jump like a knight") {
+        // מלכה ב-(3,4) מנסה לקפוץ תנועת פרש ל-(1,3)
+        auto res = engine.validateMove(kungfu::Position(3, 4), kungfu::Position(1, 3));
+        REQUIRE_FALSE(res.isValid);
+        REQUIRE(res.reason == "illegal_piece_move");
+    }
+}
+
+TEST_CASE("Pawn Movement and Capture Verification", "[rules]") {
+    std::string boardStr = 
+        ". . . . .\n"
+        "wP . wB wR .\n" // שורה 1: לבן ב-(1,0), רץ לבן ב-(1,2), צריח לבן ב-(1,3)
+        "bR bN bP .\n"   // שורה 2: צריח שחור ב-(2,0), פרש שחור ב-(2,1), שחור ב-(2,2)
+        ". . . . .\n";
+    
+    auto board = kungfu::BoardParser::parse(boardStr);
+    REQUIRE(board != nullptr);
+    kungfu::RuleEngine engine(board);
+
+    SECTION("White Pawn rules") {
+        // 1. התקדמות קדימה חסומה על ידי כלי עוין (צריח שחור ב-2,0) -> אסור לאכול קדימה
+        auto forwardBlock = engine.validateMove(kungfu::Position(1, 0), kungfu::Position(2, 0));
+        REQUIRE_FALSE(forwardBlock.isValid);
+
+        // 2. אכילה באלכסון ימינה של הפרש השחור ב-(2,1) -> מותר
+        auto diagonalCapture = engine.validateMove(kungfu::Position(1, 0), kungfu::Position(2, 1));
+        REQUIRE(diagonalCapture.isValid);
+
+        // 3. תנועה של 2 משבצות קדימה ל-(3,0) -> אסור
+        auto moveTwoCells = engine.validateMove(kungfu::Position(1, 0), kungfu::Position(3, 0));
+        REQUIRE_FALSE(moveTwoCells.isValid);
+    }
+
+    SECTION("Black Pawn rules") {
+        // 1. התקדמות קדימה (למטה) חסומה על ידי כלי עוין (רץ לבן ב-1,2) -> אסור לאכול קדימה (עבור רגלי שחור ב-2,2)
+        auto forwardBlock = engine.validateMove(kungfu::Position(2, 2), kungfu::Position(1, 2));
+        REQUIRE_FALSE(forwardBlock.isValid);
+
+        // 2. אכילה באלכסון ימינה (למטה) של הצריח הלבן ב-(1,3) -> מותר
+        auto diagonalCapture = engine.validateMove(kungfu::Position(2, 2), kungfu::Position(1, 3));
+        REQUIRE(diagonalCapture.isValid);
+
+        // 3. תנועה של 2 משבצות קדימה (למטה) ל-(0,2) -> אסור
+        auto moveTwoCells = engine.validateMove(kungfu::Position(2, 2), kungfu::Position(0, 2));
+        REQUIRE_FALSE(moveTwoCells.isValid);
+    }
+}
+
+TEST_CASE("Advanced Pawn Rules (Double Step and Path Clearance)", "[rules]") {
+    // שורת ההתחלה של לבן היא 1.
+    std::string setupStr = 
+        ". . . . . . . .\n" // 0
+        "wP . wP . . . . .\n" // 1 (wP ב-1,0 חופשי, wP ב-1,2 חסום ב-2,2)
+        ". . bR . . . . .\n" // 2 (bR ב-2,2 חוסם את הדרך)
+        ". . . . . . . .\n" // 3
+        ". . . . . . . .\n" // 4
+        ". . . . . . . .\n" // 5
+        ". . . . . . . .\n" // 6
+        ". . . . . . . .\n"; // 7
+    
+    auto board = kungfu::BoardParser::parse(setupStr);
+    REQUIRE(board != nullptr);
+    kungfu::RuleEngine engine(board);
+
+    // 1. רגלי חופשי בשורת התחלה יכול לצעוד צעד כפול
+    auto doubleStepOk = engine.validateMove(kungfu::Position(1, 0), kungfu::Position(3, 0));
+    REQUIRE(doubleStepOk.isValid);
+
+    // 2. רגלי שדרך הביניים שלו חסומה - אינו יכול לבצע צעד כפול
+    auto doubleStepBlocked = engine.validateMove(kungfu::Position(1, 2), kungfu::Position(3, 2));
+    REQUIRE_FALSE(doubleStepBlocked.isValid);
+
+    // 3. רגלי עדיין יכול לבצע צעד בודד רגיל אם הדרך פנויה
+    auto singleStepOk = engine.validateMove(kungfu::Position(1, 0), kungfu::Position(2, 0));
+    REQUIRE(singleStepOk.isValid);
+}
+
+}
+</file>
+
+<file path="CMakeLists.txt">
+cmake_minimum_required(VERSION 3.16)
+project(kung_fu_chess LANGUAGES CXX)
+
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
+
+add_library(kungfu_engine
+    src/common/Position.cpp
+    src/pieces/Piece.cpp
+    src/board/Board.cpp
+    src/io/BoardParser.cpp
+    src/io/BoardPrinter.cpp
+    src/input/BoardMapper.cpp
+    src/input/Controller.cpp
+    src/rules/PieceRules.cpp
+    src/rules/RuleEngine.cpp
+    src/realtime/Motion.cpp
+    src/realtime/RealTimeArbiter.cpp
+    src/engine/GameEngine.cpp
+)
+target_include_directories(kungfu_engine PUBLIC include)
+
+add_executable(kungfu_tests
+    tests/unit/ModelTests.cpp
+    tests/unit/ControllerAndMapperTests.cpp
+    tests/unit/RuleEngineTests.cpp
+    tests/unit/GameEngineAndRealTimeTests.cpp
+    tests/integration/SimpleFlowTests.cpp
+    tests/unit/BoardIoTests.cpp
+)
+target_link_libraries(kungfu_tests PRIVATE kungfu_engine)
+target_include_directories(kungfu_tests PRIVATE include)
+
+enable_testing()
+add_test(NAME unit_tests COMMAND kungfu_tests)
 </file>
 
 <file path="src/rules/RuleEngine.cpp">

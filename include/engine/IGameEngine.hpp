@@ -21,7 +21,7 @@ public:
     virtual int getBoardRows() const = 0;
     virtual int getBoardCols() const = 0;
     
-    // פונקציה חדשה לזיהוי צבע כלי במיקום מסוים
+    // פונקציה לזיהוי צבע כלי במיקום מסוים
     virtual std::optional<PlayerColor> getPieceColorAt(const Position& pos) const = 0;
 };
 

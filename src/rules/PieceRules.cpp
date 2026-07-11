@@ -1,4 +1,5 @@
 #include "rules/PieceRules.hpp"
+#include "common/GameConfig.hpp"
 #include <algorithm>
 
 namespace kungfu {

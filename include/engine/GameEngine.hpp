@@ -9,7 +9,6 @@
 
 namespace kungfu {
 
-// מבנה נתונים לייצוג מהלך מראש
 struct PremoveData {
     Position from;
     Position to;
@@ -32,8 +31,12 @@ public:
     GameSnapshot getSnapshot(std::optional<Position> selectedCell) const noexcept;
     
 private:
-    // פונקציית עזר להפעלת Premoves שממתינים לביצוע
     void processPremoves() noexcept;
+
+    // פונקציות עזר פרטיות לניהול וניתוב בקשות התנועה
+    MoveResult handlePremoveRegistration(const PiecePtr& piece, const Position& from, const Position& to) noexcept;
+    MoveResult handleJumpRequest(const PiecePtr& piece, const Position& pos) noexcept;
+    MoveResult handleStandardMove(const PiecePtr& piece, const Position& from, const Position& to) noexcept;
 
     std::shared_ptr<IBoard> board_;
     std::shared_ptr<RuleEngine> ruleEngine_;
@@ -41,7 +44,6 @@ private:
     int currentTimeMs_ = 0;
     bool gameOver_ = false;
 
-    // תור לשמירת מהלכים מראש המשויכים לכלים (כלי יכול להחזיק Premove אחד בכל רגע)
     std::vector<std::pair<PiecePtr, PremoveData>> premoves_;
 };
 

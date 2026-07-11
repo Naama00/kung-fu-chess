@@ -30,46 +30,55 @@ MoveResult GameEngine::requestMove(const Position& from, const Position& to) {
     }
     auto piece = sourcePieceOpt.value();
 
-    // בדיקה אם הכלי עסוק (בתנועה, באוויר או בצינון)
+    // 1. בדיקה אם הכלי עסוק (בתנועה, באוויר או בצינון)
     bool isPieceBusy = arbiter_.isPieceMoving(piece) || 
                        piece->state() == PieceState::Airborne || 
                        arbiter_.isOnCooldown(piece, currentTimeMs_);
     
     if (isPieceBusy) {
-        if (GameConfig::kEnablePremoves) {
-            auto it = std::find_if(premoves_.begin(), premoves_.end(), [&](const auto& pair) {
-                return pair.first == piece;
-            });
-            if (it != premoves_.end()) {
-                it->second = {from, to};
-            } else {
-                premoves_.push_back({piece, {from, to}});
-            }
-            return {true, "premove_registered"};
-        } else {
-            if (arbiter_.isPieceMoving(piece) || piece->state() == PieceState::Airborne) {
-                return {false, "motion_in_progress"};
-            }
-            return {false, "piece_on_cooldown"};
-        }
+        return handlePremoveRegistration(piece, from, to);
     }
 
-    // --- זיהוי בקשת קפיצה (Jump Request) ---
+    // 2. זיהוי בקשת קפיצה (Jump Request - תנועה מאותה משבצת לעצמה)
     if (from == to) {
-        // מניעת קפיצה של כלי מבוטל (לשלמות, למרות ש-isPieceBusy כבר חוסם כלים לא פנויים)
-        if (piece->state() == PieceState::Captured) {
-            return {false, "captured_piece_cannot_jump"};
-        }
-
-        // קפיצה נמשכת בדיוק 1,000 מילישניות
-        int jumpDurationMs = 1000;
-        piece->setState(PieceState::Airborne); // שינוי המצב ל-Airborne
-        arbiter_.startMotion(piece, from, to, currentTimeMs_, jumpDurationMs);
-
-        return {true, "jump_started"};
+        return handleJumpRequest(piece, from);
     }
 
-    // מהלך רגיל (from != to) - ללא שינוי...
+    // 3. טיפול במהלכי החלקה/תנועה רגילים
+    return handleStandardMove(piece, from, to);
+}
+
+MoveResult GameEngine::handlePremoveRegistration(const PiecePtr& piece, const Position& from, const Position& to) noexcept {
+    if (GameConfig::kEnablePremoves) {
+        auto it = std::find_if(premoves_.begin(), premoves_.end(), [&](const auto& pair) {
+            return pair.first == piece;
+        });
+        if (it != premoves_.end()) {
+            it->second = {from, to};
+        } else {
+            premoves_.push_back({piece, {from, to}});
+        }
+        return {true, "premove_registered"};
+    } else {
+        if (arbiter_.isPieceMoving(piece) || piece->state() == PieceState::Airborne) {
+            return {false, "motion_in_progress"};
+        }
+        return {false, "piece_on_cooldown"};
+    }
+}
+
+MoveResult GameEngine::handleJumpRequest(const PiecePtr& piece, const Position& pos) noexcept {
+    if (piece->state() == PieceState::Captured) {
+        return {false, "captured_piece_cannot_jump"};
+    }
+
+    piece->setState(PieceState::Airborne);
+    arbiter_.startMotion(piece, pos, pos, currentTimeMs_, GameConfig::kJumpDurationMs);
+
+    return {true, "jump_started"};
+}
+
+MoveResult GameEngine::handleStandardMove(const PiecePtr& piece, const Position& from, const Position& to) noexcept {
     auto validation = ruleEngine_->validateMove(from, to);
     if (!validation.isValid) {
         return {false, validation.reason};
@@ -119,16 +128,11 @@ void GameEngine::processPremoves() noexcept {
         bool isPieceBusy = arbiter_.isPieceMoving(piece) || arbiter_.isOnCooldown(piece, currentTimeMs_);
         if (!isPieceBusy) {
             // שליחת בקשת תנועה רגילה
-            auto result = requestMove(data.from, data.to);
-            if (result.isAccepted && result.reason == "ok") {
-                // הצליח לצאת לדרך! נמחק מהתור
-                it = premoves_.erase(it);
-                continue;
-            } else {
-                // המהלך הפך ללא חוקי כעת (למשל, חסימה חדשה) - נבטל את ה-Premove
-                it = premoves_.erase(it);
-                continue;
-            }
+            requestMove(data.from, data.to);
+
+            // בכל מקרה מוחקים את ה-Premove מהתור (בין אם הצליח ובין אם הפך ללא חוקי כעת)
+            it = premoves_.erase(it);
+            continue;
         }
         ++it;
     }
@@ -161,19 +165,6 @@ int GameEngine::getBoardCols() const {
     return board_ ? board_->cols() : 0;
 }
 
-void GameEngine::wait(int ms) noexcept {
-    if (ms <= 0 || !board_) {
-        return;
-    }
-
-    auto events = arbiter_.advanceTime(ms, currentTimeMs_);
-    for (const auto& event : events) {
-        if (event.capturedKing) {
-            gameOver_ = true;
-        }
-    }
-}
-
 GameSnapshot GameEngine::getSnapshot(std::optional<Position> selectedCell) const noexcept {
     GameSnapshot snap;
     snap.boardCols = getBoardCols();
@@ -185,7 +176,6 @@ GameSnapshot GameEngine::getSnapshot(std::optional<Position> selectedCell) const
         return snap;
     }
 
-    // הגדרת משתנה עזר מקומי למניעת הכפלות בקוד בקבוע קשיח
     const float cSize = static_cast<float>(GameConfig::kDefaultCellSize);
 
     for (const auto& piece : board_->pieces()) {
@@ -199,7 +189,6 @@ GameSnapshot GameEngine::getSnapshot(std::optional<Position> selectedCell) const
         pSnap.logicalPosition = piece->position();
         pSnap.state = piece->state();
 
-        // שינוי 2: שימוש ב-cSize במקום ב-100.0f
         float currentX = piece->position().col() * cSize;
         float currentY = piece->position().row() * cSize;
 
@@ -210,7 +199,6 @@ GameSnapshot GameEngine::getSnapshot(std::optional<Position> selectedCell) const
             auto motionOpt = arbiter_.getMotionForPiece(piece);
             if (motionOpt.has_value()) {
                 const auto& motion = motionOpt.value();
-                // שינוי 3: שימוש ב-cSize למציאת קואורדינטות הפיקסלים בתחילת וסוף המהלך
                 float startX = motion.from().col() * cSize;
                 float startY = motion.from().row() * cSize;
                 float endX = motion.to().col() * cSize;
