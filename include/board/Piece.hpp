@@ -27,7 +27,7 @@ public:
     void setState(PieceState state) { state_ = state; }
     void markMoved() { hasMoved_ = true; }
 
-    bool isMovable() const { return true; }
+    bool isMovable() const { return state_ != PieceState::Captured; }
 
 protected:
     PieceType type_;

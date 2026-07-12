@@ -36,10 +36,12 @@ MoveValidation RuleEngine::validateMove(const Position& from, const Position& to
         return {false, "illegal_piece_move"};
     }
 
-    // 4. מניעת פגיעה בכלי ידידותי ביעד
-    auto targetPieceOpt = board_->pieceAt(to);
-    if (targetPieceOpt.has_value() && targetPieceOpt.value()->color() == piece->color()) {
-        return {false, "friendly_destination"};
+    // 4. מניעת פגיעה בכלי ידידותי ביעד – לא חל על פרש, שיכול לנחות על כל משבצת
+    if (piece->type() != PieceType::Knight) {
+        auto targetPieceOpt = board_->pieceAt(to);
+        if (targetPieceOpt.has_value() && targetPieceOpt.value()->color() == piece->color()) {
+            return {false, "friendly_destination"};
+        }
     }
 
     // 5. שאילתת חוקיות גיאומטרית מול ה-Strategy המתאים

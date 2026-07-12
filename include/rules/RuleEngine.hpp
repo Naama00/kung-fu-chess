@@ -3,7 +3,7 @@
 #include <memory>
 #include "board/IBoard.hpp"
 #include "common/Position.hpp"
-#include "string"
+#include <string>
 
 namespace kungfu {
 

@@ -5,7 +5,7 @@
 #include <string>
 #include "input/BoardMapper.hpp"
 #include "common/Position.hpp"
-#include "common/GameConfig.hpp" 
+#include "input/InputConfig.hpp" 
 
 namespace kungfu {
 
@@ -18,8 +18,8 @@ struct ControllerResult {
 
 class Controller {
 public:
-    // שימוש בקבוע החדש כערך ברירת מחדל
-    Controller(std::shared_ptr<IGameEngine> engine, int cellSize = GameConfig::kDefaultCellSize);
+    // שימוש בקבוע כערך ברירת מחדל
+    Controller(std::shared_ptr<IGameEngine> engine, int cellSize = InputConfig::kDefaultCellSize);
 
     ControllerResult click(int x, int y);
     std::optional<Position> selectedPosition() const noexcept;

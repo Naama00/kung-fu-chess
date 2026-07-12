@@ -11,13 +11,13 @@ TEST_CASE("PremoveQueue Registration and Update", "[engine][premove]") {
     }
 
     SECTION("Registering a premove adds an entry") {
-        queue.registerOrUpdate(piece, kungfu::Position(0, 0), kungfu::Position(0, 1));
+        queue.registerOrUpdate(piece, kungfu::Position(0, 1));
         REQUIRE(queue.size() == 1);
     }
 
     SECTION("Registering again for the same piece updates, not duplicates") {
-        queue.registerOrUpdate(piece, kungfu::Position(0, 0), kungfu::Position(0, 1));
-        queue.registerOrUpdate(piece, kungfu::Position(0, 0), kungfu::Position(0, 2));
+        queue.registerOrUpdate(piece, kungfu::Position(0, 1));
+        queue.registerOrUpdate(piece, kungfu::Position(0, 2));
         REQUIRE(queue.size() == 1);
     }
 }
@@ -25,13 +25,16 @@ TEST_CASE("PremoveQueue Registration and Update", "[engine][premove]") {
 TEST_CASE("PremoveQueue Processing", "[engine][premove]") {
     kungfu::PremoveQueue queue;
     auto piece = std::make_shared<kungfu::Piece>(kungfu::PieceType::Rook, kungfu::PlayerColor::White, kungfu::Position(0, 0));
-    queue.registerOrUpdate(piece, kungfu::Position(0, 0), kungfu::Position(0, 2));
+    queue.registerOrUpdate(piece, kungfu::Position(0, 2));
 
     SECTION("Busy piece is not executed and remains queued") {
         int executeCallCount = 0;
         queue.processReady(
-            [](const kungfu::PiecePtr&) { return true; }, // תמיד עסוק
-            [&](const kungfu::Position&, const kungfu::Position&) { executeCallCount++; }
+            [](const kungfu::PiecePtr&) { return true; },
+            [&](const kungfu::Position&, const kungfu::Position&) -> kungfu::MoveResult {
+                executeCallCount++;
+                return {true, "ok"};
+            }
         );
 
         REQUIRE(executeCallCount == 0);
@@ -43,11 +46,12 @@ TEST_CASE("PremoveQueue Processing", "[engine][premove]") {
         int executeCallCount = 0;
 
         queue.processReady(
-            [](const kungfu::PiecePtr&) { return false; }, // פנוי
-            [&](const kungfu::Position& from, const kungfu::Position& to) {
+            [](const kungfu::PiecePtr&) { return false; },
+            [&](const kungfu::Position& from, const kungfu::Position& to) -> kungfu::MoveResult {
                 calledFrom = from;
                 calledTo = to;
                 executeCallCount++;
+                return {true, "ok"};
             }
         );
 
@@ -62,7 +66,10 @@ TEST_CASE("PremoveQueue Processing", "[engine][premove]") {
 
         queue.processReady(
             [](const kungfu::PiecePtr&) { return false; },
-            [&](const kungfu::Position&, const kungfu::Position&) { executeCallCount++; }
+            [&](const kungfu::Position&, const kungfu::Position&) -> kungfu::MoveResult {
+                executeCallCount++;
+                return {true, "ok"};
+            }
         );
 
         REQUIRE(executeCallCount == 0);
@@ -70,12 +77,15 @@ TEST_CASE("PremoveQueue Processing", "[engine][premove]") {
     }
 
     SECTION("Executor receives the piece's current position, not the original registration position") {
-        piece->setPosition(kungfu::Position(0, 1)); // הכלי כבר זז מאז הרישום המקורי
+        piece->setPosition(kungfu::Position(0, 1));
 
         kungfu::Position calledFrom(-1, -1);
         queue.processReady(
             [](const kungfu::PiecePtr&) { return false; },
-            [&](const kungfu::Position& from, const kungfu::Position&) { calledFrom = from; }
+            [&](const kungfu::Position& from, const kungfu::Position&) -> kungfu::MoveResult {
+                calledFrom = from;
+                return {true, "ok"};
+            }
         );
 
         REQUIRE(calledFrom == kungfu::Position(0, 1));

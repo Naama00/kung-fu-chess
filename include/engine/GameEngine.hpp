@@ -31,6 +31,7 @@ public:
     PlayerColor currentTurn() const noexcept { return currentTurn_; }
     std::shared_ptr<const IBoard> getBoard() const noexcept { return board_; }
     const RealTimeArbiter& getArbiter() const noexcept { return arbiter_; }
+    const std::vector<MoveResult>& lastPremoveFailures() const noexcept { return premoveFailures_; }
 
 private:
     void advanceTurn() noexcept;
@@ -49,6 +50,7 @@ private:
     int currentTimeMs_ = 0;
     bool gameOver_ = false;
     PlayerColor currentTurn_ = PlayerColor::White;
+    std::vector<MoveResult> premoveFailures_;
 };
 
 }  // namespace kungfu

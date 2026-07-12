@@ -67,7 +67,9 @@ MoveResult GameEngine::handlePremoveRegistration(const PiecePtr& piece, const Po
         return {false, "piece_on_cooldown"};
     }
 
-    premoveQueue_.registerOrUpdate(piece, from, to);
+    // כל מהלך שנשלח לכלי תפוס דורס את ה-premove הקיים (registerOrUpdate).
+    // "לבטל" premove = לשלוח מהלך לא חוקי שידרוס את הרשום, ויכשל בביצוע.
+    premoveQueue_.registerOrUpdate(piece, to);
     return {true, "premove_registered"};
 }
 
@@ -131,9 +133,16 @@ void GameEngine::wait(int ms) noexcept {
     }
 
     if (config_.enablePremoves && !gameOver_) {
+        premoveFailures_.clear();  // מנקים כשלונות מהסבב הקודם - רלוונטי רק לסבב ה-wait הנוכחי
         premoveQueue_.processReady(
             [this](const PiecePtr& piece) { return isPieceBusy(piece); },
-            [this](const Position& from, const Position& to) { requestMove(from, to); }
+            [this](const Position& from, const Position& to) -> MoveResult {
+                auto result = requestMove(from, to);
+                if (!result.isAccepted) {
+                    premoveFailures_.push_back(result);
+                }
+                return result;
+            }
         );
     }
 }

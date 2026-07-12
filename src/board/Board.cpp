@@ -57,8 +57,10 @@ bool Board::movePiece(const Position& from, const Position& to) {
         return false;
     }
 
+    // Board הוא מבנה נתונים גרידא ואינו מיישם כללי "אכילה" -
+    // זו אחריות בלעדית של RealTimeArbiter/GameEngine. אם התא תפוס, נכשל.
     if (pieceAt(to).has_value()) {
-        removePiece(to); // הסרת הכלי הנאכל בטוחה כעת
+        return false;
     }
 
     movingPiece->setPosition(to);

@@ -2,14 +2,14 @@
 
 #include <optional>
 #include "common/Position.hpp"
-#include "common/GameConfig.hpp" 
+#include "input/InputConfig.hpp"   
 
 namespace kungfu {
 
 class BoardMapper {
 public:
     // שימוש בקבוע החדש כערך ברירת מחדל
-    explicit BoardMapper(int cellSize = GameConfig::kDefaultCellSize);
+    explicit BoardMapper(int cellSize = InputConfig::kDefaultCellSize);
 
     std::optional<Position> pixelToCell(int x, int y, int rows, int cols) const noexcept;
 

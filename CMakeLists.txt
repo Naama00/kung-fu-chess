@@ -38,9 +38,14 @@ add_executable(kungfu_tests
     tests/unit/ModelTests.cpp
     tests/unit/ControllerAndMapperTests.cpp
     tests/unit/RuleEngineTests.cpp
-    tests/unit/GameEngineAndRealTimeTests.cpp
-    tests/integration/SimpleFlowTests.cpp
     tests/unit/BoardIoTests.cpp
+    tests/unit/PremoveQueueTests.cpp
+    tests/unit/engine/GameEngineTurnBasedTests.cpp
+    tests/unit/engine/GameEngineSimultaneousTests.cpp
+    tests/unit/engine/GameEnginePromotionTests.cpp
+    tests/unit/engine/GameEnginePremoveTests.cpp
+    tests/unit/engine/GameEngineJumpTests.cpp
+    tests/integration/SimpleFlowTests.cpp
 )
 target_link_libraries(kungfu_tests PRIVATE kungfu_engine Catch2::Catch2WithMain)
 target_include_directories(kungfu_tests PRIVATE include)

@@ -1,5 +1,6 @@
 #include "io/BoardParser.hpp"
 #include "board/Piece.hpp"
+#include "common/PieceTokenCodec.hpp"
 #include <sstream>
 #include <algorithm>
 #include <cctype>
@@ -39,34 +40,27 @@ std::vector<std::string> BoardParser::tokenize(const std::string& line) {
 bool BoardParser::isValidToken(const std::string& token) {
     if (token == ".") return true;
     if (token.size() != 2) return false;
-    
+
     char color = token[0];
-    char type = token[1];
-    
     bool validColor = (color == 'w' || color == 'b');
-    bool validType = (type == 'K' || type == 'Q' || type == 'R' || type == 'B' || type == 'N' || type == 'P');
-    
-    return validColor && validType;
+
+    return validColor && PieceTokenCodec::fromChar(token[1]).has_value();
 }
 
 std::shared_ptr<Piece> BoardParser::createPiece(const std::string& token, const Position& pos) {
     if (token == "." || token.size() < 2) {
         return nullptr;
     }
-    
+
     PlayerColor color = (token[0] == 'w') ? PlayerColor::White : PlayerColor::Black;
-    char type = token[1];
-    
-    switch (type) {
-        case 'K': return std::make_shared<Piece>(PieceType::King,   color, pos);
-        case 'Q': return std::make_shared<Piece>(PieceType::Queen,  color, pos);
-        case 'R': return std::make_shared<Piece>(PieceType::Rook,   color, pos);
-        case 'B': return std::make_shared<Piece>(PieceType::Bishop, color, pos);
-        case 'N': return std::make_shared<Piece>(PieceType::Knight, color, pos);
-        case 'P': return std::make_shared<Piece>(PieceType::Pawn,   color, pos);
-        default:  return nullptr;
+    auto typeOpt = PieceTokenCodec::fromChar(token[1]);
+    if (!typeOpt.has_value()) {
+        return nullptr;
     }
+
+    return std::make_shared<Piece>(typeOpt.value(), color, pos);
 }
+
 
 std::shared_ptr<Board> BoardParser::parse(const std::string& text) {
     auto lines = splitLines(text);

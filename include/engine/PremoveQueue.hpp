@@ -4,37 +4,31 @@
 #include <functional>
 #include "board/Piece.hpp"
 #include "common/Position.hpp"
+#include "engine/IGameEngine.hpp"
 
 namespace kungfu {
 
-struct PremoveData {
-    Position from;
-    Position to;
-};
-
-// חתימת הבדיקה: האם הכלי הנתון עסוק כרגע (בתנועה, באוויר, או בצינון)
-// המחלקה עצמה לא יודעת דבר על Arbiter/Cooldown - זו רק שאילתה חיצונית שמוזרקת
 using PieceBusyPredicate = std::function<bool(const PiecePtr&)>;
+using MoveExecutor = std::function<MoveResult(const Position& from, const Position& to)>;
 
-// חתימת ביצוע המהלך בפועל, בדרך כלל GameEngine::requestMove
-using MoveExecutor = std::function<void(const Position& from, const Position& to)>;
-
-// אחראית בלעדית על ניהול תור ה-premoves: רישום, עדכון, ניקוי כלים שנשבו,
-// והרצה אוטומטית כשהכלי מתפנה. אינה יודעת דבר על זמן, תור, או חוקי משחק.
 class PremoveQueue {
 public:
-    // רושמת premove חדש, או מעדכנת premove קיים לאותו כלי
-    void registerOrUpdate(const PiecePtr& piece, const Position& from, const Position& to);
+    // רושמת premove חדש, או מעדכנת premove קיים לאותו כלי.
+    // רק היעד (to) נשמר - הביצוע תמיד ישתמש במיקום החי של הכלי כ-from,
+    // כי הכלי עשוי לזוז בינתיים (למשל אחרי שהמהלך הקודם שלו נחת).
+    void registerOrUpdate(const PiecePtr& piece, const Position& to);
 
-    // עוברת על כל הרישומים; עבור כל כלי שכבר לא עסוק (לפי הפרדיקט) מבצעת את המהלך
-    // דרך ה-executor ומסירה את הרישום. כלים שנשבו מוסרים בלי ביצוע.
+    // מבטלת premove קיים לכלי נתון (אם קיים).
+    // נקראת כאשר השחקן מבצע מהלך לא חוקי – הכוונה לדרוס ולבטל את ה-premove.
+    void cancel(const PiecePtr& piece) noexcept;
+
     void processReady(const PieceBusyPredicate& isBusy, const MoveExecutor& execute);
 
     bool empty() const noexcept { return entries_.empty(); }
     size_t size() const noexcept { return entries_.size(); }
 
 private:
-    std::vector<std::pair<PiecePtr, PremoveData>> entries_;
+    std::vector<std::pair<PiecePtr, Position>> entries_;
 };
 
 }  // namespace kungfu

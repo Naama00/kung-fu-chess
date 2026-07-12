@@ -59,17 +59,17 @@ std::vector<Position> BishopRule::getLegalDestinations(const IBoard& board, cons
 std::vector<Position> QueenRule::getLegalDestinations(const IBoard& board, const Piece& piece) const {
     std::vector<Position> dests;
     dests.reserve(27);
-    
-    // שילוב יעיל של לוגיקת הצריח והרץ למניעת כפל קוד
-    RookRule rook;
-    BishopRule bishop;
-    
+
+    // שימוש ב-singletons הקיימים מה-Factory במקום יצירת אובייקטים זמניים
+    const auto& rook = PieceRuleFactory::getRule(PieceType::Rook);
+    const auto& bishop = PieceRuleFactory::getRule(PieceType::Bishop);
+
     auto rookDests = rook.getLegalDestinations(board, piece);
     auto bishopDests = bishop.getLegalDestinations(board, piece);
-    
+
     dests.insert(dests.end(), rookDests.begin(), rookDests.end());
     dests.insert(dests.end(), bishopDests.begin(), bishopDests.end());
-    
+
     return dests;
 }
 
@@ -92,11 +92,9 @@ std::vector<Position> KnightRule::getLegalDestinations(const IBoard& board, cons
         int c = currentCol + offset.second;
 
         if (r >= 0 && r < maxRows && c >= 0 && c < maxCols) {
-            Position target(r, c);
-            auto targetPieceOpt = board.pieceAt(target);
-            if (!targetPieceOpt.has_value() || targetPieceOpt.value()->color() != piece.color()) {
-                dests.push_back(target);
-            }
+            // פרש יכול לנחות על כל משבצת – כולל משבצות של כלים ידידותיים.
+            // זוהי הדרך היחידה להרוג כלים של עצמך.
+            dests.push_back(Position(r, c));
         }
     }
     return dests;

@@ -230,3 +230,37 @@ TEST_CASE("Pawn Double Step Depends on hasMoved, Not Absolute Row", "[rules]") {
         REQUIRE_FALSE(result.isValid);
     }
 }
+
+TEST_CASE("Knight Can Target Friendly Squares (Kung-Fu Rule)", "[rules][knight]") {
+    // פרש לבן ב-(0,0) מוקף ברגלים לבנים – בשחמט רגיל תנועה לריבוע ידידותי אסורה,
+    // בקונג-פו שחמט זה חוקי (הדרך היחידה לחסל כלי של עצמך).
+    std::string boardStr =
+        "wN . .\n"
+        ". . .\n"
+        ". wP .\n";
+
+    auto board = kungfu::BoardParser::parse(boardStr);
+    REQUIRE(board != nullptr);
+    kungfu::RuleEngine engine(board);
+
+    // קפיצה ל-(2,1) שם יושב רגלי ידידותי – חייב להיות חוקי עבור פרש
+    auto res = engine.validateMove(kungfu::Position(0, 0), kungfu::Position(2, 1));
+    REQUIRE(res.isValid);
+}
+
+TEST_CASE("Non-Knight Pieces Cannot Target Friendly Squares", "[rules][knight]") {
+    // וידוא שהחריג לפרשים לא השפיע על כלים אחרים
+    std::string boardStr =
+        "wR . .\n"
+        ". . .\n"
+        "wP . .\n";
+
+    auto board = kungfu::BoardParser::parse(boardStr);
+    REQUIRE(board != nullptr);
+    kungfu::RuleEngine engine(board);
+
+    // צריח לבן ב-(0,0) מנסה לנוע ל-(2,0) שם יושב רגלי לבן – אסור
+    auto res = engine.validateMove(kungfu::Position(0, 0), kungfu::Position(2, 0));
+    REQUIRE_FALSE(res.isValid);
+    REQUIRE(res.reason == "friendly_destination");
+}
