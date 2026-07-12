@@ -1,4 +1,6 @@
 #include "realtime/RealTimeArbiter.hpp"
+#include "realtime/CollisionDetector.hpp"
+#include "rules/CollisionResolver.hpp"
 #include "common/GameConfig.hpp"
 #include <algorithm>
 
@@ -12,157 +14,66 @@ bool RealTimeArbiter::hasActiveMotion() const noexcept {
 }
 
 void RealTimeArbiter::startMotion(PiecePtr piece, const Position& from, const Position& to, int currentTimeMs, int durationMs) noexcept {
-    activeMotions_.emplace_back(std::move(piece), from, to, currentTimeMs, durationMs);
+    activeMotions_.emplace_back(piece, from, to, currentTimeMs, durationMs);
+    // העברת הכלי למיקום זמני חסר השפעה כדי לפנות מיד את משבצת המוצא שלו
+    piece->setPosition(Position(-1, -1));
 }
 
 std::vector<ArrivalEvent> RealTimeArbiter::advanceTime(int ms, int& currentTimeMs, PromotionHandler promoteCallback) noexcept {
     std::vector<ArrivalEvent> events;
     currentTimeMs += ms;
 
-    handleMidRouteCollisions(events);
+    CollisionResolver resolver(board_, cooldownTracker_, config_);
 
-    for (auto it = activeMotions_.begin(); it != activeMotions_.end(); ) {
-        if (currentTimeMs >= it->arrivalTime()) {
-            if (processSingleArrival(it, currentTimeMs, events, promoteCallback)) {
-                it = activeMotions_.erase(it);
-            } else {
-                ++it;
-            }
-        } else {
-            ++it;
+    // 1. איתור ופתרון התנגשויות באמצע הדרך
+    auto midRouteCollisions = CollisionDetector::detectMidRouteCollisions(activeMotions_, config_);
+    for (const auto& col : midRouteCollisions) {
+        if (col.winner.piece()->state() != PieceState::Captured &&
+            col.loser.piece()->state() != PieceState::Captured) {
+            resolver.resolveMidRouteCollision(col.winner, col.loser, events);
         }
     }
 
-    return events;
-}
-
-void RealTimeArbiter::handleMidRouteCollisions(std::vector<ArrivalEvent>& events) noexcept {
-    if (!config_.allowSimultaneousMovement || activeMotions_.size() < 2) {
-        return;
-    }
-
-    for (size_t i = 0; i < activeMotions_.size(); ++i) {
-        for (size_t j = i + 1; j < activeMotions_.size(); ++j) {
-            auto& m1 = activeMotions_[i];
-            auto& m2 = activeMotions_[j];
-
-            if (m1.piece()->color() != m2.piece()->color()) {
-                // פרשים אינם יכולים להתנגש – הם קופצים מעל הלוח
-                if (m1.piece()->type() == PieceType::Knight || m2.piece()->type() == PieceType::Knight) {
-                    continue;
-                }
-
-                if (m1.from() == m2.to() && m1.to() == m2.from()) {
-                    auto& winner = (m1.startTime() <= m2.startTime()) ? m1 : m2;
-                    auto& loser = (m1.startTime() <= m2.startTime()) ? m2 : m1;
-                    (void)winner;
-
-                    loser.piece()->setState(PieceState::Captured);
-                    cooldownTracker_.clear(loser.piece()->id());
-                    board_->removePiece(loser.from());
-
-                    events.push_back({loser.from(), loser.from(), loser.piece(), false, true});
-                }
-            }
-        }
-    }
-
+    // ניקוי כלים שחוסלו באמצע הדרך מרשימת התנועות הפעילות
     activeMotions_.erase(
         std::remove_if(activeMotions_.begin(), activeMotions_.end(),
             [](const Motion& m) { return m.piece()->state() == PieceState::Captured; }),
         activeMotions_.end()
     );
-}
 
-bool RealTimeArbiter::processSingleArrival(
-    std::vector<Motion>::iterator it,
-    int currentTimeMs,
-    std::vector<ArrivalEvent>& events,
-    const PromotionHandler& promoteCallback
-) noexcept {
-    Position from = it->from();
-    Position to = it->to();
-    auto piece = it->piece();
+    // 2. איתור, פיצול ומיון כרונולוגי של הגעות ליעד
+    std::vector<Motion> dueMotions;
+    std::vector<Motion> remainingMotions;
+    dueMotions.reserve(activeMotions_.size());
+    remainingMotions.reserve(activeMotions_.size());
 
-    if (from == to && piece->state() == PieceState::Airborne) {
-        piece->setState(PieceState::Idle);
-        cooldownTracker_.setCooldown(piece->id(), currentTimeMs + config_.cooldownDurationMs);
-        events.push_back({from, to, piece, false, false});
-        return true;
-    }
-
-    auto targetPieceOpt = board_->pieceAt(to);
-
-    if (targetPieceOpt.has_value() && targetPieceOpt.value() && targetPieceOpt.value()->state() == PieceState::Airborne) {
-        auto airbornePiece = targetPieceOpt.value();
-
-        if (airbornePiece->color() != piece->color()) {
-            // כלי יריב באוויר ביעד – הגיע ראשון ועוצר את הכלי הנוכחי
-            piece->setState(PieceState::Captured);
-            cooldownTracker_.clear(piece->id());
-            board_->removePiece(from);
-
-            events.push_back({from, from, piece, false, true});
-            return true;
+    for (auto& m : activeMotions_) {
+        if (currentTimeMs >= m.arrivalTime()) {
+            dueMotions.push_back(std::move(m));
         } else {
-            // כלי ידידותי באוויר ביעד
-            if (piece->type() == PieceType::Knight) {
-                // פרש תמיד תופס כל כלי ביעד – גם ידידותי
-                airbornePiece->setState(PieceState::Captured);
-                cooldownTracker_.clear(airbornePiece->id());
-                board_->removePiece(to);
-                // ממשיך לנחיתה רגילה להלן
-            } else {
-                // כלי לא-פרש נעצר כשמשבצת היעד תפוסה על ידי ידיד
-                piece->setState(PieceState::Idle);
-                events.push_back({from, from, piece, false, true});
-                return true;
-            }
+            remainingMotions.push_back(std::move(m));
+        }
+    }
+    activeMotions_ = std::move(remainingMotions);
+
+    // מיון יציב כרונולוגי של הגעות
+    std::stable_sort(dueMotions.begin(), dueMotions.end(), [](const Motion& a, const Motion& b) noexcept {
+        return a.arrivalTime() < b.arrivalTime();
+    });
+
+    // פתרון הגעות לפי סדר כרונולוגי מדויק
+    for (const auto& motion : dueMotions) {
+        if (motion.piece()->state() == PieceState::Captured) {
+            continue;
+        }
+
+        if (!resolver.resolveArrival(motion, currentTimeMs, events, promoteCallback)) {
+            // תרחיש תיאורטי בו כלי לא נחת וצריך לחזור לרשימה
+            activeMotions_.push_back(motion);
         }
     }
 
-    if (targetPieceOpt.has_value() && targetPieceOpt.value() && targetPieceOpt.value()->color() == piece->color()) {
-        if (piece->type() == PieceType::Knight) {
-            // פרש תופס כלים ידידותיים על הלוח – הדרך היחידה לחסל כלי של עצמך
-            auto targetPiece = targetPieceOpt.value();
-            targetPiece->setState(PieceState::Captured);
-            cooldownTracker_.clear(targetPiece->id());
-            board_->removePiece(to);
-            // ממשיך לנחיתה רגילה להלן
-        } else {
-            // כלי לא-פרש נעצר על ידי כלי ידידותי
-            piece->setState(PieceState::Idle);
-            events.push_back({from, from, piece, false, true});
-            return true;
-        }
-    }
-
-    bool capturedKing = false;
-    if (targetPieceOpt.has_value() && targetPieceOpt.value()) {
-        auto targetPiece = targetPieceOpt.value();
-        if (targetPiece->type() == PieceType::King) {
-            capturedKing = true;
-        }
-        targetPiece->setState(PieceState::Captured);
-        cooldownTracker_.clear(targetPiece->id());
-        board_->removePiece(to);
-    }
-
-    board_->movePiece(from, to);
-    piece->setState(PieceState::Idle);
-    piece->markMoved();
-
-    PiecePtr finalPiece = piece;
-    if (promoteCallback) {
-        finalPiece = promoteCallback(piece, to);
-    }
-    if (finalPiece != piece) {
-        cooldownTracker_.clear(piece->id());
-    }
-    cooldownTracker_.setCooldown(finalPiece->id(), currentTimeMs + config_.cooldownDurationMs);
-    events.push_back({from, to, finalPiece, capturedKing, false});
-
-    return true;
+    return events;
 }
 
 bool RealTimeArbiter::isOnCooldown(const PiecePtr& piece, int currentTimeMs) const noexcept {
@@ -187,6 +98,15 @@ std::optional<Motion> RealTimeArbiter::getMotionForPiece(const PiecePtr& piece) 
     for (const auto& motion : activeMotions_) {
         if (motion.piece() == piece) {
             return motion;
+        }
+    }
+    return std::nullopt;
+}
+
+std::optional<PiecePtr> RealTimeArbiter::getPieceInTransitAt(const Position& pos) const noexcept {
+    for (const auto& m : activeMotions_) {
+        if (m.from() == pos || m.to() == pos) {
+            return m.piece();
         }
     }
     return std::nullopt;

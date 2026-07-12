@@ -32,7 +32,7 @@ public:
     bool isOnCooldown(const PiecePtr& piece, int currentTimeMs) const noexcept;
     bool isPieceMoving(const PiecePtr& piece) const noexcept;
     std::optional<Motion> getMotionForPiece(const PiecePtr& piece) const noexcept;
-
+    std::optional<PiecePtr> getPieceInTransitAt(const Position& pos) const noexcept;
     // מאציל ל-CooldownTracker; נשאר public כי הטסטים בודקים אותו דרך getArbiter()
     size_t cooldownEntryCount() const noexcept { return cooldownTracker_.entryCount(); }
 
@@ -44,10 +44,10 @@ private:
 
     void handleMidRouteCollisions(std::vector<ArrivalEvent>& events) noexcept;
     bool processSingleArrival(
-        std::vector<Motion>::iterator it,
-        int currentTimeMs,
-        std::vector<ArrivalEvent>& events,
-        const PromotionHandler& promoteCallback
+    const Motion& motion,
+    int currentTimeMs,
+    std::vector<ArrivalEvent>& events,
+    const PromotionHandler& promoteCallback
     ) noexcept;
 };
 

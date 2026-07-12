@@ -30,7 +30,14 @@ MoveResult GameEngine::requestMove(const Position& from, const Position& to) {
         return {false, "internal_error"};
     }
 
+    // ניסיון ראשון: חיפוש כלי העומד פיזית על הלוח
     auto sourcePieceOpt = board_->pieceAt(from);
+    
+    // ניסיון שני (פתרון ה-Premove): אם המשבצת ריקה, נבדוק אם יש כלי בדרך אליה או ממנה
+    if (!sourcePieceOpt.has_value() || !sourcePieceOpt.value()) {
+        sourcePieceOpt = arbiter_.getPieceInTransitAt(from);
+    }
+
     if (!sourcePieceOpt.has_value() || !sourcePieceOpt.value()) {
         return {false, "empty_source"};
     }

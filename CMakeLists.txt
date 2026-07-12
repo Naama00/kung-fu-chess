@@ -26,7 +26,9 @@ add_library(kungfu_engine
     src/rules/PieceRules.cpp
     src/rules/RuleEngine.cpp
     src/rules/PromotionRules.cpp
+    src/rules/CollisionResolver.cpp  
     src/realtime/Motion.cpp
+    src/realtime/CollisionDetector.cpp 
     src/realtime/RealTimeArbiter.cpp
     src/engine/GameEngine.cpp
     src/engine/PremoveQueue.cpp
@@ -40,6 +42,7 @@ add_executable(kungfu_tests
     tests/unit/RuleEngineTests.cpp
     tests/unit/BoardIoTests.cpp
     tests/unit/PremoveQueueTests.cpp
+    tests/unit/CollisionSystemTests.cpp 
     tests/unit/engine/GameEngineTurnBasedTests.cpp
     tests/unit/engine/GameEngineSimultaneousTests.cpp
     tests/unit/engine/GameEnginePromotionTests.cpp
