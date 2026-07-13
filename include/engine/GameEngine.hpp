@@ -1,3 +1,4 @@
+// include/engine/GameEngine.hpp
 #pragma once
 
 #include "engine/IGameEngine.hpp"
@@ -35,11 +36,7 @@ public:
 
 private:
     void advanceTurn() noexcept;
-    bool isPieceBusy(const PiecePtr& piece) const noexcept;
-
     MoveResult handlePremoveRegistration(const PiecePtr& piece, const Position& from, const Position& to) noexcept;
-    MoveResult handleJumpRequest(const PiecePtr& piece, const Position& pos) noexcept;
-    MoveResult handleStandardMove(const PiecePtr& piece, const Position& from, const Position& to) noexcept;
 
     std::shared_ptr<IBoard> board_;
     std::shared_ptr<RuleEngine> ruleEngine_;

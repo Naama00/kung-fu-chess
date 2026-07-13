@@ -1,3 +1,4 @@
+// src/engine/GameEngine.cpp
 #include "engine/GameEngine.hpp"
 #include "common/GameConfig.hpp"
 #include <algorithm>
@@ -15,12 +16,6 @@ GameEngine::GameEngine(std::shared_ptr<IBoard> board,
     , config_(config)
     , arbiter_(board_, config_) {}
 
-bool GameEngine::isPieceBusy(const PiecePtr& piece) const noexcept {
-    return arbiter_.isPieceMoving(piece) ||
-           piece->state() == PieceState::Airborne ||
-           arbiter_.isOnCooldown(piece, currentTimeMs_);
-}
-
 MoveResult GameEngine::requestMove(const Position& from, const Position& to) {
     if (gameOver_) {
         return {false, "game_over"};
@@ -30,8 +25,8 @@ MoveResult GameEngine::requestMove(const Position& from, const Position& to) {
         return {false, "internal_error"};
     }
 
+    // 1. איתור הכלי (על הלוח או בתנועה)
     auto sourcePieceOpt = board_->pieceAt(from);
-    
     if (!sourcePieceOpt.has_value() || !sourcePieceOpt.value()) {
         sourcePieceOpt = arbiter_.getPieceInTransitAt(from);
     }
@@ -41,6 +36,7 @@ MoveResult GameEngine::requestMove(const Position& from, const Position& to) {
     }
     auto piece = sourcePieceOpt.value();
 
+    // 2. אימות תורות וחוקיות סימולטנית (חוקי משחק עליונים)
     if (!config_.allowSimultaneousMovement) {
         if (piece->color() != currentTurn_) {
             return {false, "not_your_turn"};
@@ -50,18 +46,35 @@ MoveResult GameEngine::requestMove(const Position& from, const Position& to) {
         }
     }
 
-    if (isPieceBusy(piece)) {
+    // 3. שאילתת מצב פיזיקלי דרך ה-Arbiter בלבד (עקרון ה-DIP)
+    if (arbiter_.isPieceBusy(piece, currentTimeMs_)) {
         if (!config_.allowSimultaneousMovement) {
             return {false, "piece_busy"};
         }
         return handlePremoveRegistration(piece, from, to);
     }
 
-    if (from == to) {
-        return handleJumpRequest(piece, from);
+    // 4. אימות חוקי תנועה מול ה-RuleEngine הגיאומטרי
+    if (from != to) {
+        auto validation = ruleEngine_->validateMove(from, to);
+        if (!validation.isValid) {
+            return {false, validation.reason};
+        }
+    } else {
+        if (piece->state() == PieceState::Captured) {
+            return {false, "captured_piece_cannot_jump"};
+        }
     }
 
-    return handleStandardMove(piece, from, to);
+    // 5. האצלת ביצוע התנועה המלאה ל-Arbiter (עקרון ה-SRP)
+    auto result = arbiter_.executeMove(piece, from, to, currentTimeMs_);
+
+    // 6. עדכון מצב משחק עליון (החלפת תורות) במידת הצורך
+    if (result.isAccepted && !config_.allowSimultaneousMovement) {
+        advanceTurn();
+    }
+
+    return result;
 }
 
 MoveResult GameEngine::handlePremoveRegistration(const PiecePtr& piece, const Position& from, const Position& to) noexcept {
@@ -74,42 +87,6 @@ MoveResult GameEngine::handlePremoveRegistration(const PiecePtr& piece, const Po
 
     premoveQueue_.registerOrUpdate(piece, to);
     return {true, "premove_registered"};
-}
-
-MoveResult GameEngine::handleJumpRequest(const PiecePtr& piece, const Position& pos) noexcept {
-    if (piece->state() == PieceState::Captured) {
-        return {false, "captured_piece_cannot_jump"};
-    }
-
-    piece->setState(PieceState::Airborne);
-    arbiter_.startMotion(piece, pos, pos, currentTimeMs_, config_.jumpDurationMs);
-
-    if (!config_.allowSimultaneousMovement) {
-        advanceTurn();
-    }
-
-    return {true, "jump_started"};
-}
-
-MoveResult GameEngine::handleStandardMove(const PiecePtr& piece, const Position& from, const Position& to) noexcept {
-    auto validation = ruleEngine_->validateMove(from, to);
-    if (!validation.isValid) {
-        return {false, validation.reason};
-    }
-
-    int dr = std::abs(to.row() - from.row());
-    int dc = std::abs(to.col() - from.col());
-    int distance = std::max(dr, dc);
-    int durationMs = distance * config_.msPerCellSpeed;
-
-    piece->setState(PieceState::Moving);
-    arbiter_.startMotion(piece, from, to, currentTimeMs_, durationMs);
-
-    if (!config_.allowSimultaneousMovement) {
-        advanceTurn();
-    }
-
-    return {true, "ok"};
 }
 
 void GameEngine::advanceTurn() noexcept {
@@ -140,7 +117,7 @@ void GameEngine::wait(int ms) noexcept {
     if (config_.enablePremoves && !gameOver_) {
         premoveFailures_.clear();
         premoveQueue_.processReady(
-            [this](const PiecePtr& piece) { return isPieceBusy(piece); },
+            [this](const PiecePtr& piece) { return arbiter_.isPieceBusy(piece, currentTimeMs_); },
             [this](const Position& from, const Position& to) -> MoveResult {
                 auto result = requestMove(from, to);
                 if (!result.isAccepted) {
@@ -175,7 +152,6 @@ bool GameEngine::hasPieceAt(const Position& pos) const {
     if (pieceOpt.has_value() && pieceOpt.value() != nullptr) {
         return true;
     }
-    // תיקון באג 4: תמיכה בזיהוי כלים בתנועה על מנת לאפשר לחיצות ובחירה מהבקר
     return arbiter_.getPieceInTransitAt(pos).has_value();
 }
 

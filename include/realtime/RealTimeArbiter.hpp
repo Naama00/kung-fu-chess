@@ -9,7 +9,8 @@
 #include "realtime/CooldownTracker.hpp"
 #include "board/IBoard.hpp"
 #include "common/GameConfig.hpp"
-#include "common/ArrivalEvent.hpp" // ניתוק הצימוד - DIP Fix
+#include "common/ArrivalEvent.hpp"
+#include "common/MoveResult.hpp"
 
 namespace kungfu {
 
@@ -28,6 +29,10 @@ public:
     std::optional<Motion> getMotionForPiece(const PiecePtr& piece) const noexcept;
     std::optional<PiecePtr> getPieceInTransitAt(const Position& pos) const noexcept;
     size_t cooldownEntryCount() const noexcept { return cooldownTracker_.entryCount(); }
+
+    // מתודות הניהול הפיזיקלי של תנועות הכלים
+    bool isPieceBusy(const PiecePtr& piece, int currentTimeMs) const noexcept;
+    MoveResult executeMove(PiecePtr piece, const Position& from, const Position& to, int currentTimeMs) noexcept;
 
 private:
     std::shared_ptr<IBoard> board_;

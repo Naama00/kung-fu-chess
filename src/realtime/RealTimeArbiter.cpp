@@ -1,8 +1,10 @@
+// src/realtime/RealTimeArbiter.cpp
 #include "realtime/RealTimeArbiter.hpp"
 #include "realtime/CollisionDetector.hpp"
 #include "rules/CollisionResolver.hpp"
 #include "common/GameConfig.hpp"
 #include <algorithm>
+#include <cmath>
 
 namespace kungfu {
 
@@ -24,12 +26,11 @@ std::vector<ArrivalEvent> RealTimeArbiter::advanceTime(int ms, int& currentTimeM
 
     CollisionResolver resolver(board_, cooldownTracker_, config_);
 
-    // 1. איתור ופתרון התנגשויות באמצע הדרך
     auto midRouteCollisions = CollisionDetector::detectMidRouteCollisions(activeMotions_, config_);
     for (const auto& col : midRouteCollisions) {
         if (col.winner.piece()->state() != PieceState::Captured &&
             col.loser.piece()->state() != PieceState::Captured) {
-            resolver.resolveMidRouteCollision(col.winner, col.loser, currentTimeMs, events); // הוספת currentTimeMs
+            resolver.resolveMidRouteCollision(col.winner, col.loser, currentTimeMs, events);
         }
     }
 
@@ -39,7 +40,6 @@ std::vector<ArrivalEvent> RealTimeArbiter::advanceTime(int ms, int& currentTimeM
         activeMotions_.end()
     );
 
-    // 2. איתור, פיצול ומיון כרונולוגי של הגעות ליעד
     std::vector<Motion> dueMotions;
     std::vector<Motion> remainingMotions;
     dueMotions.reserve(activeMotions_.size());
@@ -105,6 +105,32 @@ std::optional<PiecePtr> RealTimeArbiter::getPieceInTransitAt(const Position& pos
         }
     }
     return std::nullopt;
+}
+
+// מימוש בדיקת המצב הפיזיקלי בצורה מרוכזת (DIP) [1]
+bool RealTimeArbiter::isPieceBusy(const PiecePtr& piece, int currentTimeMs) const noexcept {
+    if (!piece) return false;
+    return isPieceMoving(piece) || 
+           piece->state() == PieceState::Airborne || 
+           isOnCooldown(piece, currentTimeMs);
+}
+
+// מימוש קביעת הזמנים ומצבי התנועה הפיזיקליים של הכלי (SRP) [1]
+MoveResult RealTimeArbiter::executeMove(PiecePtr piece, const Position& from, const Position& to, int currentTimeMs) noexcept {
+    if (from == to) {
+        piece->setState(PieceState::Airborne);
+        startMotion(piece, from, to, currentTimeMs, config_.jumpDurationMs);
+        return {true, "jump_started"};
+    } else {
+        int dr = std::abs(to.row() - from.row());
+        int dc = std::abs(to.col() - from.col());
+        int distance = std::max(dr, dc);
+        int durationMs = distance * config_.msPerCellSpeed;
+
+        piece->setState(PieceState::Moving);
+        startMotion(piece, from, to, currentTimeMs, durationMs);
+        return {true, "ok"};
+    }
 }
 
 }  // namespace kungfu
