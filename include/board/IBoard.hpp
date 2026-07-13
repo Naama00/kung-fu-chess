@@ -25,6 +25,7 @@ public:
     virtual bool placePiece(const PiecePtr& piece, const Position& position) = 0;
     virtual bool removePiece(const Position& position) = 0;
     virtual bool movePiece(const Position& from, const Position& to) = 0;
+    virtual bool removePiece(const PiecePtr& piece) = 0;
     virtual bool replacePiece(const Position& position, const PiecePtr& newPiece) = 0;
 };
 

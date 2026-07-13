@@ -25,6 +25,7 @@ public:
     bool placePiece(const PiecePtr& piece, const Position& position) override;
     bool removePiece(const Position& position) override;
     bool movePiece(const Position& from, const Position& to) override;
+    bool removePiece(const PiecePtr& piece) override; 
     bool replacePiece(const Position& position, const PiecePtr& newPiece) override;
 
 private:

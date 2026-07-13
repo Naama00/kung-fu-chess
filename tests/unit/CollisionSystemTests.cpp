@@ -12,14 +12,18 @@ TEST_CASE("CollisionDetector Spatial Calculations", "[realtime][collision]") {
     auto blackRook = std::make_shared<kungfu::Piece>(kungfu::PieceType::Rook, kungfu::PlayerColor::Black, kungfu::Position(0, 2));
 
     SECTION("Mid-route collision is detected when non-knights overlap in time on a square") {
+        // m1 יוצא לדרך ב-t=0 (המקדים ביותר)
         kungfu::Motion m1(whiteRook, kungfu::Position(0, 0), kungfu::Position(0, 2), 0, 2000);
+        // m2 יוצא לדרך ב-t=100 (המאוחר יותר)
         kungfu::Motion m2(blackRook, kungfu::Position(0, 2), kungfu::Position(0, 0), 100, 2000);
 
         std::vector<kungfu::Motion> motions = {m1, m2};
         auto collisions = kungfu::CollisionDetector::detectMidRouteCollisions(motions, config);
 
         REQUIRE(collisions.size() == 1);
+        // לפי הכלל המקורי החדש: מי שיצא קודם (m1 / whiteRook) הוא ה-winner שישרוד
         REQUIRE(collisions[0].winner.piece() == whiteRook);
+        // מי שיצא מאוחר (m2 / blackRook) הוא ה-loser שיושמד
         REQUIRE(collisions[0].loser.piece() == blackRook);
     }
 
@@ -62,24 +66,41 @@ TEST_CASE("CollisionResolver Rules Resolution", "[rules][collision]") {
     kungfu::CollisionResolver resolver(board, tracker, config);
     std::vector<kungfu::ArrivalEvent> events;
 
-    SECTION("Mid-route ENEMY collision captures the winner (earlycomer) and clears its cooldown") {
+    SECTION("Mid-route ENEMY collision captures the loser (latecomer) and clears its cooldown") {
         auto whiteRook = std::make_shared<kungfu::Piece>(kungfu::PieceType::Rook, kungfu::PlayerColor::White, kungfu::Position(0, 0));
         auto blackRook = std::make_shared<kungfu::Piece>(kungfu::PieceType::Rook, kungfu::PlayerColor::Black, kungfu::Position(0, 2));
 
         board->placePiece(whiteRook, kungfu::Position(0, 0));
         board->placePiece(blackRook, kungfu::Position(0, 2));
-        tracker.setCooldown(whiteRook->id(), 5000);
 
+        // נדמה שהכלים התקדמו פיזית ונפגשו במשבצת האמצעית (0, 1)
+        whiteRook->setPosition(kungfu::Position(0, 1));
+        blackRook->setPosition(kungfu::Position(0, 1));
+
+        // נגדיר זמן צינון למפסיד העתידי (loser / blackRook) כדי לוודא שהוא אכן יתנקה
+        tracker.setCooldown(blackRook->id(), 5000);
+
+        // winner (whiteRook) יצא ב-t=0. loser (blackRook) יצא מאוחר יותר ב-t=100.
         kungfu::Motion winner(whiteRook, kungfu::Position(0, 0), kungfu::Position(0, 2), 0, 1000);
         kungfu::Motion loser(blackRook, kungfu::Position(0, 2), kungfu::Position(0, 0), 100, 1000);
 
         resolver.resolveMidRouteCollision(winner, loser, 1000, events);
 
-        // הכלי שהגיע ראשון (winner) הוא זה שנלכד ומפונה על ידי המאוחר (loser)
-        REQUIRE(winner.piece()->state() == kungfu::PieceState::Captured);
-        REQUIRE_FALSE(board->pieceAt(kungfu::Position(0, 0)).has_value());
-        REQUIRE_FALSE(tracker.isOnCooldown(whiteRook->id(), 3000));
+        // הכלי שהתחיל לנוע מאוחר יותר (loser / blackRook) מובס ומסומן כנלכד [1]
+        REQUIRE(loser.piece()->state() == kungfu::PieceState::Captured);
+        
+        // הכלי שהתחיל לנוע ראשון (winner / whiteRook) שורד וממשיך [1]
+        REQUIRE(winner.piece()->state() == kungfu::PieceState::Idle);
+
+        // המפסיד מוסר מהלוח בנקודת המפגש הנוכחית שלו (0, 1) ולא מנקודת המוצא הישנה שלו (0, 2) [1]
+        REQUIRE_FALSE(board->pieceAt(kungfu::Position(0, 1)).has_value());
+        
+        // זמן הצינון של הכלי שנלכד (loser) מנוקה מהזיכרון
+        REQUIRE_FALSE(tracker.isOnCooldown(blackRook->id(), 3000));
+        
         REQUIRE(events.size() == 1);
+        // האירוע מדווח על השמדה בנקודת המפגש האמיתית באמצע המסלול [1]
+        REQUIRE(events[0].to == kungfu::Position(0, 1));
     }
 
     SECTION("Mid-route FRIENDLY collision stops the later piece at the last vacant square") {
@@ -148,7 +169,6 @@ TEST_CASE("CollisionResolver Rules Resolution", "[rules][collision]") {
         REQUIRE(success == true);
         REQUIRE(whiteRook->position() == kungfu::Position(0, 2));
         REQUIRE(enemyPawn->state() == kungfu::PieceState::Captured);
-        // הצינון פוקע ב-t=3000 — ב-t=2999 עדיין בצינון, ב-t=3000 כבר חופשי
         REQUIRE(tracker.isOnCooldown(whiteRook->id(), 2999));
         REQUIRE_FALSE(tracker.isOnCooldown(whiteRook->id(), 3000));
     }

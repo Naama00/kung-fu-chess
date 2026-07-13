@@ -61,24 +61,22 @@ CollisionResolver::CollisionResolver(
     , config_(config) {}
 
 void CollisionResolver::resolveMidRouteCollision(
-    const Motion& winner, // הגיע ראשון (המוקדם)
-    const Motion& loser,  // הגיע שני (המאוחר)
+    const Motion& winner, // הכלי שיצא ראשון - שורד וממשיך במסלולו
+    const Motion& loser,  // הכלי שיצא שני (המאוחר) - מובס ונלכד
     int currentTimeMs,
     std::vector<ArrivalEvent>& events
 ) noexcept {
-    // מקרה 1: כלי אויב - הכלי שהגיע שני (המאוחר / loser) אוכל את הכלי שהגיע ראשון (המוקדם / winner)
-    if (winner.piece()->color() != loser.piece()->color()) {
-        winner.piece()->setState(PieceState::Captured);
-        cooldownTracker_.clear(winner.piece()->id());
-        
-        winner.piece()->setPosition(winner.from());
-        board_->removePiece(winner.from());
-
-        events.push_back({winner.from(), winner.from(), winner.piece(), false, true});
-    } 
-    // מקרה 2: כלים ידידותיים - הכלי שהגיע מאוחר יותר (loser) נעצר במשבצת האחרונה הפנויה במסלולו
+     if (winner.piece()->color() != loser.piece()->color()) {
+        Position collisionPos = loser.piece()->position();
+        loser.piece()->setState(PieceState::Captured);
+        cooldownTracker_.clear(loser.piece()->id());
+        // מחיקת הכלי לפי הזהות שלו
+        board_->removePiece(loser.piece()); 
+        events.push_back({loser.from(), collisionPos, loser.piece(), false, true});
+    }
+    // מקרה 2: כלים ידידותיים
     else {
-        // יעד ה-winner חוסם את מסלול ה-loser
+        // הכלי שהגיע מאוחר יותר (loser) נחסם ונעצר במשבצת הפנויה האחרונה
         Position winnerDest = winner.to();
         Position stopPos = findLastVacantPositionOnPath(loser.from(), loser.to(), board_, &winnerDest);
         
@@ -173,7 +171,7 @@ bool CollisionResolver::resolveArrival(
         }
         targetPiece->setState(PieceState::Captured);
         cooldownTracker_.clear(targetPiece->id());
-        board_->removePiece(targetPiece->position());
+        board_->removePiece(targetPiece);
     }
 
     piece->setPosition(finalDestination);

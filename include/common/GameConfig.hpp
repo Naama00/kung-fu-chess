@@ -2,8 +2,7 @@
 
 namespace kungfu {
 
-// קונפיגורציית ריצה של מנוע המשחק - כל הערכים ניתנים לשינוי ומועברים
-// יחד ל-GameEngine ול-RealTimeArbiter בעת האתחול.
+// קונפיגורציית ריצה של מנוע המשחק - כל הערכים ניתנים לשינוי
 struct GameConfig {
     int cooldownDurationMs = 2000;
     int msPerCellSpeed = 1000;

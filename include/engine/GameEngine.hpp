@@ -25,7 +25,6 @@ public:
     int getBoardRows() const override;
     int getBoardCols() const override;
     std::optional<PlayerColor> getPieceColorAt(const Position& pos) const override;
-
     void wait(int ms) noexcept;
     bool isGameOver() const noexcept { return gameOver_; }
     int getCurrentTimeMs() const noexcept { return currentTimeMs_; }
@@ -37,7 +36,6 @@ public:
 private:
     void advanceTurn() noexcept;
     MoveResult handlePremoveRegistration(const PiecePtr& piece, const Position& from, const Position& to) noexcept;
-
     std::shared_ptr<IBoard> board_;
     std::shared_ptr<RuleEngine> ruleEngine_;
     std::shared_ptr<IPromotionRule> promotionRule_;

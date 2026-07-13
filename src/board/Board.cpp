@@ -53,6 +53,18 @@ bool Board::removePiece(const Position& position) {
     return true;
 }
 
+bool Board::removePiece(const PiecePtr& piece) {
+    if (!piece) {
+        return false;
+    }    // חיפוש הכלי הספציפי במערך לפי המצביע שלו (Identity)
+    auto it = std::find(pieces_.begin(), pieces_.end(), piece);
+    if (it == pieces_.end()) {
+        return false;
+    }
+    pieces_.erase(it);
+    return true;
+}
+
 bool Board::movePiece(const Position& from, const Position& to) {
     PiecePtr movingPiece = nullptr;
     for (auto& piece : pieces_) {

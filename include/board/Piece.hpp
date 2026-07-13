@@ -20,7 +20,7 @@ public:
 
     // מזהה יציב וייחודי לכל אובייקט Piece, לאורך כל חייו - בלתי תלוי בכתובת הזיכרון שלו.
     // משמש כמפתח בטוח למבני נתונים חיצוניים (למשל cooldowns ב-RealTimeArbiter),
-    // כדי למנוע התנגשות עם כלים חדשים שנוצרים לאחר ששחרור זיכרון של כלי קודם.
+    // כדי למנוע התנגשות עם כלים חדשים שנוצרים לאחר שחרור זיכרון של כלי קודם.
     std::uint64_t id() const noexcept { return id_; }
 
     void setPosition(const Position& position) { position_ = position; }

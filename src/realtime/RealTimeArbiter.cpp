@@ -160,7 +160,7 @@ MoveResult RealTimeArbiter::executeMove(PiecePtr piece, const Position& from, co
         piece->setState(PieceState::Airborne);
         // כלי קופץ "עוזב" את המשבצת לוגית — מוצא מהלוח עד שינחת.
         // כלים אחרים יכולים לשבת על המשבצת שלו; כשינחת הוא יאכל אותם.
-        board_->removePiece(from);
+        board_->removePiece(piece);
         startMotion(piece, from, to, currentTimeMs, config_.jumpDurationMs);
         return {true, "jump_started"};
     } else {

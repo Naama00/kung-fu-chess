@@ -17,7 +17,6 @@ public:
     virtual bool hasPieceAt(const Position& pos) const = 0;
     virtual int getBoardRows() const = 0;
     virtual int getBoardCols() const = 0;
-    
     virtual std::optional<PlayerColor> getPieceColorAt(const Position& pos) const = 0;
 };
 
