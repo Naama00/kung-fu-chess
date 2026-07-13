@@ -4,39 +4,51 @@
 
 namespace kungfu {
 
+// מוצא את המשבצת האחרונה הפנויה בנתיב מ-from לכיוון to (הליכה קדימה).
+// blockedPos הוא יעד של כלי אחר שגם הוא חוסם (למשל winner בהתנגשות ידידותית).
 Position findLastVacantPositionOnPath(
     const Position& from,
     const Position& to,
-    const std::shared_ptr<IBoard>& board
+    const std::shared_ptr<IBoard>& board,
+    const Position* blockedPos = nullptr
 ) noexcept {
-    int r1 = from.row(); int c1 = from.col();
-    int r2 = to.row(); int c2 = to.col();
-    int dr = r2 - r1; int dc = c2 - c1;
+    int dr = to.row() - from.row();
+    int dc = to.col() - from.col();
 
     if (dr == 0 && dc == 0) {
-        if (!board->pieceAt(from).has_value()) return from;
-    } else {
-        int stepR = (dr > 0) ? 1 : ((dr < 0) ? -1 : 0);
-        int stepC = (dc > 0) ? 1 : ((dc < 0) ? -1 : 0);
-
-        std::vector<Position> path;
-        int curR = r2 - stepR;
-        int curC = c2 - stepC;
-
-        while (curR != r1 || curC != c1) {
-            path.emplace_back(curR, curC);
-            curR -= stepR;
-            curC -= stepC;
-        }
-        path.push_back(from);
-
-        for (const auto& pos : path) {
-            if (!board->pieceAt(pos).has_value()) {
-                return pos;
-            }
-        }
+        return from;
     }
-    return from;
+
+    int stepR = (dr > 0) ? 1 : ((dr < 0) ? -1 : 0);
+    int stepC = (dc > 0) ? 1 : ((dc < 0) ? -1 : 0);
+
+    Position last = from;
+    int curR = from.row() + stepR;
+    int curC = from.col() + stepC;
+
+    while (true) {
+        Position cur(curR, curC);
+
+        // משבצת חסומה על ידי כלי קיים על הלוח (שאינו airborne)
+        auto pieceOpt = board->pieceAt(cur);
+        bool occupiedByStationary = pieceOpt.has_value() &&
+                                    pieceOpt.value()->state() != PieceState::Airborne;
+
+        // משבצת חסומה על ידי יעד winner
+        bool occupiedByBlocked = (blockedPos != nullptr && cur == *blockedPos);
+
+        if (occupiedByStationary || occupiedByBlocked) {
+            break; // עצור לפני המשבצת החסומה
+        }
+
+        last = cur;
+
+        if (cur == to) break;
+        curR += stepR;
+        curC += stepC;
+    }
+
+    return last;
 }
 
 CollisionResolver::CollisionResolver(
@@ -66,7 +78,9 @@ void CollisionResolver::resolveMidRouteCollision(
     } 
     // מקרה 2: כלים ידידותיים - הכלי שהגיע מאוחר יותר (loser) נעצר במשבצת האחרונה הפנויה במסלולו
     else {
-        Position stopPos = findLastVacantPositionOnPath(loser.from(), loser.to(), board_);
+        // יעד ה-winner חוסם את מסלול ה-loser
+        Position winnerDest = winner.to();
+        Position stopPos = findLastVacantPositionOnPath(loser.from(), loser.to(), board_, &winnerDest);
         
         loser.piece()->setState(PieceState::Idle);
         loser.piece()->setPosition(stopPos);
@@ -96,6 +110,14 @@ bool CollisionResolver::resolveArrival(
     }
 
     auto targetPieceOpt = board_->pieceAt(to);
+
+    // כלי airborne על משבצת היעד — הוא "לא שם" לוגית.
+    // הכלי המגיע יושב על המשבצת, והairborne יאכל אותו כשינחת.
+    if (targetPieceOpt.has_value() &&
+        targetPieceOpt.value() &&
+        targetPieceOpt.value()->state() == PieceState::Airborne) {
+        targetPieceOpt = std::nullopt;
+    }
 
     // בדיקת חסימה על ידי כלי ידידותי ביעד
     bool isFriendlyBlock = false;

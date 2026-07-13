@@ -26,7 +26,7 @@ public:
 
     bool isOnCooldown(const PiecePtr& piece, int currentTimeMs) const noexcept;
     bool isPieceMoving(const PiecePtr& piece) const noexcept;
-    std::optional<Motion> getMotionForPiece(const PiecePtr& piece) const noexcept;
+    std::optional<Motion> getMotionForPiece(const ConstPiecePtr& piece) const noexcept;
     std::optional<PiecePtr> getPieceInTransitAt(const Position& pos) const noexcept;
     size_t cooldownEntryCount() const noexcept { return cooldownTracker_.entryCount(); }
 

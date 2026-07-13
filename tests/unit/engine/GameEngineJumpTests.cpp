@@ -16,11 +16,13 @@ TEST_CASE("Advanced Real-Time Jump Mechanics (Airborne and Captures)", "[engine]
         auto ruleEngine = std::make_shared<kungfu::RuleEngine>(board);
         kungfu::GameEngine game(board, ruleEngine);
 
+        auto rook = board->pieceAt(kungfu::Position(0, 0)).value(); // שמירת ה-ptr לפני הקפיצה
+
         auto res = game.requestMove(kungfu::Position(0, 0), kungfu::Position(0, 0));
         REQUIRE(res.isAccepted);
         REQUIRE(res.reason == "jump_started");
 
-        auto rook = board->pieceAt(kungfu::Position(0, 0)).value();
+        // הכלי הוצא מהלוח (airborne = "לא שם"), אבל ה-ptr עדיין תקף
         REQUIRE(rook->state() == kungfu::PieceState::Airborne);
 
         game.wait(500);
@@ -61,6 +63,8 @@ TEST_CASE("Advanced Real-Time Jump Mechanics (Airborne and Captures)", "[engine]
         auto ruleEngine = std::make_shared<kungfu::RuleEngine>(board);
         kungfu::GameEngine game(board, ruleEngine);
 
+        auto whiteRook = board->pieceAt(kungfu::Position(0, 0)).value(); // שמירת ptr לפני הקפיצה
+
         game.requestMove(kungfu::Position(0, 1), kungfu::Position(0, 0));
 
         game.wait(200);
@@ -70,7 +74,7 @@ TEST_CASE("Advanced Real-Time Jump Mechanics (Airborne and Captures)", "[engine]
 
         REQUIRE_FALSE(board->pieceAt(kungfu::Position(0, 1)).has_value());
 
-        auto whiteRook = board->pieceAt(kungfu::Position(0, 0)).value();
+        // הלבן airborne — לא על הלוח, אבל ה-ptr תקף
         REQUIRE(whiteRook->state() == kungfu::PieceState::Airborne);
 
         game.wait(200);

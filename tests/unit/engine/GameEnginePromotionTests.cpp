@@ -68,7 +68,9 @@ TEST_CASE("Promoted Piece Gets Its Own Fresh Cooldown, Independent of the Origin
 
     auto board = kungfu::BoardParser::parse(boardStr);
     auto ruleEngine = std::make_shared<kungfu::RuleEngine>(board);
-    kungfu::GameEngine game(board, ruleEngine);
+    kungfu::GameConfig cfg;
+    cfg.enablePremoves = false; // הטסט בודק צינון בלבד, לא premove
+    kungfu::GameEngine game(board, ruleEngine, cfg);
 
     auto res = game.requestMove(kungfu::Position(1, 0), kungfu::Position(2, 0));
     REQUIRE(res.isAccepted);

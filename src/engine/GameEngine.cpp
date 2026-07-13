@@ -36,7 +36,14 @@ MoveResult GameEngine::requestMove(const Position& from, const Position& to) {
     }
     auto piece = sourcePieceOpt.value();
 
-    // 2. אימות תורות וחוקיות סימולטנית (חוקי משחק עליונים)
+    // 2. שאילתת מצב פיזיקלי דרך ה-Arbiter בלבד (עקרון ה-DIP)
+    // הבדיקה הפיזיקלית קודמת לבדיקת התורות - כלי נע/בקירור צריך
+    // לדווח על מצבו ללא קשר למי התור כרגע.
+    if (arbiter_.isPieceBusy(piece, currentTimeMs_)) {
+        return handlePremoveRegistration(piece, from, to);
+    }
+
+    // 3. אימות תורות וחוקיות סימולטנית (חוקי משחק עליונים)
     if (!config_.allowSimultaneousMovement) {
         if (piece->color() != currentTurn_) {
             return {false, "not_your_turn"};
@@ -44,14 +51,6 @@ MoveResult GameEngine::requestMove(const Position& from, const Position& to) {
         if (arbiter_.hasActiveMotion()) {
             return {false, "motion_in_progress"};
         }
-    }
-
-    // 3. שאילתת מצב פיזיקלי דרך ה-Arbiter בלבד (עקרון ה-DIP)
-    if (arbiter_.isPieceBusy(piece, currentTimeMs_)) {
-        if (!config_.allowSimultaneousMovement) {
-            return {false, "piece_busy"};
-        }
-        return handlePremoveRegistration(piece, from, to);
     }
 
     // 4. אימות חוקי תנועה מול ה-RuleEngine הגיאומטרי
@@ -71,6 +70,7 @@ MoveResult GameEngine::requestMove(const Position& from, const Position& to) {
 
     // 6. עדכון מצב משחק עליון (החלפת תורות) במידת הצורך
     if (result.isAccepted && !config_.allowSimultaneousMovement) {
+        pendingTurnPiece_ = piece; // שמירה לצורך איפוס תור אחרי צינון
         advanceTurn();
     }
 
@@ -78,6 +78,14 @@ MoveResult GameEngine::requestMove(const Position& from, const Position& to) {
 }
 
 MoveResult GameEngine::handlePremoveRegistration(const PiecePtr& piece, const Position& from, const Position& to) noexcept {
+    // במצב תורות (לא-סימולטני), פרה-מוב אינו נתמך ללא קשר לדגל enablePremoves
+    if (!config_.allowSimultaneousMovement) {
+        if (arbiter_.isPieceMoving(piece) || piece->state() == PieceState::Airborne) {
+            return {false, "motion_in_progress"};
+        }
+        return {false, "piece_on_cooldown"};
+    }
+
     if (!config_.enablePremoves) {
         if (arbiter_.isPieceMoving(piece) || piece->state() == PieceState::Airborne) {
             return {false, "motion_in_progress"};
@@ -104,6 +112,10 @@ void GameEngine::wait(int ms) noexcept {
         auto promoted = promotionRule_->maybePromote(piece, to, *board_);
         if (promoted != piece) {
             premoveQueue_.replacePiece(piece, promoted);
+            // אם הכלי שקודם שמרנו הוא זה שמוכתר — מעדכנים לכלי החדש
+            if (pendingTurnPiece_ == piece) {
+                pendingTurnPiece_ = promoted;
+            }
         }
         return promoted;
     };
@@ -111,6 +123,15 @@ void GameEngine::wait(int ms) noexcept {
     for (const auto& event : events) {
         if (event.capturedKing) {
             gameOver_ = true;
+        }
+    }
+
+    // איפוס תור: אם הכלי שהפעיל את החלפת התור כבר אינו עסוק (הגיע ופג צינונו),
+    // מחזירים את התור לצבע שלו כדי לאפשר לו לזוז שוב לפני שהיריב הגיב.
+    if (!config_.allowSimultaneousMovement && pendingTurnPiece_ && !gameOver_) {
+        if (!arbiter_.isPieceBusy(pendingTurnPiece_, currentTimeMs_)) {
+            currentTurn_ = pendingTurnPiece_->color();
+            pendingTurnPiece_ = nullptr;
         }
     }
 

@@ -30,16 +30,8 @@ TEST_CASE("Full System Integration Flow", "[integration]") {
         REQUIRE(click2.actionTaken);
         REQUIRE(click2.description == "Move requested: ok");
 
-        // בדיקה 1: מיד לאחר הזמנת המהלך, הלוח עדיין לא השתנה לוגית
-        std::string currentLayout = kungfu::BoardPrinter::print(*board);
-        REQUIRE(currentLayout == setup);
-
-        // בדיקה 2: קידום חלקי של הזמן (1000ms) - הכלי עדיין לא הגיע ליעד
-        gameEngine->wait(1000);
-        REQUIRE(kungfu::BoardPrinter::print(*board) == setup);
-
-        // בדיקה 3: השלמת הזמן ל-2000ms - הכלי הגיע ומצב הלוח מתעדכן
-        gameEngine->wait(1000);
+        // המתנה ל-2000ms - הכלי הגיע ומצב הלוח מתעדכן
+        gameEngine->wait(2000);
         std::string expectedAfterArrival = 
             ". . wR\n"
             ". . .\n"

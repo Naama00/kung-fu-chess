@@ -42,5 +42,6 @@ private:
 };
 
 using PiecePtr = std::shared_ptr<Piece>;
+using ConstPiecePtr = std::shared_ptr<const Piece>;
 
 }  // namespace kungfu

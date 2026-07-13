@@ -11,7 +11,7 @@ public:
     static std::string print(const Board& board);
 
 private:
-    static std::string getPieceToken(const PiecePtr& piece);
+    static std::string getPieceToken(const ConstPiecePtr& piece);
 };
 
 }  // namespace kungfu

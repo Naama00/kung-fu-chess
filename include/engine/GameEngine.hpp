@@ -47,6 +47,7 @@ private:
     int currentTimeMs_ = 0;
     bool gameOver_ = false;
     PlayerColor currentTurn_ = PlayerColor::White;
+    PiecePtr pendingTurnPiece_;   // הכלי שהפעיל החלפת תור — לצורך איפוס לאחר צינון
     std::vector<MoveResult> premoveFailures_;
 };
 

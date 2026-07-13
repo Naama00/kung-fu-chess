@@ -66,8 +66,11 @@ std::vector<MidRouteCollision> CollisionDetector::detectMidRouteCollisions(
             const auto& m1 = activeMotions[i];
             const auto& m2 = activeMotions[j];
 
-            // 1. סינון לפי סוג כלי (פרשים)
+            // 1. סינון לפי סוג כלי (פרשים) ולפי מצב (Airborne = "לא שם")
             if (m1.piece()->type() == PieceType::Knight || m2.piece()->type() == PieceType::Knight) {
+                continue;
+            }
+            if (m1.piece()->state() == PieceState::Airborne || m2.piece()->state() == PieceState::Airborne) {
                 continue;
             }
 

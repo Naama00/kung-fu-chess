@@ -1,12 +1,14 @@
 #include "io/BoardPrinter.hpp"
 #include "common/PieceTokenCodec.hpp"
 #include <sstream>
+#include <algorithm>
 
 namespace kungfu {
 
-std::string BoardPrinter::getPieceToken(const PiecePtr& piece) {
+// פונקציית עזר יחידה ואחידה לקריאת כלי (עבור ConstPiecePtr)
+std::string BoardPrinter::getPieceToken(const ConstPiecePtr& piece) {
     if (!piece) {
-        return ".";
+        return "."; // תו יחיד לייצוג משבצת ריקה
     }
 
     std::string token = (piece->color() == PlayerColor::White) ? "w" : "b";
@@ -14,6 +16,7 @@ std::string BoardPrinter::getPieceToken(const PiecePtr& piece) {
     return token;
 }
 
+// מימוש פונקציית ההדפסה הראשית
 std::string BoardPrinter::print(const Board& board) {
     std::ostringstream out;
     int rows = board.rows();
@@ -22,13 +25,16 @@ std::string BoardPrinter::print(const Board& board) {
     for (int r = 0; r < rows; ++r) {
         for (int c = 0; c < cols; ++c) {
             auto pieceOpt = board.pieceAt(Position(r, c));
+            
             if (pieceOpt.has_value()) {
+                // קריאה לפונקציה שמקבלת את ה-ConstPiecePtr שהתקבל מהלוח
                 out << getPieceToken(pieceOpt.value());
             } else {
-                out << ".";
+                out << "."; // תו יחיד לייצוג משבצת ריקה
             }
+            
             if (c + 1 < cols) {
-                out << " ";
+                out << " "; // רווח בין משבצות באותה שורה
             }
         }
         out << "\n";

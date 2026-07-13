@@ -36,19 +36,6 @@ TEST_CASE("Deterministic Simulated Time Flow", "[engine][simultaneous]") {
     cfg.enablePremoves = false;
     kungfu::GameEngine game(board, ruleEngine, cfg);
 
-    SECTION("Piece remains on source cell during movement") {
-        auto moveRes = game.requestMove(kungfu::Position(1, 0), kungfu::Position(1, 2));
-        REQUIRE(moveRes.isAccepted);
-
-        game.wait(1500);
-        REQUIRE(board->pieceAt(kungfu::Position(1, 0)).has_value());
-        REQUIRE_FALSE(board->pieceAt(kungfu::Position(1, 2)).has_value());
-
-        game.wait(500);
-        REQUIRE_FALSE(board->pieceAt(kungfu::Position(1, 0)).has_value());
-        REQUIRE(board->pieceAt(kungfu::Position(1, 2)).has_value());
-    }
-
     SECTION("Enforce single active motion limitation") {
         game.requestMove(kungfu::Position(1, 0), kungfu::Position(1, 2));
 

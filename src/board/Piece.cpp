@@ -4,7 +4,8 @@
 
 namespace kungfu {
 
-static std::atomic<std::uint64_t> nextId_{1};
+// הגדרת המשתנה הסטטי של המחלקה והקצאת זיכרון עבורו (מתחיל מ-1)
+std::uint64_t Piece::nextId_ = 1;
 
 Piece::Piece(PieceType type, PlayerColor color, Position position)
     : type_(type), color_(color), position_(position), state_(PieceState::Idle), id_(nextId_++) {}

@@ -148,7 +148,9 @@ TEST_CASE("CollisionResolver Rules Resolution", "[rules][collision]") {
         REQUIRE(success == true);
         REQUIRE(whiteRook->position() == kungfu::Position(0, 2));
         REQUIRE(enemyPawn->state() == kungfu::PieceState::Captured);
-        REQUIRE(tracker.isOnCooldown(whiteRook->id(), 3000)); 
+        // הצינון פוקע ב-t=3000 — ב-t=2999 עדיין בצינון, ב-t=3000 כבר חופשי
+        REQUIRE(tracker.isOnCooldown(whiteRook->id(), 2999));
+        REQUIRE_FALSE(tracker.isOnCooldown(whiteRook->id(), 3000));
     }
 
     SECTION("Non-knight blocked by friendly piece stops at the last vacant square on its path") {

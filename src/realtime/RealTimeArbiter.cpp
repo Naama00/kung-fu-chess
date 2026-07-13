@@ -17,7 +17,38 @@ bool RealTimeArbiter::hasActiveMotion() const noexcept {
 
 void RealTimeArbiter::startMotion(PiecePtr piece, const Position& from, const Position& to, int currentTimeMs, int durationMs) noexcept {
     activeMotions_.emplace_back(piece, from, to, currentTimeMs, durationMs);
-    piece->setPosition(Position(-1, -1));
+    // הכלי מתחיל בעמדת המקור; advanceTime יחשב ויעדכן מיקום אינטרפולטיבי בכל tick.
+}
+
+// מחשב את המשבצת הנוכחית של כלי בתנועה לפי הזמן שעבר (interpolation).
+// הכלי זזה משבצת אחת כל msPerCell מילישניות, החל מ-from ועד to.
+static Position interpolatePosition(const Motion& motion, int currentTimeMs, int msPerCell) noexcept {
+    if (motion.from() == motion.to()) {
+        return motion.from(); // קפיצה במקום - הכלי נשאר בעמדתו
+    }
+
+    int elapsed = currentTimeMs - motion.startTime();
+    if (elapsed <= 0) return motion.from();
+
+    int duration = motion.arrivalTime() - motion.startTime();
+    if (duration <= 0 || elapsed >= duration) return motion.to();
+
+    int fromR = motion.from().row(), fromC = motion.from().col();
+    int toR   = motion.to().row(),   toC   = motion.to().col();
+    int dr = toR - fromR, dc = toC - fromC;
+    int steps = std::max(std::abs(dr), std::abs(dc)); // מספר הצעדים הכולל
+    if (steps == 0) return motion.from();
+
+    // כל כמה מילישניות הכלי עושה צעד אחד
+    int msPerStep = duration / steps;
+    if (msPerStep <= 0) return motion.to();
+
+    int stepsDone = elapsed / msPerStep;
+    if (stepsDone >= steps) return motion.to();
+
+    int stepR = (dr > 0) ? 1 : (dr < 0 ? -1 : 0);
+    int stepC = (dc > 0) ? 1 : (dc < 0 ? -1 : 0);
+    return Position(fromR + stepR * stepsDone, fromC + stepC * stepsDone);
 }
 
 std::vector<ArrivalEvent> RealTimeArbiter::advanceTime(int ms, int& currentTimeMs, PromotionHandler promoteCallback) noexcept {
@@ -68,6 +99,14 @@ std::vector<ArrivalEvent> RealTimeArbiter::advanceTime(int ms, int& currentTimeM
         }
     }
 
+    // עדכון מיקום אינטרפולטיבי — רק לכלים שעדיין בתנועה (לא הגיעו ביחידת הזמן הזו)
+    for (const auto& motion : activeMotions_) {
+        if (motion.from() != motion.to()) {
+            auto interpolated = interpolatePosition(motion, currentTimeMs, config_.msPerCellSpeed);
+            motion.piece()->setPosition(interpolated);
+        }
+    }
+
     return events;
 }
 
@@ -86,7 +125,7 @@ bool RealTimeArbiter::isPieceMoving(const PiecePtr& piece) const noexcept {
     return false;
 }
 
-std::optional<Motion> RealTimeArbiter::getMotionForPiece(const PiecePtr& piece) const noexcept {
+std::optional<Motion> RealTimeArbiter::getMotionForPiece(const ConstPiecePtr& piece) const noexcept {
     if (!piece) {
         return std::nullopt;
     }
@@ -119,6 +158,9 @@ bool RealTimeArbiter::isPieceBusy(const PiecePtr& piece, int currentTimeMs) cons
 MoveResult RealTimeArbiter::executeMove(PiecePtr piece, const Position& from, const Position& to, int currentTimeMs) noexcept {
     if (from == to) {
         piece->setState(PieceState::Airborne);
+        // כלי קופץ "עוזב" את המשבצת לוגית — מוצא מהלוח עד שינחת.
+        // כלים אחרים יכולים לשבת על המשבצת שלו; כשינחת הוא יאכל אותם.
+        board_->removePiece(from);
         startMotion(piece, from, to, currentTimeMs, config_.jumpDurationMs);
         return {true, "jump_started"};
     } else {
