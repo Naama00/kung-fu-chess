@@ -1,3 +1,4 @@
+// include/realtime/RealTimeArbiter.hpp
 #pragma once
 
 #include <memory>
@@ -8,16 +9,9 @@
 #include "realtime/CooldownTracker.hpp"
 #include "board/IBoard.hpp"
 #include "common/GameConfig.hpp"
+#include "common/ArrivalEvent.hpp" // ניתוק הצימוד - DIP Fix
 
 namespace kungfu {
-
-struct ArrivalEvent {
-    Position from;
-    Position to;
-    PiecePtr piece;
-    bool capturedKing;
-    bool cancelled; // דגל המציין האם התנועה בוטלה עקב חסימה
-};
 
 using PromotionHandler = std::function<PiecePtr(const PiecePtr&, const Position&)>;
 
@@ -33,7 +27,6 @@ public:
     bool isPieceMoving(const PiecePtr& piece) const noexcept;
     std::optional<Motion> getMotionForPiece(const PiecePtr& piece) const noexcept;
     std::optional<PiecePtr> getPieceInTransitAt(const Position& pos) const noexcept;
-    // מאציל ל-CooldownTracker; נשאר public כי הטסטים בודקים אותו דרך getArbiter()
     size_t cooldownEntryCount() const noexcept { return cooldownTracker_.entryCount(); }
 
 private:
@@ -41,14 +34,6 @@ private:
     std::vector<Motion> activeMotions_;
     CooldownTracker cooldownTracker_;
     GameConfig config_;
-
-    void handleMidRouteCollisions(std::vector<ArrivalEvent>& events) noexcept;
-    bool processSingleArrival(
-    const Motion& motion,
-    int currentTimeMs,
-    std::vector<ArrivalEvent>& events,
-    const PromotionHandler& promoteCallback
-    ) noexcept;
 };
 
 }  // namespace kungfu

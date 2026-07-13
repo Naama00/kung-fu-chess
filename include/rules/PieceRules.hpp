@@ -1,6 +1,8 @@
+// include/rules/PieceRules.hpp
 #pragma once
 
 #include "rules/IPieceRule.hpp"
+#include <memory>
 
 namespace kungfu {
 
@@ -36,8 +38,9 @@ public:
 
 class PieceRuleFactory {
 public:
-    // מחזיר הפנייה סינגלטונית לחוק המתאים לסוג הכלי, ללא הקצאת זיכרון דינמית
+    // מחזיר הפנייה לחוק המתאים לסוג הכלי, תומך ברישום דינמי של חוקים (עמידה ב-OCP)
     static const IPieceRule& getRule(PieceType type) noexcept;
+    static void registerRule(PieceType type, std::unique_ptr<IPieceRule> rule) noexcept;
 };
 
 }  // namespace kungfu

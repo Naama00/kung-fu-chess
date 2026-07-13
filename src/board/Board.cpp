@@ -1,3 +1,4 @@
+// src/board/Board.cpp
 #include "board/Board.hpp"
 #include <algorithm>
 
@@ -7,8 +8,16 @@ Board::Board() : rows_(8), cols_(8) {}
 
 Board::Board(int rows, int cols) : rows_(rows), cols_(cols) {}
 
+std::optional<PiecePtr> Board::pieceAt(const Position& position) {
+    for (auto& piece : pieces_) {
+        if (piece && piece->position() == position) {
+            return piece;
+        }
+    }
+    return std::nullopt;
+}
 
-std::optional<PiecePtr> Board::pieceAt(const Position& position) const {
+std::optional<std::shared_ptr<const Piece>> Board::pieceAt(const Position& position) const {
     for (const auto& piece : pieces_) {
         if (piece && piece->position() == position) {
             return piece;
@@ -57,8 +66,6 @@ bool Board::movePiece(const Position& from, const Position& to) {
         return false;
     }
 
-    // Board הוא מבנה נתונים גרידא ואינו מיישם כללי "אכילה" -
-    // זו אחריות בלעדית של RealTimeArbiter/GameEngine. אם התא תפוס, נכשל.
     if (pieceAt(to).has_value()) {
         return false;
     }
@@ -81,8 +88,17 @@ bool Board::replacePiece(const Position& position, const PiecePtr& newPiece) {
     return true;
 }
 
-std::vector<PiecePtr> Board::pieces() const {
+std::vector<PiecePtr> Board::pieces() {
     return pieces_;
+}
+
+std::vector<std::shared_ptr<const Piece>> Board::pieces() const {
+    std::vector<std::shared_ptr<const Piece>> const_pieces;
+    const_pieces.reserve(pieces_.size());
+    for (const auto& piece : pieces_) {
+        const_pieces.push_back(piece);
+    }
+    return const_pieces;
 }
 
 }  // namespace kungfu

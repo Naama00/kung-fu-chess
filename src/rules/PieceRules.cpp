@@ -1,12 +1,13 @@
+// src/rules/PieceRules.cpp
 #include "rules/PieceRules.hpp"
 #include "common/GameConfig.hpp"
 #include <algorithm>
+#include <unordered_map>
 
 namespace kungfu {
 
 namespace {
 
-// פונקציית עזר פנימית לחישוב תנועת החלקה (Sliding) עבור צריח, רץ ומלכה
 void getSlidingDestinations(const IBoard& board, const Piece& piece, int rowStep, int colStep, std::vector<Position>& dests) {
     int r = piece.position().row() + rowStep;
     int c = piece.position().col() + colStep;
@@ -20,11 +21,10 @@ void getSlidingDestinations(const IBoard& board, const Piece& piece, int rowStep
         if (!targetPieceOpt.has_value()) {
             dests.push_back(target);
         } else {
-            // אם יש כלי ביעד, הוא חוסם את המשך ההחלקה
             if (targetPieceOpt.value()->color() != piece.color()) {
-                dests.push_back(target); // אכילה אפשרית ביעד
+                dests.push_back(target); 
             }
-            break; // חסימה - יוצאים מהלולאה
+            break; 
         }
         r += rowStep;
         c += colStep;
@@ -36,11 +36,11 @@ void getSlidingDestinations(const IBoard& board, const Piece& piece, int rowStep
 // --- Rook ---
 std::vector<Position> RookRule::getLegalDestinations(const IBoard& board, const Piece& piece) const {
     std::vector<Position> dests;
-    dests.reserve(14); // הערכה סבירה למקסימום משבצות חופשיות לצריח
-    getSlidingDestinations(board, piece, 1, 0, dests);  // למטה
-    getSlidingDestinations(board, piece, -1, 0, dests); // למעלה
-    getSlidingDestinations(board, piece, 0, 1, dests);  // ימינה
-    getSlidingDestinations(board, piece, 0, -1, dests); // שמאלה
+    dests.reserve(14);
+    getSlidingDestinations(board, piece, 1, 0, dests);  
+    getSlidingDestinations(board, piece, -1, 0, dests); 
+    getSlidingDestinations(board, piece, 0, 1, dests);  
+    getSlidingDestinations(board, piece, 0, -1, dests); 
     return dests;
 }
 
@@ -48,10 +48,10 @@ std::vector<Position> RookRule::getLegalDestinations(const IBoard& board, const 
 std::vector<Position> BishopRule::getLegalDestinations(const IBoard& board, const Piece& piece) const {
     std::vector<Position> dests;
     dests.reserve(13);
-    getSlidingDestinations(board, piece, 1, 1, dests);   // אלכסון ימין-מטה
-    getSlidingDestinations(board, piece, 1, -1, dests);  // אלכסון שמאל-מטה
-    getSlidingDestinations(board, piece, -1, 1, dests);  // אלכסון ימין-מעלה
-    getSlidingDestinations(board, piece, -1, -1, dests); // אלכסון שמאל-מעלה
+    getSlidingDestinations(board, piece, 1, 1, dests);   
+    getSlidingDestinations(board, piece, 1, -1, dests);  
+    getSlidingDestinations(board, piece, -1, 1, dests);  
+    getSlidingDestinations(board, piece, -1, -1, dests); 
     return dests;
 }
 
@@ -60,7 +60,6 @@ std::vector<Position> QueenRule::getLegalDestinations(const IBoard& board, const
     std::vector<Position> dests;
     dests.reserve(27);
 
-    // שימוש ב-singletons הקיימים מה-Factory במקום יצירת אובייקטים זמניים
     const auto& rook = PieceRuleFactory::getRule(PieceType::Rook);
     const auto& bishop = PieceRuleFactory::getRule(PieceType::Bishop);
 
@@ -92,8 +91,6 @@ std::vector<Position> KnightRule::getLegalDestinations(const IBoard& board, cons
         int c = currentCol + offset.second;
 
         if (r >= 0 && r < maxRows && c >= 0 && c < maxCols) {
-            // פרש יכול לנחות על כל משבצת – כולל משבצות של כלים ידידותיים.
-            // זוהי הדרך היחידה להרוג כלים של עצמך.
             dests.push_back(Position(r, c));
         }
     }
@@ -150,7 +147,6 @@ std::vector<Position> PawnRule::getLegalDestinations(const IBoard& board, const 
             dests.push_back(forward);
         }
 
-        // צעד כפול מותר רק אם הרגלי טרם זז מעולם - ללא תלות במיקום מוחלט על הלוח
         if (!piece.hasMoved()) {
             int doubleRow = currentRow + 2 * direction;
             if (doubleRow >= 0 && doubleRow < maxRows) {
@@ -176,24 +172,32 @@ std::vector<Position> PawnRule::getLegalDestinations(const IBoard& board, const 
     return dests;
 }
 
-// --- Factory ---
-const IPieceRule& PieceRuleFactory::getRule(PieceType type) noexcept {
-    static const RookRule rookRule;
-    static const BishopRule bishopRule;
-    static const QueenRule queenRule;
-    static const KnightRule knightRule;
-    static const KingRule kingRule;
-    static const PawnRule pawnRule;
-
-    switch (type) {
-        case PieceType::Rook:   return rookRule;
-        case PieceType::Bishop: return bishopRule;
-        case PieceType::Queen:  return queenRule;
-        case PieceType::Knight: return knightRule;
-        case PieceType::King:   return kingRule;
-        case PieceType::Pawn:   return pawnRule;
+// --- PieceRuleFactory Dynamic Registry Implementation ---
+static std::unordered_map<PieceType, std::unique_ptr<IPieceRule>>& getRegistry() noexcept {
+    static std::unordered_map<PieceType, std::unique_ptr<IPieceRule>> registry;
+    if (registry.empty()) {
+        registry[PieceType::Rook] = std::make_unique<RookRule>();
+        registry[PieceType::Bishop] = std::make_unique<BishopRule>();
+        registry[PieceType::Queen] = std::make_unique<QueenRule>();
+        registry[PieceType::Knight] = std::make_unique<KnightRule>();
+        registry[PieceType::King] = std::make_unique<KingRule>();
+        registry[PieceType::Pawn] = std::make_unique<PawnRule>();
     }
-    return pawnRule; // ברירת מחדל בטוחה
+    return registry;
+}
+
+const IPieceRule& PieceRuleFactory::getRule(PieceType type) noexcept {
+    auto& reg = getRegistry();
+    auto it = reg.find(type);
+    if (it != reg.end() && it->second) {
+        return *(it->second);
+    }
+    static const PawnRule defaultRule;
+    return defaultRule;
+}
+
+void PieceRuleFactory::registerRule(PieceType type, std::unique_ptr<IPieceRule> rule) noexcept {
+    getRegistry()[type] = std::move(rule);
 }
 
 }  // namespace kungfu
