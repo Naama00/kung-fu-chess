@@ -4,7 +4,6 @@
 
 namespace kungfu {
 
-// פונקציית העזר הקיימת שלך, נשתמש בה כדי למצוא משבצת פנויה אחרונה
 Position findLastVacantPositionOnPath(
     const Position& from,
     const Position& to,
@@ -40,38 +39,40 @@ Position findLastVacantPositionOnPath(
     return from;
 }
 
+CollisionResolver::CollisionResolver(
+    std::shared_ptr<IBoard> board, 
+    CooldownTracker& cooldownTracker, 
+    const GameConfig& config
+) noexcept
+    : board_(std::move(board))
+    , cooldownTracker_(cooldownTracker)
+    , config_(config) {}
+
 void CollisionResolver::resolveMidRouteCollision(
-    const Motion& firstArrived, // הכלי שהגיע ראשון למשבצת ההתנגשות (או מותקף)
-    const Motion& secondArrived, // הכלי שהגיע שני (התוקף / החוסם)
+    const Motion& winner, // הגיע ראשון (המוקדם)
+    const Motion& loser,  // הגיע שני (המאוחר)
+    int currentTimeMs,
     std::vector<ArrivalEvent>& events
 ) noexcept {
-    
-    // מקרה 1: כלי אויב - כלי אויב הגיע למשבצת שבה כלי אחר נמצא/עובר -> אכילה!
-    if (firstArrived.piece()->color() != secondArrived.piece()->color()) {
-        // הכלי שהגיע שני (התוקף) אוכל את הכלי שהיה שם קודם
-        firstArrived.piece()->setState(PieceState::Captured);
-        cooldownTracker_.clear(firstArrived.piece()->id());
+    // מקרה 1: כלי אויב - הכלי שהגיע שני (המאוחר / loser) אוכל את הכלי שהגיע ראשון (המוקדם / winner)
+    if (winner.piece()->color() != loser.piece()->color()) {
+        winner.piece()->setState(PieceState::Captured);
+        cooldownTracker_.clear(winner.piece()->id());
         
-        firstArrived.piece()->setPosition(firstArrived.from());
-        board_->removePiece(firstArrived.from());
+        winner.piece()->setPosition(winner.from());
+        board_->removePiece(winner.from());
 
-        events.push_back({firstArrived.from(), firstArrived.from(), firstArrived.piece(), false, true});
-        
-        // הערה: הכלי השני (התוקף) ימשיך ליעדו כרגיל או ייעצר במשבצת האכילה, תלוי בלוגיקת ה-Arbiter שלכם. 
-        // מומלץ לעדכן את היעד של secondArrived לנקודת המפגש אם רוצים שהוא ייעצר שם.
+        events.push_back({winner.from(), winner.from(), winner.piece(), false, true});
     } 
-    // מקרה 2: כלים ידידותיים - הכלי שהגיע מאוחר יותר נעצר במשבצת האחרונה הפנויה
+    // מקרה 2: כלים ידידותיים - הכלי שהגיע מאוחר יותר (loser) נעצר במשבצת האחרונה הפנויה במסלולו
     else {
-        // נמצא את המשבצת האחרונה הפנויה במסלול של הכלי השני (המאוחר)
-        Position stopPos = findLastVacantPositionOnPath(secondArrived.from(), secondArrived.to(), board_);
+        Position stopPos = findLastVacantPositionOnPath(loser.from(), loser.to(), board_);
         
-        secondArrived.piece()->setState(PieceState::Idle);
-        secondArrived.piece()->setPosition(stopPos);
+        loser.piece()->setState(PieceState::Idle);
+        loser.piece()->setPosition(stopPos);
         
-        cooldownTracker_.setCooldown(secondArrived.piece()->id(), board_->rows() /* או currentTime שהיה מועבר */ + config_.cooldownDurationMs);
-        events.push_back({secondArrived.from(), stopPos, secondArrived.piece(), false, true});
-        
-        // אנו מסמנים למערכת שהתנועה של secondArrived הסתיימה מוקדם מהצפוי
+        cooldownTracker_.setCooldown(loser.piece()->id(), currentTimeMs + config_.cooldownDurationMs);
+        events.push_back({loser.from(), stopPos, loser.piece(), false, true});
     }
 }
 
@@ -85,11 +86,11 @@ bool CollisionResolver::resolveArrival(
     Position to = motion.to();
     auto piece = motion.piece();
 
-    // מאפשרים החזרה מוקדמת רק אם משבצת הנחיתה בקפיצה במקום אכן פנויה
+    // מאפשרים הגעה מוקדמת רק אם משבצת הנחיתה בקפיצה במקום אכן פנויה
     if (from == to && !board_->pieceAt(to).has_value()) {
         piece->setState(PieceState::Idle);
-        piece->setPosition(to); // החזרת המיקום הלוגי למקום הנחיתה
-        cooldownTracker_.setCooldown(piece->id(), currentTimeMs + config_.cooldownDurationMs);
+        piece->setPosition(to);
+        cooldownTracker_.setCooldown(piece->id(), motion.arrivalTime() + config_.cooldownDurationMs);
         events.push_back({from, to, piece, false, false});
         return true;
     }
@@ -101,7 +102,7 @@ bool CollisionResolver::resolveArrival(
     if (targetPieceOpt.has_value() && targetPieceOpt.value()) {
         auto targetPiece = targetPieceOpt.value();
         if (targetPiece->color() == piece->color()) {
-            if (piece->type() != PieceType::Knight) { // פרשים מתעלמים מחסימות ידידותיות (מכים אותן)
+            if (piece->type() != PieceType::Knight) { // פרשים מתעלמים מחסימות ידידותיות
                 isFriendlyBlock = true;
             }
         }
@@ -110,21 +111,38 @@ bool CollisionResolver::resolveArrival(
     Position finalDestination = to;
 
     if (isFriendlyBlock) {
-        // מציאת המשבצת הפנויה האחרונה לאורך מסלול הנסיגה
-        finalDestination = findLastVacantPositionOnPath(from, to, board_);
+        if (from == to) {
+            // תיקון באג 3: קפיצה במקום שנחסמה על ידי כלי ידידותי - מציאת משבצת פנויה סמוכה
+            finalDestination = from;
+            for (int rOffset = -1; rOffset <= 1; ++rOffset) {
+                for (int cOffset = -1; cOffset <= 1; ++cOffset) {
+                    if (rOffset == 0 && cOffset == 0) continue;
+                    Position adj(from.row() + rOffset, from.col() + cOffset);
+                    if (adj.row() >= 0 && adj.row() < board_->rows() &&
+                        adj.col() >= 0 && adj.col() < board_->cols()) {
+                        if (!board_->pieceAt(adj).has_value()) {
+                            finalDestination = adj;
+                            break;
+                        }
+                    }
+                }
+                if (finalDestination != from) break;
+            }
+        } else {
+            finalDestination = findLastVacantPositionOnPath(from, to, board_);
+        }
 
         piece->setState(PieceState::Idle);
-        piece->setPosition(finalDestination); // מיקום הכלי במשבצת הנסיגה
+        piece->setPosition(finalDestination);
         
-        // הטלת צינון כי הכלי בכל זאת ביצע תנועה והתעייף
-        cooldownTracker_.setCooldown(piece->id(), currentTimeMs + config_.cooldownDurationMs);
+        // תיקון באג 5: שימוש בזמן הגעה תאורטי מדוייק של הכלי לצורך קביעת הצינון
+        cooldownTracker_.setCooldown(piece->id(), motion.arrivalTime() + config_.cooldownDurationMs);
         
         events.push_back({from, finalDestination, piece, false, true});
         return true;
     }
 
     // נחיתה רגילה ללא חסימות ידידותיות
-    // אכילת כלי עוין ביעד (אם קיים)
     bool capturedKing = false;
     if (targetPieceOpt.has_value() && targetPieceOpt.value()) {
         auto targetPiece = targetPieceOpt.value();
@@ -147,7 +165,7 @@ bool CollisionResolver::resolveArrival(
     if (finalPiece != piece) {
         cooldownTracker_.clear(piece->id());
     }
-    cooldownTracker_.setCooldown(finalPiece->id(), currentTimeMs + config_.cooldownDurationMs);
+    cooldownTracker_.setCooldown(finalPiece->id(), motion.arrivalTime() + config_.cooldownDurationMs);
     events.push_back({from, finalDestination, finalPiece, capturedKing, false});
 
     return true;

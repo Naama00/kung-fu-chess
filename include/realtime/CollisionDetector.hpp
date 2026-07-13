@@ -1,6 +1,7 @@
 #pragma once
 
 #include <vector>
+#include <optional>
 #include "realtime/Motion.hpp"
 #include "common/GameConfig.hpp"
 
@@ -22,6 +23,13 @@ public:
     static std::vector<Motion> detectArrivals(
         const std::vector<Motion>& activeMotions,
         int currentTimeMs
+    ) noexcept;
+
+private:
+    // מתודת עזר פנימית לביצוע בדיקה מעמיקה (Narrow Phase) של התנגשות בין שני מסלולים
+    static std::optional<MidRouteCollision> checkDetailedCollision(
+        const Motion& m1, 
+        const Motion& m2
     ) noexcept;
 };
 

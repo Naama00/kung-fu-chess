@@ -6,14 +6,13 @@
 #include "board/IBoard.hpp"
 #include "realtime/Motion.hpp"
 #include "realtime/CooldownTracker.hpp"
-#include "realtime/RealTimeArbiter.hpp" // צורך את ArrivalEvent
+#include "realtime/RealTimeArbiter.hpp"
 #include "common/GameConfig.hpp"
 
 namespace kungfu {
 
 using PromotionHandler = std::function<PiecePtr(const PiecePtr&, const Position&)>;
 
-// רכיב החוקים הטהור: מיישם את השלכות השחמט על הלוח ועל הכלים בעקבות התנגשויות
 class CollisionResolver {
 public:
     CollisionResolver(
@@ -23,8 +22,9 @@ public:
     ) noexcept;
 
     void resolveMidRouteCollision(
-        const Motion& winner,
-        const Motion& loser,
+        const Motion& winner, // הגיע ראשון (המוקדם)
+        const Motion& loser,  // הגיע שני (המאוחר)
+        int currentTimeMs,    // נוסף לצורך פתרון הצינון של המהלך הידידותי
         std::vector<ArrivalEvent>& events
     ) noexcept;
 

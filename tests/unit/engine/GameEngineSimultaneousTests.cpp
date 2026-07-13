@@ -102,21 +102,21 @@ TEST_CASE("Mid-Route Enemy Collision Resolution", "[engine][simultaneous]") {
     auto ruleEngine = std::make_shared<kungfu::RuleEngine>(board);
     kungfu::GameEngine game(board, ruleEngine);
 
-    auto res1 = game.requestMove(kungfu::Position(0, 0), kungfu::Position(0, 2));
+    auto res1 = game.requestMove(kungfu::Position(0, 0), kungfu::Position(0, 2)); // t=0
     REQUIRE(res1.isAccepted);
 
-    game.wait(500);
+    game.wait(500); // t=500
 
-    auto res2 = game.requestMove(kungfu::Position(0, 2), kungfu::Position(0, 0));
+    auto res2 = game.requestMove(kungfu::Position(0, 2), kungfu::Position(0, 0)); // t=500
     REQUIRE(res2.isAccepted);
 
-    // הלבן מנצח כי התחיל ראשון (t=0 לעומת t=500); השחור מחוסל
-    game.wait(1000);
-    REQUIRE_FALSE(board->pieceAt(kungfu::Position(0, 2)).has_value());
+    // חוק מעודכן: השחור (הגיע מאוחר יותר) אוכל את הלבן (הגיע קודם)
+    game.wait(1000); // t=1500: ההתנגשות מתרחשת. הלבן (winner) נלכד ומפונה.
+    REQUIRE_FALSE(board->pieceAt(kungfu::Position(0, 0)).has_value());
 
-    game.wait(500);
-    REQUIRE(board->pieceAt(kungfu::Position(0, 2)).has_value());
-    REQUIRE(board->pieceAt(kungfu::Position(0, 2)).value()->color() == kungfu::PlayerColor::White);
+    game.wait(1000); // t=2500: השחור מגיע ליעדו ב-(0,0)
+    REQUIRE(board->pieceAt(kungfu::Position(0, 0)).has_value());
+    REQUIRE(board->pieceAt(kungfu::Position(0, 0)).value()->color() == kungfu::PlayerColor::Black);
 }
 
 TEST_CASE("Pawn hasMoved Flag Updates Automatically Upon Arrival", "[engine][simultaneous]") {

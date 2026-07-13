@@ -30,10 +30,8 @@ MoveResult GameEngine::requestMove(const Position& from, const Position& to) {
         return {false, "internal_error"};
     }
 
-    // ניסיון ראשון: חיפוש כלי העומד פיזית על הלוח
     auto sourcePieceOpt = board_->pieceAt(from);
     
-    // ניסיון שני (פתרון ה-Premove): אם המשבצת ריקה, נבדוק אם יש כלי בדרך אליה או ממנה
     if (!sourcePieceOpt.has_value() || !sourcePieceOpt.value()) {
         sourcePieceOpt = arbiter_.getPieceInTransitAt(from);
     }
@@ -74,8 +72,6 @@ MoveResult GameEngine::handlePremoveRegistration(const PiecePtr& piece, const Po
         return {false, "piece_on_cooldown"};
     }
 
-    // כל מהלך שנשלח לכלי תפוס דורס את ה-premove הקיים (registerOrUpdate).
-    // "לבטל" premove = לשלוח מהלך לא חוקי שידרוס את הרשום, ויכשל בביצוע.
     premoveQueue_.registerOrUpdate(piece, to);
     return {true, "premove_registered"};
 }
@@ -129,7 +125,6 @@ void GameEngine::wait(int ms) noexcept {
             return piece;
         }
         auto promoted = promotionRule_->maybePromote(piece, to, *board_);
-        //   : אם הרגלי הוכתר לכלי חדש, נעדכן את תור ה-Premove
         if (promoted != piece) {
             premoveQueue_.replacePiece(piece, promoted);
         }
@@ -143,7 +138,7 @@ void GameEngine::wait(int ms) noexcept {
     }
 
     if (config_.enablePremoves && !gameOver_) {
-        premoveFailures_.clear();  // מנקים כשלונות מהסבב הקודם - רלוונטי רק לסבב ה-wait הנוכחי
+        premoveFailures_.clear();
         premoveQueue_.processReady(
             [this](const PiecePtr& piece) { return isPieceBusy(piece); },
             [this](const Position& from, const Position& to) -> MoveResult {
@@ -165,6 +160,10 @@ std::optional<PlayerColor> GameEngine::getPieceColorAt(const Position& pos) cons
     if (pieceOpt.has_value() && pieceOpt.value()) {
         return pieceOpt.value()->color();
     }
+    auto transitOpt = arbiter_.getPieceInTransitAt(pos);
+    if (transitOpt.has_value() && transitOpt.value()) {
+        return transitOpt.value()->color();
+    }
     return std::nullopt;
 }
 
@@ -173,7 +172,11 @@ bool GameEngine::hasPieceAt(const Position& pos) const {
         return false;
     }
     auto pieceOpt = board_->pieceAt(pos);
-    return pieceOpt.has_value() && pieceOpt.value() != nullptr;
+    if (pieceOpt.has_value() && pieceOpt.value() != nullptr) {
+        return true;
+    }
+    // תיקון באג 4: תמיכה בזיהוי כלים בתנועה על מנת לאפשר לחיצות ובחירה מהבקר
+    return arbiter_.getPieceInTransitAt(pos).has_value();
 }
 
 int GameEngine::getBoardRows() const {

@@ -254,6 +254,7 @@ private:
 #pragma once
 
 #include <vector>
+#include <optional>
 #include "realtime/Motion.hpp"
 #include "common/GameConfig.hpp"
 
@@ -275,6 +276,13 @@ public:
     static std::vector<Motion> detectArrivals(
         const std::vector<Motion>& activeMotions,
         int currentTimeMs
+    ) noexcept;
+
+private:
+    // מתודת עזר פנימית לביצוע בדיקה מעמיקה (Narrow Phase) של התנגשות בין שני מסלולים
+    static std::optional<MidRouteCollision> checkDetailedCollision(
+        const Motion& m1, 
+        const Motion& m2
     ) noexcept;
 };
 
@@ -566,61 +574,6 @@ std::optional<Position> BoardMapper::pixelToCell(int x, int y, int rows, int col
 }  // namespace kungfu
 </file>
 
-<file path="src/realtime/CollisionDetector.cpp">
-#include "realtime/CollisionDetector.hpp"
-
-namespace kungfu {
-
-std::vector<MidRouteCollision> CollisionDetector::detectMidRouteCollisions(
-    const std::vector<Motion>& activeMotions,
-    const GameConfig& config
-) noexcept {
-    std::vector<MidRouteCollision> collisions;
-    if (!config.allowSimultaneousMovement || activeMotions.size() < 2) {
-        return collisions;
-    }
-
-    for (size_t i = 0; i < activeMotions.size(); ++i) {
-        for (size_t j = i + 1; j < activeMotions.size(); ++j) {
-            const auto& m1 = activeMotions[i];
-            const auto& m2 = activeMotions[j];
-
-            if (m1.piece()->color() != m2.piece()->color()) {
-                // פרשים קופצים באוויר ואינם מתנגשים באמצע הדרך
-                if (m1.piece()->type() == PieceType::Knight || m2.piece()->type() == PieceType::Knight) {
-                    continue;
-                }
-
-                // בדיקת התנגשות ראש בראש (החלפת מקומות)
-                if (m1.from() == m2.to() && m1.to() == m2.from()) {
-                    if (m1.startTime() <= m2.startTime()) {
-                        collisions.push_back({m1, m2});
-                    } else {
-                        collisions.push_back({m2, m1});
-                    }
-                }
-            }
-        }
-    }
-    return collisions;
-}
-
-std::vector<Motion> CollisionDetector::detectArrivals(
-    const std::vector<Motion>& activeMotions,
-    int currentTimeMs
-) noexcept {
-    std::vector<Motion> arrivals;
-    for (const auto& m : activeMotions) {
-        if (currentTimeMs >= m.arrivalTime()) {
-            arrivals.push_back(m);
-        }
-    }
-    return arrivals;
-}
-
-} // namespace kungfu
-</file>
-
 <file path="src/realtime/Motion.cpp">
 #include "realtime/Motion.hpp"
 
@@ -630,174 +583,6 @@ Motion::Motion(PiecePtr piece, const Position& from, const Position& to, int sta
     : piece_(std::move(piece)), from_(from), to_(to), startTimeMs_(startTimeMs), arrivalTimeMs_(startTimeMs + durationMs) {}
 
 }  // namespace kungfu
-</file>
-
-<file path="src/rules/CollisionResolver.cpp">
-#include "rules/CollisionResolver.hpp"
-#include <cmath>
-
-namespace kungfu {
-
-namespace {
-
-// מחשבת את מסלול התנועה הדיסקרטי מהמשבצת שלפני היעד בחזרה לנקודת המוצא
-Position findLastVacantPositionOnPath(
-    const Position& from,
-    const Position& to,
-    const std::shared_ptr<IBoard>& board
-) noexcept {
-    int r1 = from.row();
-    int c1 = from.col();
-    int r2 = to.row();
-    int c2 = to.col();
-
-    int dr = r2 - r1;
-    int dc = c2 - c1;
-
-    if (dr == 0 && dc == 0) {
-        return from;
-    }
-
-    // חישוב כיווני ההתקדמות (-1, 0, 1)
-    int stepR = (dr > 0) ? 1 : ((dr < 0) ? -1 : 0);
-    int stepC = (dc > 0) ? 1 : ((dc < 0) ? -1 : 0);
-
-    std::vector<Position> path;
-    
-    // יצירת רשימת משבצות המסלול מהסוף (אחת לפני to) ועד ההתחלה (from)
-    int curR = r2 - stepR;
-    int curC = c2 - stepC;
-
-    while (curR != r1 || curC != c1) {
-        path.emplace_back(curR, curC);
-        curR -= stepR;
-        curC -= stepC;
-    }
-    path.push_back(from); // נקודת המוצא היא ברירת המחדל האחרונה בהחלט
-
-    // מציאת המשבצת הפנויה הראשונה שנתקלים בה בנסיגה לאחור
-    for (const auto& pos : path) {
-        if (!board->pieceAt(pos).has_value()) {
-            return pos;
-        }
-    }
-
-    // מקרה חירום קיצוני (אם אפילו משבצת המוצא נתפסה בינתיים): מחפשים משבצת פנויה צמודה למוצא
-    for (int drOffset = -1; drOffset <= 1; ++drOffset) {
-        for (int dcOffset = -1; dcOffset <= 1; ++dcOffset) {
-            Position fallback(from.row() + drOffset, from.col() + dcOffset);
-            if (fallback.row() >= 0 && fallback.row() < board->rows() &&
-                fallback.col() >= 0 && fallback.col() < board->cols()) {
-                if (!board->pieceAt(fallback).has_value()) {
-                    return fallback;
-                }
-            }
-        }
-    }
-
-    return from; // מוצא אחרון בהחלט למניעת קריסה
-}
-
-} // namespace
-
-CollisionResolver::CollisionResolver(
-    std::shared_ptr<IBoard> board, 
-    CooldownTracker& cooldownTracker, 
-    const GameConfig& config
-) noexcept
-    : board_(std::move(board)), cooldownTracker_(cooldownTracker), config_(config) {}
-
-void CollisionResolver::resolveMidRouteCollision(
-    const Motion& winner,
-    const Motion& loser,
-    std::vector<ArrivalEvent>& events
-) noexcept {
-    loser.piece()->setState(PieceState::Captured);
-    cooldownTracker_.clear(loser.piece()->id());
-    board_->removePiece(loser.from());
-
-    events.push_back({loser.from(), loser.from(), loser.piece(), false, true});
-}
-
-bool CollisionResolver::resolveArrival(
-    const Motion& motion,
-    int currentTimeMs,
-    std::vector<ArrivalEvent>& events,
-    const PromotionHandler& promoteCallback
-) noexcept {
-    Position from = motion.from();
-    Position to = motion.to();
-    auto piece = motion.piece();
-
-    // טיפול בנחיתה מקפיצה (Airborne)
-    if (from == to) {
-        piece->setState(PieceState::Idle);
-        piece->setPosition(to); // החזרת המיקום הלוגי למקום הנחיתה
-        cooldownTracker_.setCooldown(piece->id(), currentTimeMs + config_.cooldownDurationMs);
-        events.push_back({from, to, piece, false, false});
-        return true;
-    }
-
-    auto targetPieceOpt = board_->pieceAt(to);
-
-    // בדיקת חסימה על ידי כלי ידידותי ביעד
-    bool isFriendlyBlock = false;
-    if (targetPieceOpt.has_value() && targetPieceOpt.value()) {
-        auto targetPiece = targetPieceOpt.value();
-        if (targetPiece->color() == piece->color()) {
-            if (piece->type() != PieceType::Knight) { // פרשים מתעלמים מחסימות ידידותיות (מכים אותן)
-                isFriendlyBlock = true;
-            }
-        }
-    }
-
-    Position finalDestination = to;
-
-    if (isFriendlyBlock) {
-        // מציאת המשבצת הפנויה האחרונה לאורך מסלול הנסיגה
-        finalDestination = findLastVacantPositionOnPath(from, to, board_);
-
-        piece->setState(PieceState::Idle);
-        piece->setPosition(finalDestination); // מיקום הכלי במשבצת הנסיגה
-        
-        // הטלת צינון כי הכלי בכל זאת ביצע תנועה והתעייף
-        cooldownTracker_.setCooldown(piece->id(), currentTimeMs + config_.cooldownDurationMs);
-        
-        events.push_back({from, finalDestination, piece, false, true});
-        return true;
-    }
-
-    // נחיתה רגילה ללא חסימות ידידותיות
-    // אכילת כלי עוין ביעד (אם קיים)
-    bool capturedKing = false;
-    if (targetPieceOpt.has_value() && targetPieceOpt.value()) {
-        auto targetPiece = targetPieceOpt.value();
-        if (targetPiece->type() == PieceType::King) {
-            capturedKing = true;
-        }
-        targetPiece->setState(PieceState::Captured);
-        cooldownTracker_.clear(targetPiece->id());
-        board_->removePiece(targetPiece->position());
-    }
-
-    piece->setPosition(finalDestination);
-    piece->setState(PieceState::Idle);
-    piece->markMoved();
-
-    PiecePtr finalPiece = piece;
-    if (promoteCallback) {
-        finalPiece = promoteCallback(piece, finalDestination);
-    }
-    if (finalPiece != piece) {
-        cooldownTracker_.clear(piece->id());
-    }
-    cooldownTracker_.setCooldown(finalPiece->id(), currentTimeMs + config_.cooldownDurationMs);
-    events.push_back({from, finalDestination, finalPiece, capturedKing, false});
-
-    return true;
-}
-
-} // namespace kungfu
 </file>
 
 <file path="src/rules/PromotionRules.cpp">
@@ -1636,43 +1421,6 @@ Testing/
 # kong-fu-chess
 </file>
 
-<file path="include/engine/PremoveQueue.hpp">
-#pragma once
-
-#include <vector>
-#include <functional>
-#include "board/Piece.hpp"
-#include "common/Position.hpp"
-#include "engine/IGameEngine.hpp"
-
-namespace kungfu {
-
-using PieceBusyPredicate = std::function<bool(const PiecePtr&)>;
-using MoveExecutor = std::function<MoveResult(const Position& from, const Position& to)>;
-
-class PremoveQueue {
-public:
-    // רושמת premove חדש, או מעדכנת premove קיים לאותו כלי.
-    // רק היעד (to) נשמר - הביצוע תמיד ישתמש במיקום החי של הכלי כ-from,
-    // כי הכלי עשוי לזוז בינתיים (למשל אחרי שהמהלך הקודם שלו נחת).
-    void registerOrUpdate(const PiecePtr& piece, const Position& to);
-
-    // מבטלת premove קיים לכלי נתון (אם קיים).
-    // נקראת כאשר השחקן מבצע מהלך לא חוקי – הכוונה לדרוס ולבטל את ה-premove.
-    void cancel(const PiecePtr& piece) noexcept;
-
-    void processReady(const PieceBusyPredicate& isBusy, const MoveExecutor& execute);
-
-    bool empty() const noexcept { return entries_.empty(); }
-    size_t size() const noexcept { return entries_.size(); }
-
-private:
-    std::vector<std::pair<PiecePtr, Position>> entries_;
-};
-
-}  // namespace kungfu
-</file>
-
 <file path="include/realtime/Motion.hpp">
 #pragma once
 
@@ -1757,129 +1505,6 @@ Piece::Piece(PieceType type, PlayerColor color, Position position)
 }  // namespace kungfu
 </file>
 
-<file path="src/engine/PremoveQueue.cpp">
-#include "engine/PremoveQueue.hpp"
-#include "common/Enums.hpp"
-#include <algorithm>
-
-namespace kungfu {
-
-void PremoveQueue::registerOrUpdate(const PiecePtr& piece, const Position& to) {
-    auto it = std::find_if(entries_.begin(), entries_.end(), [&](const auto& pair) {
-        return pair.first == piece;
-    });
-
-    if (it != entries_.end()) {
-        it->second = to;
-    } else {
-        entries_.push_back({piece, to});
-    }
-}
-
-void PremoveQueue::cancel(const PiecePtr& piece) noexcept {
-    entries_.erase(
-        std::remove_if(entries_.begin(), entries_.end(),
-            [&](const auto& pair) { return pair.first == piece; }),
-        entries_.end()
-    );
-}
-
-void PremoveQueue::processReady(const PieceBusyPredicate& isBusy, const MoveExecutor& execute) {
-    for (auto it = entries_.begin(); it != entries_.end(); ) {
-        auto piece = it->first;
-        auto to = it->second;
-
-        if (!piece || piece->state() == PieceState::Captured) {
-            it = entries_.erase(it);
-            continue;
-        }
-
-        if (!isBusy(piece)) {
-            execute(piece->position(), to);
-            it = entries_.erase(it);
-            continue;
-        }
-
-        ++it;
-    }
-}
-
-}  // namespace kungfu
-</file>
-
-<file path="src/input/Controller.cpp">
-#include "input/Controller.hpp"
-#include "engine/IGameEngine.hpp"
-
-namespace kungfu {
-
-Controller::Controller(std::shared_ptr<IGameEngine> engine, int cellSize)
-    : engine_(std::move(engine)), mapper_(cellSize), selectedPosition_(std::nullopt) {}
-
-ControllerResult Controller::click(int x, int y) {
-    if (!engine_) {
-        return {false, "Engine reference is null"};
-    }
-
-    int rows = engine_->getBoardRows();
-    int cols = engine_->getBoardCols();
-    auto cellOpt = mapper_.pixelToCell(x, y, rows, cols);
-
-    // 1. קליק מחוץ לגבולות הלוח - התעלמות מוחלטת (אינו מבטל סימון קיים)
-    if (!cellOpt.has_value()) {
-        return {false, "Click outside board ignored"};
-    }
-
-    Position targetCell = cellOpt.value();
-
-    // 2. קליק בתוך הלוח כאשר כבר קיים כלי מסומן
-    if (selectedPosition_.has_value()) {
-        Position from = selectedPosition_.value();
-        
-        // חוק מיוחד: אם משבצת היעד מכילה כלי ידידותי, מחליפים את הסימון אליו
-        if (engine_->hasPieceAt(targetCell)) {
-            auto fromColor = engine_->getPieceColorAt(from);
-            auto targetColor = engine_->getPieceColorAt(targetCell);
-            if (fromColor.has_value() && targetColor.has_value() && fromColor.value() == targetColor.value()) {
-                selectedPosition_ = targetCell;
-                return {true, "Piece selection replaced"};
-            }
-        }
-        
-        // שליחת בקשת התנועה למנוע המשחק (עבור תא ריק או כלי עוין)
-        auto moveResult = engine_->requestMove(from, targetCell);
-        
-        // פינוי הסימון באופן מיידי לאחר הניסיון
-        clearSelection();
-
-        if (moveResult.isAccepted) {
-            return {true, "Move requested: " + moveResult.reason};
-        } else {
-            return {true, "Move rejected: " + moveResult.reason};
-        }
-    }
-
-    // 3. קליק בתוך הלוח ללא כלי מסומן כרגע (קליק ראשון)
-    if (engine_->hasPieceAt(targetCell)) {
-        selectedPosition_ = targetCell;
-        return {true, "Piece selected"};
-    }
-
-    // התעלמות מקליק ראשון על משבצת ריקה
-    return {false, "Click on empty cell ignored"};
-}
-
-std::optional<Position> Controller::selectedPosition() const noexcept {
-    return selectedPosition_;
-}
-
-void Controller::clearSelection() noexcept {
-    selectedPosition_ = std::nullopt;
-}
-
-}  // namespace kungfu
-</file>
-
 <file path="src/io/BoardPrinter.cpp">
 #include "io/BoardPrinter.hpp"
 #include "common/PieceTokenCodec.hpp"
@@ -1920,6 +1545,308 @@ std::string BoardPrinter::print(const Board& board) {
 }
 
 }  // namespace kungfu
+</file>
+
+<file path="src/realtime/CollisionDetector.cpp">
+#include "realtime/CollisionDetector.hpp"
+#include <algorithm>
+
+namespace kungfu {
+    namespace {
+
+// בדיקת חפיפת זמנים פשוטה
+bool hasTimeOverlap(const kungfu::Motion& m1, const kungfu::Motion& m2) noexcept {
+    int maxStart = std::max(m1.startTime(), m2.startTime());
+    int minArrival = std::min(m1.arrivalTime(), m2.arrivalTime());
+    return maxStart < minArrival;
+}
+
+// בדיקת חפיפת קופסה חוסמת (Bounding Box) במרחב הלוח
+bool hasBoundingBoxOverlap(const kungfu::Motion& m1, const kungfu::Motion& m2) noexcept {
+    int minRow1 = std::min(m1.from().row(), m1.to().row());
+    int maxRow1 = std::max(m1.from().row(), m1.to().row());
+    int minCol1 = std::min(m1.from().col(), m1.to().col());
+    int maxCol1 = std::max(m1.from().col(), m1.to().col());
+
+    int minRow2 = std::min(m2.from().row(), m2.to().row());
+    int maxRow2 = std::max(m2.from().row(), m2.to().row());
+    int minCol2 = std::min(m2.from().col(), m2.to().col());
+    int maxCol2 = std::max(m2.from().col(), m2.to().col());
+
+    return !(maxRow1 < minRow2 || minRow1 > maxRow2 || maxCol1 < minCol2 || minCol1 > maxCol2);
+}
+
+} // namespace
+
+// פונקציית עזר שמחזירה את רשימת המשבצות שבהן הכלי עובר (כולל start ו-end)
+std::vector<Position> getDetailedPath(const Position& from, const Position& to) {
+    std::vector<Position> path;
+    path.push_back(from);
+    
+    int dr = to.row() - from.row();
+    int dc = to.col() - from.col();
+    if (dr == 0 && dc == 0) return path;
+    
+    int stepR = (dr > 0) ? 1 : ((dr < 0) ? -1 : 0);
+    int stepC = (dc > 0) ? 1 : ((dc < 0) ? -1 : 0);
+    
+    int curR = from.row() + stepR;
+    int curC = from.col() + stepC;
+    
+    while (curR != to.row() || curC != to.col()) {
+        path.emplace_back(curR, curC);
+        curR += stepR;
+        curC += stepC;
+    }
+    path.push_back(to);
+    return path;
+}
+
+std::vector<MidRouteCollision> CollisionDetector::detectMidRouteCollisions(
+    const std::vector<Motion>& activeMotions,
+    const GameConfig& config
+) noexcept {
+    std::vector<MidRouteCollision> collisions;
+    if (!config.allowSimultaneousMovement || activeMotions.size() < 2) {
+        return collisions;
+    }
+    
+    for (size_t i = 0; i < activeMotions.size(); ++i) {
+        for (size_t j = i + 1; j < activeMotions.size(); ++j) {
+            const auto& m1 = activeMotions[i];
+            const auto& m2 = activeMotions[j];
+
+            // 1. סינון לפי סוג כלי (פרשים)
+            if (m1.piece()->type() == PieceType::Knight || m2.piece()->type() == PieceType::Knight) {
+                continue;
+            }
+
+            // 2. סינון מהיר (Broad Phase): בדיקת חפיפת זמנים כוללת
+            if (!hasTimeOverlap(m1, m2)) {
+                continue;
+            }
+
+            // 3. סינון מהיר (Broad Phase): בדיקת קופסה חוסמת מרחבית
+            if (!hasBoundingBoxOverlap(m1, m2)) {
+                continue;
+            }
+
+            // 4. בדיקה מעמיקה (Narrow Phase) רק עבור זוגות רלוונטיים
+            if (auto collision = checkDetailedCollision(m1, m2)) {
+                collisions.push_back(*collision);
+            }
+        }
+    }
+    return collisions;
+}
+
+std::optional<kungfu::MidRouteCollision> CollisionDetector::checkDetailedCollision(
+    const Motion& m1, const Motion& m2
+) noexcept {
+    auto path1 = getDetailedPath(m1.from(), m1.to());
+    auto path2 = getDetailedPath(m2.from(), m2.to());
+
+    int duration1 = m1.arrivalTime() - m1.startTime();
+    int duration2 = m2.arrivalTime() - m2.startTime();
+    
+    float timePerStep1 = (path1.size() > 1) ? (float)duration1 / (path1.size() - 1) : 0;
+    float timePerStep2 = (path2.size() > 1) ? (float)duration2 / (path2.size() - 1) : 0;
+
+    for (size_t idx1 = 0; idx1 < path1.size(); ++idx1) {
+        for (size_t idx2 = 0; idx2 < path2.size(); ++idx2) {
+            if (path1[idx1] == path2[idx2]) {
+                
+                int t1_enter = m1.startTime() + static_cast<int>(idx1 * timePerStep1);
+                int t2_enter = m2.startTime() + static_cast<int>(idx2 * timePerStep2);
+                
+                int t1_exit = (idx1 == path1.size() - 1) ? m1.arrivalTime() + 100000 : m1.startTime() + static_cast<int>((idx1 + 1) * timePerStep1);
+                int t2_exit = (idx2 == path2.size() - 1) ? m2.arrivalTime() + 100000 : m2.startTime() + static_cast<int>((idx2 + 1) * timePerStep2);
+
+                if (std::max(t1_enter, t2_enter) < std::min(t1_exit, t2_exit)) {
+                    if (t1_enter <= t2_enter) {
+                        return MidRouteCollision{m1, m2};
+                    } else {
+                        return MidRouteCollision{m2, m1};
+                    }
+                }
+            }
+        }
+    }
+    return std::nullopt;
+}
+std::vector<Motion> CollisionDetector::detectArrivals(
+    const std::vector<Motion>& activeMotions,
+    int currentTimeMs
+) noexcept {
+    std::vector<Motion> arrivals;
+    for (const auto& m : activeMotions) {
+        if (currentTimeMs >= m.arrivalTime()) {
+            arrivals.push_back(m);
+        }
+    }
+    return arrivals;
+}
+
+} // namespace kungfu
+</file>
+
+<file path="src/rules/CollisionResolver.cpp">
+#include "rules/CollisionResolver.hpp"
+#include <cmath>
+#include <algorithm>
+
+namespace kungfu {
+
+// פונקציית העזר הקיימת שלך, נשתמש בה כדי למצוא משבצת פנויה אחרונה
+Position findLastVacantPositionOnPath(
+    const Position& from,
+    const Position& to,
+    const std::shared_ptr<IBoard>& board
+) noexcept {
+    int r1 = from.row(); int c1 = from.col();
+    int r2 = to.row(); int c2 = to.col();
+    int dr = r2 - r1; int dc = c2 - c1;
+
+    if (dr == 0 && dc == 0) {
+        if (!board->pieceAt(from).has_value()) return from;
+    } else {
+        int stepR = (dr > 0) ? 1 : ((dr < 0) ? -1 : 0);
+        int stepC = (dc > 0) ? 1 : ((dc < 0) ? -1 : 0);
+
+        std::vector<Position> path;
+        int curR = r2 - stepR;
+        int curC = c2 - stepC;
+
+        while (curR != r1 || curC != c1) {
+            path.emplace_back(curR, curC);
+            curR -= stepR;
+            curC -= stepC;
+        }
+        path.push_back(from);
+
+        for (const auto& pos : path) {
+            if (!board->pieceAt(pos).has_value()) {
+                return pos;
+            }
+        }
+    }
+    return from;
+}
+
+void CollisionResolver::resolveMidRouteCollision(
+    const Motion& firstArrived, // הכלי שהגיע ראשון למשבצת ההתנגשות (או מותקף)
+    const Motion& secondArrived, // הכלי שהגיע שני (התוקף / החוסם)
+    std::vector<ArrivalEvent>& events
+) noexcept {
+    
+    // מקרה 1: כלי אויב - כלי אויב הגיע למשבצת שבה כלי אחר נמצא/עובר -> אכילה!
+    if (firstArrived.piece()->color() != secondArrived.piece()->color()) {
+        // הכלי שהגיע שני (התוקף) אוכל את הכלי שהיה שם קודם
+        firstArrived.piece()->setState(PieceState::Captured);
+        cooldownTracker_.clear(firstArrived.piece()->id());
+        
+        firstArrived.piece()->setPosition(firstArrived.from());
+        board_->removePiece(firstArrived.from());
+
+        events.push_back({firstArrived.from(), firstArrived.from(), firstArrived.piece(), false, true});
+        
+        // הערה: הכלי השני (התוקף) ימשיך ליעדו כרגיל או ייעצר במשבצת האכילה, תלוי בלוגיקת ה-Arbiter שלכם. 
+        // מומלץ לעדכן את היעד של secondArrived לנקודת המפגש אם רוצים שהוא ייעצר שם.
+    } 
+    // מקרה 2: כלים ידידותיים - הכלי שהגיע מאוחר יותר נעצר במשבצת האחרונה הפנויה
+    else {
+        // נמצא את המשבצת האחרונה הפנויה במסלול של הכלי השני (המאוחר)
+        Position stopPos = findLastVacantPositionOnPath(secondArrived.from(), secondArrived.to(), board_);
+        
+        secondArrived.piece()->setState(PieceState::Idle);
+        secondArrived.piece()->setPosition(stopPos);
+        
+        cooldownTracker_.setCooldown(secondArrived.piece()->id(), board_->rows() /* או currentTime שהיה מועבר */ + config_.cooldownDurationMs);
+        events.push_back({secondArrived.from(), stopPos, secondArrived.piece(), false, true});
+        
+        // אנו מסמנים למערכת שהתנועה של secondArrived הסתיימה מוקדם מהצפוי
+    }
+}
+
+bool CollisionResolver::resolveArrival(
+    const Motion& motion,
+    int currentTimeMs,
+    std::vector<ArrivalEvent>& events,
+    const PromotionHandler& promoteCallback
+) noexcept {
+    Position from = motion.from();
+    Position to = motion.to();
+    auto piece = motion.piece();
+
+    // מאפשרים החזרה מוקדמת רק אם משבצת הנחיתה בקפיצה במקום אכן פנויה
+    if (from == to && !board_->pieceAt(to).has_value()) {
+        piece->setState(PieceState::Idle);
+        piece->setPosition(to); // החזרת המיקום הלוגי למקום הנחיתה
+        cooldownTracker_.setCooldown(piece->id(), currentTimeMs + config_.cooldownDurationMs);
+        events.push_back({from, to, piece, false, false});
+        return true;
+    }
+
+    auto targetPieceOpt = board_->pieceAt(to);
+
+    // בדיקת חסימה על ידי כלי ידידותי ביעד
+    bool isFriendlyBlock = false;
+    if (targetPieceOpt.has_value() && targetPieceOpt.value()) {
+        auto targetPiece = targetPieceOpt.value();
+        if (targetPiece->color() == piece->color()) {
+            if (piece->type() != PieceType::Knight) { // פרשים מתעלמים מחסימות ידידותיות (מכים אותן)
+                isFriendlyBlock = true;
+            }
+        }
+    }
+
+    Position finalDestination = to;
+
+    if (isFriendlyBlock) {
+        // מציאת המשבצת הפנויה האחרונה לאורך מסלול הנסיגה
+        finalDestination = findLastVacantPositionOnPath(from, to, board_);
+
+        piece->setState(PieceState::Idle);
+        piece->setPosition(finalDestination); // מיקום הכלי במשבצת הנסיגה
+        
+        // הטלת צינון כי הכלי בכל זאת ביצע תנועה והתעייף
+        cooldownTracker_.setCooldown(piece->id(), currentTimeMs + config_.cooldownDurationMs);
+        
+        events.push_back({from, finalDestination, piece, false, true});
+        return true;
+    }
+
+    // נחיתה רגילה ללא חסימות ידידותיות
+    // אכילת כלי עוין ביעד (אם קיים)
+    bool capturedKing = false;
+    if (targetPieceOpt.has_value() && targetPieceOpt.value()) {
+        auto targetPiece = targetPieceOpt.value();
+        if (targetPiece->type() == PieceType::King) {
+            capturedKing = true;
+        }
+        targetPiece->setState(PieceState::Captured);
+        cooldownTracker_.clear(targetPiece->id());
+        board_->removePiece(targetPiece->position());
+    }
+
+    piece->setPosition(finalDestination);
+    piece->setState(PieceState::Idle);
+    piece->markMoved();
+
+    PiecePtr finalPiece = piece;
+    if (promoteCallback) {
+        finalPiece = promoteCallback(piece, finalDestination);
+    }
+    if (finalPiece != piece) {
+        cooldownTracker_.clear(piece->id());
+    }
+    cooldownTracker_.setCooldown(finalPiece->id(), currentTimeMs + config_.cooldownDurationMs);
+    events.push_back({from, finalDestination, finalPiece, capturedKing, false});
+
+    return true;
+}
+
+} // namespace kungfu
 </file>
 
 <file path="src/view/SnapshotBuilder.cpp">
@@ -2469,6 +2396,176 @@ public:
     // פונקציה לזיהוי צבע כלי במיקום מסוים
     virtual std::optional<PlayerColor> getPieceColorAt(const Position& pos) const = 0;
 };
+
+}  // namespace kungfu
+</file>
+
+<file path="include/engine/PremoveQueue.hpp">
+#pragma once
+
+#include <vector>
+#include <functional>
+#include "board/Piece.hpp"
+#include "common/Position.hpp"
+#include "engine/IGameEngine.hpp"
+
+namespace kungfu {
+
+using PieceBusyPredicate = std::function<bool(const PiecePtr&)>;
+using MoveExecutor = std::function<MoveResult(const Position& from, const Position& to)>;
+
+class PremoveQueue {
+public:
+    // רושמת premove חדש, או מעדכנת premove קיים לאותו כלי.
+    // רק היעד (to) נשמר - הביצוע תמיד ישתמש במיקום החי של הכלי כ-from,
+    // כי הכלי עשוי לזוז בינתיים (למשל אחרי שהמהלך הקודם שלו נחת).
+    void registerOrUpdate(const PiecePtr& piece, const Position& to);
+
+    // מבטלת premove קיים לכלי נתון (אם קיים).
+    // נקראת כאשר השחקן מבצע מהלך לא חוקי – הכוונה לדרוס ולבטל את ה-premove.
+    void cancel(const PiecePtr& piece) noexcept;
+
+    void replacePiece(const PiecePtr& oldPiece, const PiecePtr& newPiece) noexcept;
+    
+    void processReady(const PieceBusyPredicate& isBusy, const MoveExecutor& execute);
+
+    bool empty() const noexcept { return entries_.empty(); }
+    size_t size() const noexcept { return entries_.size(); }
+
+private:
+    std::vector<std::pair<PiecePtr, Position>> entries_;
+};
+
+}  // namespace kungfu
+</file>
+
+<file path="src/engine/PremoveQueue.cpp">
+#include "engine/PremoveQueue.hpp"
+#include "common/Enums.hpp"
+#include <algorithm>
+
+namespace kungfu {
+
+void PremoveQueue::registerOrUpdate(const PiecePtr& piece, const Position& to) {
+    auto it = std::find_if(entries_.begin(), entries_.end(), [&](const auto& pair) {
+        return pair.first == piece;
+    });
+
+    if (it != entries_.end()) {
+        it->second = to;
+    } else {
+        entries_.push_back({piece, to});
+    }
+}
+
+void PremoveQueue::cancel(const PiecePtr& piece) noexcept {
+    entries_.erase(
+        std::remove_if(entries_.begin(), entries_.end(),
+            [&](const auto& pair) { return pair.first == piece; }),
+        entries_.end()
+    );
+}
+
+void PremoveQueue::replacePiece(const PiecePtr& oldPiece, const PiecePtr& newPiece) noexcept {
+    for (auto& entry : entries_) {
+        if (entry.first == oldPiece) {
+            entry.first = newPiece;
+        }
+    }
+}
+
+void PremoveQueue::processReady(const PieceBusyPredicate& isBusy, const MoveExecutor& execute) {
+    for (auto it = entries_.begin(); it != entries_.end(); ) {
+        auto piece = it->first;
+        auto to = it->second;
+
+        if (!piece || piece->state() == PieceState::Captured) {
+            it = entries_.erase(it);
+            continue;
+        }
+
+        if (!isBusy(piece)) {
+            execute(piece->position(), to);
+            it = entries_.erase(it);
+            continue;
+        }
+
+        ++it;
+    }
+}
+
+}  // namespace kungfu
+</file>
+
+<file path="src/input/Controller.cpp">
+#include "input/Controller.hpp"
+#include "engine/IGameEngine.hpp"
+
+namespace kungfu {
+
+Controller::Controller(std::shared_ptr<IGameEngine> engine, int cellSize)
+    : engine_(std::move(engine)), mapper_(cellSize), selectedPosition_(std::nullopt) {}
+
+ControllerResult Controller::click(int x, int y) {
+    if (!engine_) {
+        return {false, "Engine reference is null"};
+    }
+
+    int rows = engine_->getBoardRows();
+    int cols = engine_->getBoardCols();
+    auto cellOpt = mapper_.pixelToCell(x, y, rows, cols);
+
+    // 1. קליק מחוץ לגבולות הלוח - התעלמות מוחלטת (אינו מבטל סימון קיים)
+    if (!cellOpt.has_value()) {
+        return {false, "Click outside board ignored"};
+    }
+
+    Position targetCell = cellOpt.value();
+
+    // 2. קליק בתוך הלוח כאשר כבר קיים כלי מסומן
+    if (selectedPosition_.has_value()) {
+        Position from = selectedPosition_.value();
+        
+        // מחליפים את הסימון רק אם לחצנו על כלי ידידותי אחר
+        if (from != targetCell && engine_->hasPieceAt(targetCell)) {
+            auto fromColor = engine_->getPieceColorAt(from);
+            auto targetColor = engine_->getPieceColorAt(targetCell);
+            if (fromColor.has_value() && targetColor.has_value() && fromColor.value() == targetColor.value()) {
+                selectedPosition_ = targetCell;
+                return {true, "Piece selection replaced"};
+            }
+        }
+        
+        // שליחת בקשת התנועה למנוע המשחק (כעת, לחיצה שנייה על אותו כלי תגיע לכאן ותפעיל קפיצה!)
+        auto moveResult = engine_->requestMove(from, targetCell);
+        
+        // פינוי הסימון באופן מיידי לאחר הניסיון
+        clearSelection();
+
+        if (moveResult.isAccepted) {
+            return {true, "Move requested: " + moveResult.reason};
+        } else {
+            return {true, "Move rejected: " + moveResult.reason};
+        }
+    }
+
+    // 3. קליק בתוך הלוח ללא כלי מסומן כרגע (קליק ראשון)
+    if (engine_->hasPieceAt(targetCell)) {
+        selectedPosition_ = targetCell;
+        return {true, "Piece selected"};
+    }
+
+    // התעלמות מקליק ראשון על משבצת ריקה
+    return {false, "Click on empty cell ignored"};
+}
+
+std::optional<Position> Controller::selectedPosition() const noexcept {
+    return selectedPosition_;
+}
+
+void Controller::clearSelection() noexcept {
+    selectedPosition_ = std::nullopt;
+}
 
 }  // namespace kungfu
 </file>
@@ -3188,186 +3285,6 @@ const IPieceRule& PieceRuleFactory::getRule(PieceType type) noexcept {
 }  // namespace kungfu
 </file>
 
-<file path="tests/unit/CollisionSystemTests.cpp">
-#include <catch2/catch_test_macros.hpp>
-#include "realtime/CollisionDetector.hpp"
-#include "rules/CollisionResolver.hpp"
-#include "board/Board.hpp"
-#include "io/BoardParser.hpp"
-
-// ==========================================
-// 1. בדיקות יחידה עבור גלאי ההתנגשויות (פיזיקה ומרחב)
-// ==========================================
-TEST_CASE("CollisionDetector Spatial Calculations", "[realtime][collision]") {
-    kungfu::GameConfig config;
-    config.allowSimultaneousMovement = true;
-
-    auto whiteRook = std::make_shared<kungfu::Piece>(kungfu::PieceType::Rook, kungfu::PlayerColor::White, kungfu::Position(0, 0));
-    auto blackRook = std::make_shared<kungfu::Piece>(kungfu::PieceType::Rook, kungfu::PlayerColor::Black, kungfu::Position(0, 2));
-
-    SECTION("Mid-route collision is detected when non-knights cross paths head-on") {
-        // צריח לבן נע מ-(0,0) ל-(0,2), התחיל ב-t=0, משך תנועה: 2000ms
-        kungfu::Motion m1(whiteRook, kungfu::Position(0, 0), kungfu::Position(0, 2), 0, 2000);
-        // צריח שחור נע מ-(0,2) ל-(0,0), התחיל ב-t=100, משך תנועה: 2000ms
-        kungfu::Motion m2(blackRook, kungfu::Position(0, 2), kungfu::Position(0, 0), 100, 2000);
-
-        std::vector<kungfu::Motion> motions = {m1, m2};
-        auto collisions = kungfu::CollisionDetector::detectMidRouteCollisions(motions, config);
-
-        REQUIRE(collisions.size() == 1);
-        // מנוע הפיזיקה צריך לזהות שכלי א' (שהתחיל קודם) הוא המנצח וכלי ב' הוא המפסיד
-        REQUIRE(collisions[0].winner.piece() == whiteRook);
-        REQUIRE(collisions[0].loser.piece() == blackRook);
-    }
-
-    SECTION("Knights jumping past each other do not collide mid-route") {
-        auto whiteKnight = std::make_shared<kungfu::Piece>(kungfu::PieceType::Knight, kungfu::PlayerColor::White, kungfu::Position(0, 0));
-        auto blackKnight = std::make_shared<kungfu::Piece>(kungfu::PieceType::Knight, kungfu::PlayerColor::Black, kungfu::Position(2, 1));
-
-        // מסלולים המצטלבים באוויר אך מדובר בפרשים קופצים
-        kungfu::Motion m1(whiteKnight, kungfu::Position(0, 0), kungfu::Position(2, 1), 0, 2000);
-        kungfu::Motion m2(blackKnight, kungfu::Position(2, 1), kungfu::Position(0, 0), 0, 2000);
-
-        std::vector<kungfu::Motion> motions = {m1, m2};
-        auto collisions = kungfu::CollisionDetector::detectMidRouteCollisions(motions, config);
-
-        REQUIRE(collisions.empty());
-    }
-
-    SECTION("Detect arrivals correctly filters completed motions") {
-        kungfu::Motion m1(whiteRook, kungfu::Position(0, 0), kungfu::Position(0, 2), 0, 1000); // הגעה ב-t=1000
-        kungfu::Motion m2(blackRook, kungfu::Position(0, 2), kungfu::Position(0, 0), 0, 2000); // הגעה ב-t=2000
-
-        std::vector<kungfu::Motion> motions = {m1, m2};
-
-        // ב-t=500: אף כלי לא הגיע
-        REQUIRE(kungfu::CollisionDetector::detectArrivals(motions, 500).empty());
-
-        // ב-t=1500: רק כלי א' הגיע
-        auto arrivalsAt1500 = kungfu::CollisionDetector::detectArrivals(motions, 1500);
-        REQUIRE(arrivalsAt1500.size() == 1);
-        REQUIRE(arrivalsAt1500[0].piece() == whiteRook);
-
-        // ב-t=2500: שני הכלים הגיעו
-        auto arrivalsAt2500 = kungfu::CollisionDetector::detectArrivals(motions, 2500);
-        REQUIRE(arrivalsAt2500.size() == 2);
-    }
-}
-
-// ==========================================
-// 2. בדיקות יחידה עבור פותר ההתנגשויות (חוקי שחמט)
-// ==========================================
-TEST_CASE("CollisionResolver Rules Resolution", "[rules][collision]") {
-    auto board = std::make_shared<kungfu::Board>(8, 8);
-    kungfu::CooldownTracker tracker;
-    kungfu::GameConfig config;
-    config.cooldownDurationMs = 2000;
-
-    kungfu::CollisionResolver resolver(board, tracker, config);
-    std::vector<kungfu::ArrivalEvent> events;
-
-    SECTION("Mid-route collision captures the loser and clears its cooldown") {
-        auto whiteRook = std::make_shared<kungfu::Piece>(kungfu::PieceType::Rook, kungfu::PlayerColor::White, kungfu::Position(0, 0));
-        auto blackRook = std::make_shared<kungfu::Piece>(kungfu::PieceType::Rook, kungfu::PlayerColor::Black, kungfu::Position(0, 2));
-
-        board->placePiece(whiteRook, kungfu::Position(0, 0));
-        board->placePiece(blackRook, kungfu::Position(0, 2));
-        tracker.setCooldown(blackRook->id(), 5000); // הגדרת צינון מדומה לבדיקה
-
-        kungfu::Motion winner(whiteRook, kungfu::Position(0, 0), kungfu::Position(0, 2), 0, 1000);
-        kungfu::Motion loser(blackRook, kungfu::Position(0, 2), kungfu::Position(0, 0), 100, 1000);
-
-        resolver.resolveMidRouteCollision(winner, loser, events);
-
-        // המפסיד חייב לעבור למצב Captured, להימחק מהלוח, וזמן הצינון שלו חייב להימחק
-        REQUIRE(loser.piece()->state() == kungfu::PieceState::Captured);
-        REQUIRE_FALSE(board->pieceAt(kungfu::Position(0, 2)).has_value());
-        REQUIRE_FALSE(tracker.isOnCooldown(blackRook->id(), 3000));
-        REQUIRE(events.size() == 1);
-        REQUIRE(events[0].cancelled == true);
-    }
-
-    SECTION("Non-knight arrival on friendly piece triggers block and cancels movement") {
-        auto whiteRook = std::make_shared<kungfu::Piece>(kungfu::PieceType::Rook, kungfu::PlayerColor::White, kungfu::Position(0, 0));
-        auto friendlyPawn = std::make_shared<kungfu::Piece>(kungfu::PieceType::Pawn, kungfu::PlayerColor::White, kungfu::Position(0, 2));
-
-        board->placePiece(whiteRook, kungfu::Position(0, 0));
-        board->placePiece(friendlyPawn, kungfu::Position(0, 2));
-
-        kungfu::Motion motion(whiteRook, kungfu::Position(0, 0), kungfu::Position(0, 2), 0, 1000);
-
-        bool success = resolver.resolveArrival(motion, 1000, events, nullptr);
-
-        // המהלך נחסם: הצריח חוזר ל-Idle, נשאר ב-(0,0), והרגלי הידידותי ב-(0,2) לא נפגע
-        REQUIRE(success == true);
-        REQUIRE(whiteRook->state() == kungfu::PieceState::Idle);
-        REQUIRE(whiteRook->position() == kungfu::Position(0, 0));
-        REQUIRE(board->pieceAt(kungfu::Position(0, 2)).value() == friendlyPawn);
-    }
-
-    SECTION("Knight landing on friendly piece captures it (Kung-Fu friendly fire)") {
-        auto whiteKnight = std::make_shared<kungfu::Piece>(kungfu::PieceType::Knight, kungfu::PlayerColor::White, kungfu::Position(0, 0));
-        auto friendlyPawn = std::make_shared<kungfu::Piece>(kungfu::PieceType::Pawn, kungfu::PlayerColor::White, kungfu::Position(2, 1));
-
-        board->placePiece(whiteKnight, kungfu::Position(0, 0));
-        board->placePiece(friendlyPawn, kungfu::Position(2, 1));
-
-        kungfu::Motion motion(whiteKnight, kungfu::Position(0, 0), kungfu::Position(2, 1), 0, 1000);
-
-        bool success = resolver.resolveArrival(motion, 1000, events, nullptr);
-
-        // חוק מיוחד: פרש קופץ ומחסל גם כלים ידידותיים בנחיתה
-        REQUIRE(success == true);
-        REQUIRE(whiteKnight->state() == kungfu::PieceState::Idle);
-        REQUIRE(whiteKnight->position() == kungfu::Position(2, 1));
-        REQUIRE(friendlyPawn->state() == kungfu::PieceState::Captured);
-        REQUIRE(board->pieceAt(kungfu::Position(2, 1)).value() == whiteKnight);
-    }
-
-    SECTION("Normal arrival captures enemy piece and sets landing piece's cooldown") {
-        auto whiteRook = std::make_shared<kungfu::Piece>(kungfu::PieceType::Rook, kungfu::PlayerColor::White, kungfu::Position(0, 0));
-        auto enemyPawn = std::make_shared<kungfu::Piece>(kungfu::PieceType::Pawn, kungfu::PlayerColor::Black, kungfu::Position(0, 2));
-
-        board->placePiece(whiteRook, kungfu::Position(0, 0));
-        board->placePiece(enemyPawn, kungfu::Position(0, 2));
-
-        kungfu::Motion motion(whiteRook, kungfu::Position(0, 0), kungfu::Position(0, 2), 0, 1000);
-
-        bool success = resolver.resolveArrival(motion, 1000, events, nullptr);
-
-        REQUIRE(success == true);
-        REQUIRE(whiteRook->position() == kungfu::Position(0, 2));
-        REQUIRE(enemyPawn->state() == kungfu::PieceState::Captured);
-        // הצינון מופעל (1000ms זמן הגעה + 2000ms צינון = צינון עד t=3000)
-        REQUIRE(tracker.isOnCooldown(whiteRook->id(), 2000)); 
-    }
-
-    SECTION("Non-knight blocked by friendly piece stops at the last vacant square on its path") {
-        // צריח יוצא מ-(0,0) ל-(0,4). 
-        // כלי ידידותי א' חוסם אותו ב-(0,4) (משבצת היעד).
-        // כלי ידידותי ב' חוסם אותו ב-(0,3) (החליט לעמוד שם במהלך התנועה).
-        // משבצת (0,2) פנויה. הצריח צריך לסגת ולנחות ב-(0,2) ולא להשתגר ל-(0,0).
-        auto whiteRook = std::make_shared<kungfu::Piece>(kungfu::PieceType::Rook, kungfu::PlayerColor::White, kungfu::Position(-1, -1));
-        auto friendlyPawn = std::make_shared<kungfu::Piece>(kungfu::PieceType::Pawn, kungfu::PlayerColor::White, kungfu::Position(0, 4));
-        auto friendlyBishop = std::make_shared<kungfu::Piece>(kungfu::PieceType::Bishop, kungfu::PlayerColor::White, kungfu::Position(0, 3));
-
-        board->placePiece(whiteRook, kungfu::Position(-1, -1)); // הכנסה למצב תנועה
-        board->placePiece(friendlyPawn, kungfu::Position(0, 4));
-        board->placePiece(friendlyBishop, kungfu::Position(0, 3));
-
-        kungfu::Motion motion(whiteRook, kungfu::Position(0, 0), kungfu::Position(0, 4), 0, 2000);
-
-        bool success = resolver.resolveArrival(motion, 2000, events, nullptr);
-
-        REQUIRE(success == true);
-        REQUIRE(whiteRook->state() == kungfu::PieceState::Idle);
-        
-        // הצריח נסוג ונוחת בנקודה הפנויה הקרובה ביותר ליעד: (0,2)
-        REQUIRE(whiteRook->position() == kungfu::Position(0, 2));
-    }
-}
-</file>
-
 <file path="src/rules/RuleEngine.cpp">
 #include "rules/RuleEngine.hpp"
 #include "rules/PieceRules.hpp"
@@ -3428,6 +3345,193 @@ MoveValidation RuleEngine::validateMove(const Position& from, const Position& to
 }
 
 }  // namespace kungfu
+</file>
+
+<file path="tests/unit/CollisionSystemTests.cpp">
+#include <catch2/catch_test_macros.hpp>
+#include "realtime/CollisionDetector.hpp"
+#include "rules/CollisionResolver.hpp"
+#include "board/Board.hpp"
+#include "io/BoardParser.hpp"
+
+// ==========================================
+// 1. בדיקות יחידה עבור גלאי ההתנגשויות (פיזיקה ומרחב)
+// ==========================================
+TEST_CASE("CollisionDetector Spatial Calculations", "[realtime][collision]") {
+    kungfu::GameConfig config;
+    config.allowSimultaneousMovement = true;
+
+    auto whiteRook = std::make_shared<kungfu::Piece>(kungfu::PieceType::Rook, kungfu::PlayerColor::White, kungfu::Position(0, 0));
+    auto blackRook = std::make_shared<kungfu::Piece>(kungfu::PieceType::Rook, kungfu::PlayerColor::Black, kungfu::Position(0, 2));
+
+    SECTION("Mid-route collision is detected when non-knights overlap in time on a square") {
+        // צריח לבן נע מ-(0,0) ל-(0,2), התחיל ב-t=0, משך תנועה: 2000ms. מגיע ל-(0,1) ב-t=1000.
+        kungfu::Motion m1(whiteRook, kungfu::Position(0, 0), kungfu::Position(0, 2), 0, 2000);
+        // צריח שחור נע מ-(0,2) ל-(0,0), התחיל ב-t=100, משך תנועה: 2000ms. מגיע ל-(0,1) ב-t=1100.
+        kungfu::Motion m2(blackRook, kungfu::Position(0, 2), kungfu::Position(0, 0), 100, 2000);
+
+        std::vector<kungfu::Motion> motions = {m1, m2};
+        auto collisions = kungfu::CollisionDetector::detectMidRouteCollisions(motions, config);
+
+        REQUIRE(collisions.size() == 1);
+        // מנוע הפיזיקה הדינמי מזהה ש-m1 הגיע קודם ל-(0,1) ולכן הוא ה-winner, ו-m2 הגיע מאוחר יותר והתנגש בו (loser)
+        REQUIRE(collisions[0].winner.piece() == whiteRook);
+        REQUIRE(collisions[0].loser.piece() == blackRook);
+    }
+
+    SECTION("Knights jumping past each other do not collide mid-route") {
+        auto whiteKnight = std::make_shared<kungfu::Piece>(kungfu::PieceType::Knight, kungfu::PlayerColor::White, kungfu::Position(0, 0));
+        auto blackKnight = std::make_shared<kungfu::Piece>(kungfu::PieceType::Knight, kungfu::PlayerColor::Black, kungfu::Position(2, 1));
+
+        kungfu::Motion m1(whiteKnight, kungfu::Position(0, 0), kungfu::Position(2, 1), 0, 2000);
+        kungfu::Motion m2(blackKnight, kungfu::Position(2, 1), kungfu::Position(0, 0), 0, 2000);
+
+        std::vector<kungfu::Motion> motions = {m1, m2};
+        auto collisions = kungfu::CollisionDetector::detectMidRouteCollisions(motions, config);
+
+        REQUIRE(collisions.empty());
+    }
+
+    SECTION("Detect arrivals correctly filters completed motions") {
+        kungfu::Motion m1(whiteRook, kungfu::Position(0, 0), kungfu::Position(0, 2), 0, 1000); // הגעה ב-t=1000
+        kungfu::Motion m2(blackRook, kungfu::Position(0, 2), kungfu::Position(0, 0), 0, 2000); // הגעה ב-t=2000
+
+        std::vector<kungfu::Motion> motions = {m1, m2};
+
+        REQUIRE(kungfu::CollisionDetector::detectArrivals(motions, 500).empty());
+
+        auto arrivalsAt1500 = kungfu::CollisionDetector::detectArrivals(motions, 1500);
+        REQUIRE(arrivalsAt1500.size() == 1);
+        REQUIRE(arrivalsAt1500[0].piece() == whiteRook);
+
+        auto arrivalsAt2500 = kungfu::CollisionDetector::detectArrivals(motions, 2500);
+        REQUIRE(arrivalsAt2500.size() == 2);
+    }
+}
+
+// ==========================================
+// 2. בדיקות יחידה עבור פותר ההתנגשויות (חוקי שחמט)
+// ==========================================
+TEST_CASE("CollisionResolver Rules Resolution", "[rules][collision]") {
+    auto board = std::make_shared<kungfu::Board>(8, 8);
+    kungfu::CooldownTracker tracker;
+    kungfu::GameConfig config;
+    config.cooldownDurationMs = 2000;
+
+    kungfu::CollisionResolver resolver(board, tracker, config);
+    std::vector<kungfu::ArrivalEvent> events;
+
+    SECTION("Mid-route ENEMY collision captures the loser and clears its cooldown") {
+        auto whiteRook = std::make_shared<kungfu::Piece>(kungfu::PieceType::Rook, kungfu::PlayerColor::White, kungfu::Position(0, 0));
+        auto blackRook = std::make_shared<kungfu::Piece>(kungfu::PieceType::Rook, kungfu::PlayerColor::Black, kungfu::Position(0, 2));
+
+        board->placePiece(whiteRook, kungfu::Position(0, 0));
+        board->placePiece(blackRook, kungfu::Position(0, 2));
+        tracker.setCooldown(blackRook->id(), 5000);
+
+        kungfu::Motion winner(whiteRook, kungfu::Position(0, 0), kungfu::Position(0, 2), 0, 1000);
+        kungfu::Motion loser(blackRook, kungfu::Position(0, 2), kungfu::Position(0, 0), 100, 1000);
+
+        resolver.resolveMidRouteCollision(winner, loser, events);
+
+        // מאחר ומדובר באויבים: המפסיד (השני שהגיע) נלכד ומפונה מהלוח
+        REQUIRE(loser.piece()->state() == kungfu::PieceState::Captured);
+        REQUIRE_FALSE(board->pieceAt(kungfu::Position(0, 2)).has_value());
+        REQUIRE_FALSE(tracker.isOnCooldown(blackRook->id(), 3000));
+        REQUIRE(events.size() == 1);
+    }
+
+    SECTION("Mid-route FRIENDLY collision stops the later piece at the last vacant square") {
+        auto whiteRook1 = std::make_shared<kungfu::Piece>(kungfu::PieceType::Rook, kungfu::PlayerColor::White, kungfu::Position(0, 0));
+        auto whiteRook2 = std::make_shared<kungfu::Piece>(kungfu::PieceType::Rook, kungfu::PlayerColor::White, kungfu::Position(0, 4));
+
+        board->placePiece(whiteRook1, kungfu::Position(0, 0));
+        board->placePiece(whiteRook2, kungfu::Position(0, 4));
+
+        // תנועה ראשונה: מ-(0,0) ל-(0,3)
+        kungfu::Motion firstArrived(whiteRook1, kungfu::Position(0, 0), kungfu::Position(0, 3), 0, 1000);
+        // תנועה שניה (מאוחרת): מ-(0,4) ל-(0,1) - היא תתנגש ב-firstArrived במשבצת (0,2) או (0,3)
+        kungfu::Motion secondArrived(whiteRook2, kungfu::Position(0, 4), kungfu::Position(0, 1), 100, 1000);
+
+        resolver.resolveMidRouteCollision(firstArrived, secondArrived, events);
+
+        // מאחר ומדובר בכלים ידידותיים: הכלי המאוחר (secondArrived) נעצר בנקודה האחרונה הפנויה במסלולו (0,3 תפוס, אז ייעצר ב-0,4)
+        REQUIRE(secondArrived.piece()->state() == kungfu::PieceState::Idle);
+        REQUIRE(secondArrived.piece()->position() == kungfu::Position(0, 4));
+        REQUIRE(events.size() == 1);
+    }
+
+    SECTION("Non-knight arrival on friendly piece triggers block and falls back correctly") {
+        auto whiteRook = std::make_shared<kungfu::Piece>(kungfu::PieceType::Rook, kungfu::PlayerColor::White, kungfu::Position(0, 0));
+        auto friendlyPawn = std::make_shared<kungfu::Piece>(kungfu::PieceType::Pawn, kungfu::PlayerColor::White, kungfu::Position(0, 2));
+
+        board->placePiece(whiteRook, kungfu::Position(0, 0));
+        board->placePiece(friendlyPawn, kungfu::Position(0, 2));
+
+        kungfu::Motion motion(whiteRook, kungfu::Position(0, 0), kungfu::Position(0, 2), 0, 1000);
+
+        bool success = resolver.resolveArrival(motion, 1000, events, nullptr);
+
+        REQUIRE(success == true);
+        REQUIRE(whiteRook->state() == kungfu::PieceState::Idle);
+        // הצריח נחסם ביעד ומחשב נסיגה למשבצת הפנויה האחרונה במסלול (0,1)
+        REQUIRE(whiteRook->position() == kungfu::Position(0, 1));
+        REQUIRE(board->pieceAt(kungfu::Position(0, 2)).value() == friendlyPawn);
+    }
+
+    SECTION("Knight landing on friendly piece captures it (Kung-Fu friendly fire)") {
+        auto whiteKnight = std::make_shared<kungfu::Piece>(kungfu::PieceType::Knight, kungfu::PlayerColor::White, kungfu::Position(0, 0));
+        auto friendlyPawn = std::make_shared<kungfu::Piece>(kungfu::PieceType::Pawn, kungfu::PlayerColor::White, kungfu::Position(2, 1));
+
+        board->placePiece(whiteKnight, kungfu::Position(0, 0));
+        board->placePiece(friendlyPawn, kungfu::Position(2, 1));
+
+        kungfu::Motion motion(whiteKnight, kungfu::Position(0, 0), kungfu::Position(2, 1), 0, 1000);
+
+        bool success = resolver.resolveArrival(motion, 1000, events, nullptr);
+
+        REQUIRE(success == true);
+        REQUIRE(whiteKnight->state() == kungfu::PieceState::Idle);
+        REQUIRE(whiteKnight->position() == kungfu::Position(2, 1));
+        REQUIRE(friendlyPawn->state() == kungfu::PieceState::Captured);
+        REQUIRE(board->pieceAt(kungfu::Position(2, 1)).value() == whiteKnight);
+    }
+
+    SECTION("Normal arrival captures enemy piece and sets landing piece's cooldown") {
+        auto whiteRook = std::make_shared<kungfu::Piece>(kungfu::PieceType::Rook, kungfu::PlayerColor::White, kungfu::Position(0, 0));
+        auto enemyPawn = std::make_shared<kungfu::Piece>(kungfu::PieceType::Pawn, kungfu::PlayerColor::Black, kungfu::Position(0, 2));
+
+        board->placePiece(whiteRook, kungfu::Position(0, 0));
+        board->placePiece(enemyPawn, kungfu::Position(0, 2));
+
+        kungfu::Motion motion(whiteRook, kungfu::Position(0, 0), kungfu::Position(0, 2), 0, 1000);
+
+        bool success = resolver.resolveArrival(motion, 1000, events, nullptr);
+
+        REQUIRE(success == true);
+        REQUIRE(whiteRook->position() == kungfu::Position(0, 2));
+        REQUIRE(enemyPawn->state() == kungfu::PieceState::Captured);
+        REQUIRE(tracker.isOnCooldown(whiteRook->id(), 2000)); 
+    }
+
+    SECTION("Non-knight blocked by friendly piece stops at the last vacant square on its path") {
+        auto whiteRook = std::make_shared<kungfu::Piece>(kungfu::PieceType::Rook, kungfu::PlayerColor::White, kungfu::Position(-1, -1));
+        auto friendlyPawn = std::make_shared<kungfu::Piece>(kungfu::PieceType::Pawn, kungfu::PlayerColor::White, kungfu::Position(0, 4));
+        auto friendlyBishop = std::make_shared<kungfu::Piece>(kungfu::PieceType::Bishop, kungfu::PlayerColor::White, kungfu::Position(0, 3));
+
+        board->placePiece(whiteRook, kungfu::Position(-1, -1));
+        board->placePiece(friendlyPawn, kungfu::Position(0, 4));
+        board->placePiece(friendlyBishop, kungfu::Position(0, 3));
+
+        kungfu::Motion motion(whiteRook, kungfu::Position(0, 0), kungfu::Position(0, 4), 0, 2000);
+
+        bool success = resolver.resolveArrival(motion, 2000, events, nullptr);
+
+        REQUIRE(success == true);
+        REQUIRE(whiteRook->state() == kungfu::PieceState::Idle);
+        REQUIRE(whiteRook->position() == kungfu::Position(0, 2));
+    }
+}
 </file>
 
 <file path="tests/unit/RuleEngineTests.cpp">
@@ -3834,193 +3938,6 @@ private:
 }  // namespace kungfu
 </file>
 
-<file path="src/engine/GameEngine.cpp">
-#include "engine/GameEngine.hpp"
-#include "common/GameConfig.hpp"
-#include <algorithm>
-#include <cmath>
-
-namespace kungfu {
-
-GameEngine::GameEngine(std::shared_ptr<IBoard> board,
-                       std::shared_ptr<RuleEngine> ruleEngine,
-                       GameConfig config,
-                       std::shared_ptr<IPromotionRule> promotionRule) noexcept
-    : board_(std::move(board))
-    , ruleEngine_(std::move(ruleEngine))
-    , promotionRule_(std::move(promotionRule))
-    , config_(config)
-    , arbiter_(board_, config_) {}
-
-bool GameEngine::isPieceBusy(const PiecePtr& piece) const noexcept {
-    return arbiter_.isPieceMoving(piece) ||
-           piece->state() == PieceState::Airborne ||
-           arbiter_.isOnCooldown(piece, currentTimeMs_);
-}
-
-MoveResult GameEngine::requestMove(const Position& from, const Position& to) {
-    if (gameOver_) {
-        return {false, "game_over"};
-    }
-
-    if (!board_ || !ruleEngine_) {
-        return {false, "internal_error"};
-    }
-
-    // ניסיון ראשון: חיפוש כלי העומד פיזית על הלוח
-    auto sourcePieceOpt = board_->pieceAt(from);
-    
-    // ניסיון שני (פתרון ה-Premove): אם המשבצת ריקה, נבדוק אם יש כלי בדרך אליה או ממנה
-    if (!sourcePieceOpt.has_value() || !sourcePieceOpt.value()) {
-        sourcePieceOpt = arbiter_.getPieceInTransitAt(from);
-    }
-
-    if (!sourcePieceOpt.has_value() || !sourcePieceOpt.value()) {
-        return {false, "empty_source"};
-    }
-    auto piece = sourcePieceOpt.value();
-
-    if (!config_.allowSimultaneousMovement) {
-        if (piece->color() != currentTurn_) {
-            return {false, "not_your_turn"};
-        }
-        if (arbiter_.hasActiveMotion()) {
-            return {false, "motion_in_progress"};
-        }
-    }
-
-    if (isPieceBusy(piece)) {
-        if (!config_.allowSimultaneousMovement) {
-            return {false, "piece_busy"};
-        }
-        return handlePremoveRegistration(piece, from, to);
-    }
-
-    if (from == to) {
-        return handleJumpRequest(piece, from);
-    }
-
-    return handleStandardMove(piece, from, to);
-}
-
-MoveResult GameEngine::handlePremoveRegistration(const PiecePtr& piece, const Position& from, const Position& to) noexcept {
-    if (!config_.enablePremoves) {
-        if (arbiter_.isPieceMoving(piece) || piece->state() == PieceState::Airborne) {
-            return {false, "motion_in_progress"};
-        }
-        return {false, "piece_on_cooldown"};
-    }
-
-    // כל מהלך שנשלח לכלי תפוס דורס את ה-premove הקיים (registerOrUpdate).
-    // "לבטל" premove = לשלוח מהלך לא חוקי שידרוס את הרשום, ויכשל בביצוע.
-    premoveQueue_.registerOrUpdate(piece, to);
-    return {true, "premove_registered"};
-}
-
-MoveResult GameEngine::handleJumpRequest(const PiecePtr& piece, const Position& pos) noexcept {
-    if (piece->state() == PieceState::Captured) {
-        return {false, "captured_piece_cannot_jump"};
-    }
-
-    piece->setState(PieceState::Airborne);
-    arbiter_.startMotion(piece, pos, pos, currentTimeMs_, config_.jumpDurationMs);
-
-    if (!config_.allowSimultaneousMovement) {
-        advanceTurn();
-    }
-
-    return {true, "jump_started"};
-}
-
-MoveResult GameEngine::handleStandardMove(const PiecePtr& piece, const Position& from, const Position& to) noexcept {
-    auto validation = ruleEngine_->validateMove(from, to);
-    if (!validation.isValid) {
-        return {false, validation.reason};
-    }
-
-    int dr = std::abs(to.row() - from.row());
-    int dc = std::abs(to.col() - from.col());
-    int distance = std::max(dr, dc);
-    int durationMs = distance * config_.msPerCellSpeed;
-
-    piece->setState(PieceState::Moving);
-    arbiter_.startMotion(piece, from, to, currentTimeMs_, durationMs);
-
-    if (!config_.allowSimultaneousMovement) {
-        advanceTurn();
-    }
-
-    return {true, "ok"};
-}
-
-void GameEngine::advanceTurn() noexcept {
-    currentTurn_ = (currentTurn_ == PlayerColor::White) ? PlayerColor::Black : PlayerColor::White;
-}
-
-void GameEngine::wait(int ms) noexcept {
-    if (ms <= 0 || !board_) {
-        return;
-    }
-
-    auto promotionCallback = [this](const PiecePtr& piece, const Position& to) -> PiecePtr {
-        if (!promotionRule_) {
-            return piece;
-        }
-        return promotionRule_->maybePromote(piece, to, *board_);
-    };
-
-    auto events = arbiter_.advanceTime(ms, currentTimeMs_, promotionCallback);
-    for (const auto& event : events) {
-        if (event.capturedKing) {
-            gameOver_ = true;
-        }
-    }
-
-    if (config_.enablePremoves && !gameOver_) {
-        premoveFailures_.clear();  // מנקים כשלונות מהסבב הקודם - רלוונטי רק לסבב ה-wait הנוכחי
-        premoveQueue_.processReady(
-            [this](const PiecePtr& piece) { return isPieceBusy(piece); },
-            [this](const Position& from, const Position& to) -> MoveResult {
-                auto result = requestMove(from, to);
-                if (!result.isAccepted) {
-                    premoveFailures_.push_back(result);
-                }
-                return result;
-            }
-        );
-    }
-}
-
-std::optional<PlayerColor> GameEngine::getPieceColorAt(const Position& pos) const {
-    if (!board_) {
-        return std::nullopt;
-    }
-    auto pieceOpt = board_->pieceAt(pos);
-    if (pieceOpt.has_value() && pieceOpt.value()) {
-        return pieceOpt.value()->color();
-    }
-    return std::nullopt;
-}
-
-bool GameEngine::hasPieceAt(const Position& pos) const {
-    if (!board_) {
-        return false;
-    }
-    auto pieceOpt = board_->pieceAt(pos);
-    return pieceOpt.has_value() && pieceOpt.value() != nullptr;
-}
-
-int GameEngine::getBoardRows() const {
-    return board_ ? board_->rows() : 0;
-}
-
-int GameEngine::getBoardCols() const {
-    return board_ ? board_->cols() : 0;
-}
-
-}  // namespace kungfu
-</file>
-
 <file path="src/realtime/RealTimeArbiter.cpp">
 #include "realtime/RealTimeArbiter.hpp"
 #include "realtime/CollisionDetector.hpp"
@@ -4200,6 +4117,196 @@ add_test(NAME unit_tests COMMAND kungfu_tests)
 add_executable(kungfu_game src/main.cpp)
 target_link_libraries(kungfu_game PRIVATE kungfu_engine)
 target_include_directories(kungfu_game PRIVATE include)
+</file>
+
+<file path="src/engine/GameEngine.cpp">
+#include "engine/GameEngine.hpp"
+#include "common/GameConfig.hpp"
+#include <algorithm>
+#include <cmath>
+
+namespace kungfu {
+
+GameEngine::GameEngine(std::shared_ptr<IBoard> board,
+                       std::shared_ptr<RuleEngine> ruleEngine,
+                       GameConfig config,
+                       std::shared_ptr<IPromotionRule> promotionRule) noexcept
+    : board_(std::move(board))
+    , ruleEngine_(std::move(ruleEngine))
+    , promotionRule_(std::move(promotionRule))
+    , config_(config)
+    , arbiter_(board_, config_) {}
+
+bool GameEngine::isPieceBusy(const PiecePtr& piece) const noexcept {
+    return arbiter_.isPieceMoving(piece) ||
+           piece->state() == PieceState::Airborne ||
+           arbiter_.isOnCooldown(piece, currentTimeMs_);
+}
+
+MoveResult GameEngine::requestMove(const Position& from, const Position& to) {
+    if (gameOver_) {
+        return {false, "game_over"};
+    }
+
+    if (!board_ || !ruleEngine_) {
+        return {false, "internal_error"};
+    }
+
+    // ניסיון ראשון: חיפוש כלי העומד פיזית על הלוח
+    auto sourcePieceOpt = board_->pieceAt(from);
+    
+    // ניסיון שני (פתרון ה-Premove): אם המשבצת ריקה, נבדוק אם יש כלי בדרך אליה או ממנה
+    if (!sourcePieceOpt.has_value() || !sourcePieceOpt.value()) {
+        sourcePieceOpt = arbiter_.getPieceInTransitAt(from);
+    }
+
+    if (!sourcePieceOpt.has_value() || !sourcePieceOpt.value()) {
+        return {false, "empty_source"};
+    }
+    auto piece = sourcePieceOpt.value();
+
+    if (!config_.allowSimultaneousMovement) {
+        if (piece->color() != currentTurn_) {
+            return {false, "not_your_turn"};
+        }
+        if (arbiter_.hasActiveMotion()) {
+            return {false, "motion_in_progress"};
+        }
+    }
+
+    if (isPieceBusy(piece)) {
+        if (!config_.allowSimultaneousMovement) {
+            return {false, "piece_busy"};
+        }
+        return handlePremoveRegistration(piece, from, to);
+    }
+
+    if (from == to) {
+        return handleJumpRequest(piece, from);
+    }
+
+    return handleStandardMove(piece, from, to);
+}
+
+MoveResult GameEngine::handlePremoveRegistration(const PiecePtr& piece, const Position& from, const Position& to) noexcept {
+    if (!config_.enablePremoves) {
+        if (arbiter_.isPieceMoving(piece) || piece->state() == PieceState::Airborne) {
+            return {false, "motion_in_progress"};
+        }
+        return {false, "piece_on_cooldown"};
+    }
+
+    // כל מהלך שנשלח לכלי תפוס דורס את ה-premove הקיים (registerOrUpdate).
+    // "לבטל" premove = לשלוח מהלך לא חוקי שידרוס את הרשום, ויכשל בביצוע.
+    premoveQueue_.registerOrUpdate(piece, to);
+    return {true, "premove_registered"};
+}
+
+MoveResult GameEngine::handleJumpRequest(const PiecePtr& piece, const Position& pos) noexcept {
+    if (piece->state() == PieceState::Captured) {
+        return {false, "captured_piece_cannot_jump"};
+    }
+
+    piece->setState(PieceState::Airborne);
+    arbiter_.startMotion(piece, pos, pos, currentTimeMs_, config_.jumpDurationMs);
+
+    if (!config_.allowSimultaneousMovement) {
+        advanceTurn();
+    }
+
+    return {true, "jump_started"};
+}
+
+MoveResult GameEngine::handleStandardMove(const PiecePtr& piece, const Position& from, const Position& to) noexcept {
+    auto validation = ruleEngine_->validateMove(from, to);
+    if (!validation.isValid) {
+        return {false, validation.reason};
+    }
+
+    int dr = std::abs(to.row() - from.row());
+    int dc = std::abs(to.col() - from.col());
+    int distance = std::max(dr, dc);
+    int durationMs = distance * config_.msPerCellSpeed;
+
+    piece->setState(PieceState::Moving);
+    arbiter_.startMotion(piece, from, to, currentTimeMs_, durationMs);
+
+    if (!config_.allowSimultaneousMovement) {
+        advanceTurn();
+    }
+
+    return {true, "ok"};
+}
+
+void GameEngine::advanceTurn() noexcept {
+    currentTurn_ = (currentTurn_ == PlayerColor::White) ? PlayerColor::Black : PlayerColor::White;
+}
+
+void GameEngine::wait(int ms) noexcept {
+    if (ms <= 0 || !board_) {
+        return;
+    }
+    auto promotionCallback = [this](const PiecePtr& piece, const Position& to) -> PiecePtr {
+        if (!promotionRule_) {
+            return piece;
+        }
+        auto promoted = promotionRule_->maybePromote(piece, to, *board_);
+        //   : אם הרגלי הוכתר לכלי חדש, נעדכן את תור ה-Premove
+        if (promoted != piece) {
+            premoveQueue_.replacePiece(piece, promoted);
+        }
+        return promoted;
+    };
+    auto events = arbiter_.advanceTime(ms, currentTimeMs_, promotionCallback);
+    for (const auto& event : events) {
+        if (event.capturedKing) {
+            gameOver_ = true;
+        }
+    }
+
+    if (config_.enablePremoves && !gameOver_) {
+        premoveFailures_.clear();  // מנקים כשלונות מהסבב הקודם - רלוונטי רק לסבב ה-wait הנוכחי
+        premoveQueue_.processReady(
+            [this](const PiecePtr& piece) { return isPieceBusy(piece); },
+            [this](const Position& from, const Position& to) -> MoveResult {
+                auto result = requestMove(from, to);
+                if (!result.isAccepted) {
+                    premoveFailures_.push_back(result);
+                }
+                return result;
+            }
+        );
+    }
+}
+
+std::optional<PlayerColor> GameEngine::getPieceColorAt(const Position& pos) const {
+    if (!board_) {
+        return std::nullopt;
+    }
+    auto pieceOpt = board_->pieceAt(pos);
+    if (pieceOpt.has_value() && pieceOpt.value()) {
+        return pieceOpt.value()->color();
+    }
+    return std::nullopt;
+}
+
+bool GameEngine::hasPieceAt(const Position& pos) const {
+    if (!board_) {
+        return false;
+    }
+    auto pieceOpt = board_->pieceAt(pos);
+    return pieceOpt.has_value() && pieceOpt.value() != nullptr;
+}
+
+int GameEngine::getBoardRows() const {
+    return board_ ? board_->rows() : 0;
+}
+
+int GameEngine::getBoardCols() const {
+    return board_ ? board_->cols() : 0;
+}
+
+}  // namespace kungfu
 </file>
 
 </files>

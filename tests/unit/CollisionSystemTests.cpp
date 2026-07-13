@@ -4,9 +4,6 @@
 #include "board/Board.hpp"
 #include "io/BoardParser.hpp"
 
-// ==========================================
-// 1. בדיקות יחידה עבור גלאי ההתנגשויות (פיזיקה ומרחב)
-// ==========================================
 TEST_CASE("CollisionDetector Spatial Calculations", "[realtime][collision]") {
     kungfu::GameConfig config;
     config.allowSimultaneousMovement = true;
@@ -15,16 +12,13 @@ TEST_CASE("CollisionDetector Spatial Calculations", "[realtime][collision]") {
     auto blackRook = std::make_shared<kungfu::Piece>(kungfu::PieceType::Rook, kungfu::PlayerColor::Black, kungfu::Position(0, 2));
 
     SECTION("Mid-route collision is detected when non-knights overlap in time on a square") {
-        // צריח לבן נע מ-(0,0) ל-(0,2), התחיל ב-t=0, משך תנועה: 2000ms. מגיע ל-(0,1) ב-t=1000.
         kungfu::Motion m1(whiteRook, kungfu::Position(0, 0), kungfu::Position(0, 2), 0, 2000);
-        // צריח שחור נע מ-(0,2) ל-(0,0), התחיל ב-t=100, משך תנועה: 2000ms. מגיע ל-(0,1) ב-t=1100.
         kungfu::Motion m2(blackRook, kungfu::Position(0, 2), kungfu::Position(0, 0), 100, 2000);
 
         std::vector<kungfu::Motion> motions = {m1, m2};
         auto collisions = kungfu::CollisionDetector::detectMidRouteCollisions(motions, config);
 
         REQUIRE(collisions.size() == 1);
-        // מנוע הפיזיקה הדינמי מזהה ש-m1 הגיע קודם ל-(0,1) ולכן הוא ה-winner, ו-m2 הגיע מאוחר יותר והתנגש בו (loser)
         REQUIRE(collisions[0].winner.piece() == whiteRook);
         REQUIRE(collisions[0].loser.piece() == blackRook);
     }
@@ -43,8 +37,8 @@ TEST_CASE("CollisionDetector Spatial Calculations", "[realtime][collision]") {
     }
 
     SECTION("Detect arrivals correctly filters completed motions") {
-        kungfu::Motion m1(whiteRook, kungfu::Position(0, 0), kungfu::Position(0, 2), 0, 1000); // הגעה ב-t=1000
-        kungfu::Motion m2(blackRook, kungfu::Position(0, 2), kungfu::Position(0, 0), 0, 2000); // הגעה ב-t=2000
+        kungfu::Motion m1(whiteRook, kungfu::Position(0, 0), kungfu::Position(0, 2), 0, 1000);
+        kungfu::Motion m2(blackRook, kungfu::Position(0, 2), kungfu::Position(0, 0), 0, 2000);
 
         std::vector<kungfu::Motion> motions = {m1, m2};
 
@@ -59,9 +53,6 @@ TEST_CASE("CollisionDetector Spatial Calculations", "[realtime][collision]") {
     }
 }
 
-// ==========================================
-// 2. בדיקות יחידה עבור פותר ההתנגשויות (חוקי שחמט)
-// ==========================================
 TEST_CASE("CollisionResolver Rules Resolution", "[rules][collision]") {
     auto board = std::make_shared<kungfu::Board>(8, 8);
     kungfu::CooldownTracker tracker;
@@ -71,23 +62,23 @@ TEST_CASE("CollisionResolver Rules Resolution", "[rules][collision]") {
     kungfu::CollisionResolver resolver(board, tracker, config);
     std::vector<kungfu::ArrivalEvent> events;
 
-    SECTION("Mid-route ENEMY collision captures the loser and clears its cooldown") {
+    SECTION("Mid-route ENEMY collision captures the winner (earlycomer) and clears its cooldown") {
         auto whiteRook = std::make_shared<kungfu::Piece>(kungfu::PieceType::Rook, kungfu::PlayerColor::White, kungfu::Position(0, 0));
         auto blackRook = std::make_shared<kungfu::Piece>(kungfu::PieceType::Rook, kungfu::PlayerColor::Black, kungfu::Position(0, 2));
 
         board->placePiece(whiteRook, kungfu::Position(0, 0));
         board->placePiece(blackRook, kungfu::Position(0, 2));
-        tracker.setCooldown(blackRook->id(), 5000);
+        tracker.setCooldown(whiteRook->id(), 5000);
 
         kungfu::Motion winner(whiteRook, kungfu::Position(0, 0), kungfu::Position(0, 2), 0, 1000);
         kungfu::Motion loser(blackRook, kungfu::Position(0, 2), kungfu::Position(0, 0), 100, 1000);
 
-        resolver.resolveMidRouteCollision(winner, loser, events);
+        resolver.resolveMidRouteCollision(winner, loser, 1000, events);
 
-        // מאחר ומדובר באויבים: המפסיד (השני שהגיע) נלכד ומפונה מהלוח
-        REQUIRE(loser.piece()->state() == kungfu::PieceState::Captured);
-        REQUIRE_FALSE(board->pieceAt(kungfu::Position(0, 2)).has_value());
-        REQUIRE_FALSE(tracker.isOnCooldown(blackRook->id(), 3000));
+        // הכלי שהגיע ראשון (winner) הוא זה שנלכד ומפונה על ידי המאוחר (loser)
+        REQUIRE(winner.piece()->state() == kungfu::PieceState::Captured);
+        REQUIRE_FALSE(board->pieceAt(kungfu::Position(0, 0)).has_value());
+        REQUIRE_FALSE(tracker.isOnCooldown(whiteRook->id(), 3000));
         REQUIRE(events.size() == 1);
     }
 
@@ -98,14 +89,11 @@ TEST_CASE("CollisionResolver Rules Resolution", "[rules][collision]") {
         board->placePiece(whiteRook1, kungfu::Position(0, 0));
         board->placePiece(whiteRook2, kungfu::Position(0, 4));
 
-        // תנועה ראשונה: מ-(0,0) ל-(0,3)
         kungfu::Motion firstArrived(whiteRook1, kungfu::Position(0, 0), kungfu::Position(0, 3), 0, 1000);
-        // תנועה שניה (מאוחרת): מ-(0,4) ל-(0,1) - היא תתנגש ב-firstArrived במשבצת (0,2) או (0,3)
         kungfu::Motion secondArrived(whiteRook2, kungfu::Position(0, 4), kungfu::Position(0, 1), 100, 1000);
 
-        resolver.resolveMidRouteCollision(firstArrived, secondArrived, events);
+        resolver.resolveMidRouteCollision(firstArrived, secondArrived, 1000, events);
 
-        // מאחר ומדובר בכלים ידידותיים: הכלי המאוחר (secondArrived) נעצר בנקודה האחרונה הפנויה במסלולו (0,3 תפוס, אז ייעצר ב-0,4)
         REQUIRE(secondArrived.piece()->state() == kungfu::PieceState::Idle);
         REQUIRE(secondArrived.piece()->position() == kungfu::Position(0, 4));
         REQUIRE(events.size() == 1);
@@ -124,7 +112,6 @@ TEST_CASE("CollisionResolver Rules Resolution", "[rules][collision]") {
 
         REQUIRE(success == true);
         REQUIRE(whiteRook->state() == kungfu::PieceState::Idle);
-        // הצריח נחסם ביעד ומחשב נסיגה למשבצת הפנויה האחרונה במסלול (0,1)
         REQUIRE(whiteRook->position() == kungfu::Position(0, 1));
         REQUIRE(board->pieceAt(kungfu::Position(0, 2)).value() == friendlyPawn);
     }
@@ -161,7 +148,7 @@ TEST_CASE("CollisionResolver Rules Resolution", "[rules][collision]") {
         REQUIRE(success == true);
         REQUIRE(whiteRook->position() == kungfu::Position(0, 2));
         REQUIRE(enemyPawn->state() == kungfu::PieceState::Captured);
-        REQUIRE(tracker.isOnCooldown(whiteRook->id(), 2000)); 
+        REQUIRE(tracker.isOnCooldown(whiteRook->id(), 3000)); 
     }
 
     SECTION("Non-knight blocked by friendly piece stops at the last vacant square on its path") {
