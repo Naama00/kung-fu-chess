@@ -5,8 +5,6 @@
 
 namespace kungfu {
 
-// אחראית בלעדית על מעקב אחר זמני צינון (cooldown) של כלים, לפי מזהה יציב (piece->id()).
-// אינה יודעת דבר על תנועה, לוח, או כללי משחק - רק "מתי כל כלי חופשי לפעול שוב".
 class CooldownTracker {
 public:
     void setCooldown(std::uint64_t pieceId, int expiresAtMs) noexcept {
@@ -23,6 +21,15 @@ public:
             return false;
         }
         return currentTimeMs < it->second;
+    }
+
+    // מתודה חדשה לצורך שליפת זמן סיום הצינון
+    int getExpiration(std::uint64_t pieceId) const noexcept {
+        auto it = cooldowns_.find(pieceId);
+        if (it == cooldowns_.end()) {
+            return 0;
+        }
+        return it->second;
     }
 
     size_t entryCount() const noexcept {

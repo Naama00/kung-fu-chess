@@ -10,6 +10,7 @@ struct GameConfig {
 
     bool allowSimultaneousMovement = true;
     bool enablePremoves = true;
+    bool allowJumping = true; 
 };
 
 }  // namespace kungfu

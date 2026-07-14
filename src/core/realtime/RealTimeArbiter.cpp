@@ -175,4 +175,14 @@ MoveResult RealTimeArbiter::executeMove(PiecePtr piece, const Position& from, co
     }
 }
 
+float RealTimeArbiter::getCooldownProgress(const PiecePtr& piece, int currentTimeMs) const noexcept {
+    if (!piece) return 0.0f;
+    int expiresAt = cooldownTracker_.getExpiration(piece->id());
+    int remaining = expiresAt - currentTimeMs;
+    if (remaining <= 0) return 0.0f;
+    
+    // החזרת היחס שנותר מתוך משך הצינון המוגדר בקונפיגורציה
+    return static_cast<float>(remaining) / config_.cooldownDurationMs;
+}
+
 }  // namespace kungfu

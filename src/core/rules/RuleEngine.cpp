@@ -56,4 +56,48 @@ MoveValidation RuleEngine::validateMove(const Position& from, const Position& to
     return {false, "illegal_piece_move"};
 }
 
+// מימוש האימות ההיפותטי שמבצע את המניפולציה הזמנית בלוח ומנקה אחריו
+MoveValidation RuleEngine::validateHypotheticalMove(const PiecePtr& piece, const Position& from, const Position& to) const {
+    if (!board_ || !piece) {
+        return {false, "internal_error"};
+    }
+
+    int maxRows = board_->rows();
+    int maxCols = board_->cols();
+
+    auto isOutOfBounds = [maxRows, maxCols](const Position& pos) noexcept {
+        return pos.row() < 0 || pos.row() >= maxRows || pos.col() < 0 || pos.col() >= maxCols;
+    };
+
+    if (isOutOfBounds(from) || isOutOfBounds(to)) {
+        return {false, "outside_board"};
+    }
+
+    Position originalPos = piece->position();
+    bool temporaryReposition = (originalPos != from);
+    bool placedTemporarily = false;
+
+    // אם הכלי לא ממוקם פיזית במשבצת שממנה רוצים לבצע את ה-Premove, נציב אותו שם זמנית
+    if (temporaryReposition) {
+        piece->setPosition(from);
+        if (!board_->pieceAt(from).has_value()) {
+            board_->placePiece(piece, from);
+            placedTemporarily = true;
+        }
+    }
+
+    // הרצת האימות הסטנדרטי
+    MoveValidation validation = validateMove(from, to);
+
+    // ניקוי והחזרת הלוח והכלי למצבם המקורי המדויק
+    if (temporaryReposition) {
+        if (placedTemporarily) {
+            board_->removePiece(piece);
+        }
+        piece->setPosition(originalPos);
+    }
+
+    return validation;
+}
+
 }  // namespace kungfu

@@ -3,6 +3,7 @@
 #include "ui/framework/IScreen.hpp"
 #include "ui/framework/ScreenManager.hpp"
 #include "ui/components/CooldownBar.hpp"
+#include "ui/components/Button.hpp" // הוספת ייבוא של Button
 #include "core/engine/GameEngine.hpp"
 #include "core/input/Controller.hpp"
 #include "core/view/SnapshotBuilder.hpp"
@@ -17,14 +18,17 @@ private:
     std::shared_ptr<kungfu::GameEngine> m_gameEngine;
     std::shared_ptr<kungfu::Controller> m_controller;
     CooldownBar m_cooldownBar;
+    kungfu::GameConfig m_config; // שמירת הקונפיגורציה המקורית לצורך Reset
     
-    // מרחב הקואורדינטות הלוגי (1000x1000)
+    // כפתורי ה-Overlay למסך סוף משחק
+    std::unique_ptr<Button> m_rematchButton;
+    std::unique_ptr<Button> m_menuButton;
+    
     float m_logicalRangeX = 1000.0f;
     float m_logicalRangeY = 1000.0f;
 
-public:
-    explicit ChessGameScreen(ScreenManager& manager) : IScreen(manager) {
-        // 1. הגדרת לוח שחמט סטנדרטי התחלתי
+    // מתודת עזר לאתחול או איפוס מלא של לוח השחמט
+    void resetGame() {
         std::string startBoard = 
             "wR wN wB wQ wK wB wN wR\n"
             "wP wP wP wP wP wP wP wP\n"
@@ -38,14 +42,34 @@ public:
         auto board = kungfu::BoardParser::parse(startBoard);
         auto ruleEngine = std::make_shared<kungfu::RuleEngine>(board);
         
-        // 2. אתחול מנוע המשחק והבקר (Controller)
-        m_gameEngine = std::make_shared<kungfu::GameEngine>(board, ruleEngine);
+        m_gameEngine = std::make_shared<kungfu::GameEngine>(board, ruleEngine, m_config);
         m_controller = std::make_shared<kungfu::Controller>(m_gameEngine);
         
-        // 3. סנכרון גודל התא של הבקר עם מערכת הצירים הלוגית (1000 / 8 עמודות = 125)
         int cols = board->cols();
         int logicalCellSize = static_cast<int>(m_logicalRangeX / cols);
         m_controller->setCellSize(logicalCellSize);
+    }
+
+public:
+    explicit ChessGameScreen(ScreenManager& manager, kungfu::GameConfig config = kungfu::GameConfig{}) 
+        : IScreen(manager), m_config(config) 
+    {
+        // 1. טעינת לוח ואתחול המשחק
+        resetGame();
+
+        // 2. אתחול כפתורי פאנל סוף המשחק
+        m_rematchButton = std::make_unique<Button>(
+            Vector2D{260.0f, 520.0f}, Vector2D{220.0f, 60.0f}, "Rematch", 
+            [this]() { resetGame(); }
+        );
+        m_menuButton = std::make_unique<Button>(
+            Vector2D{520.0f, 520.0f}, Vector2D{220.0f, 60.0f}, "Main Menu", 
+            [this]() { m_screenManager.popScreen(); } // חוזר למסך הפתיחה
+        );
+
+        // הגדרת עיצוב ייחודי לכפתורי סוף המשחק
+        m_rematchButton->setColors({40, 110, 75, 255}, {55, 140, 95, 255}, {255, 255, 255, 255}); // ירוק
+        m_menuButton->setColors({50, 50, 60, 255}, {70, 70, 85, 255}, {255, 255, 255, 255});      // אפור כהה
     }
 
     void onEnter() override {
@@ -57,13 +81,17 @@ public:
     }
 
     void update(float deltaTime) override {
-        // המרת deltaTime (בשניות) למילישניות ועדכון מנוע המשחק בזמן אמת
         int ms = static_cast<int>(deltaTime * 1000.0f);
         m_gameEngine->wait(ms);
+
+        // עדכון מצב הכפתורים של מסך סוף המשחק
+        if (m_gameEngine->isGameOver()) {
+            m_rematchButton->update(deltaTime);
+            m_menuButton->update(deltaTime);
+        }
     }
 
     void draw(IRenderer& renderer) override {
-        // 1. ניקוי המסך לרקע כהה נעים
         renderer.clear({30, 30, 40, 255});
 
         auto board = m_gameEngine->getBoard();
@@ -73,29 +101,29 @@ public:
         float cellWidth = m_logicalRangeX / cols;
         float cellHeight = m_logicalRangeY / rows;
 
-        // 2. ציור לוח השחמט (משבצות בהירות וכהות)
+        // ציור הלוח
         for (int r = 0; r < rows; ++r) {
             for (int c = 0; c < cols; ++c) {
                 Vector2D pos{c * cellWidth, r * cellHeight};
                 Vector2D size{cellWidth, cellHeight};
                 
                 Color cellColor = ((r + c) % 2 == 0) 
-                    ? Color{240, 217, 181, 255}   // קרם בהיר
-                    : Color{181, 136, 99, 255};    // חום עץ
+                    ? Color{240, 217, 181, 255}
+                    : Color{181, 136, 99, 255};
                 
                 renderer.drawRectangle(pos, size, cellColor, true);
             }
         }
 
-        // 3. סימון והדגשת המשבצת שנבחרה כרגע על ידי השחקן
+        // סימון משבצת נבחרת
         auto selectedOpt = m_controller->selectedPosition();
         if (selectedOpt.has_value()) {
             Vector2D pos{selectedOpt->col() * cellWidth, selectedOpt->row() * cellHeight};
             Vector2D size{cellWidth, cellHeight};
-            renderer.drawRectangle(pos, size, {255, 255, 0, 80}, true); // צהוב חצי שקוף
+            renderer.drawRectangle(pos, size, {255, 255, 0, 80}, true);
         }
 
-        // 4. בניית תמונת המצב (Snapshot) הכוללת את מיקומי הכלים (כולל תנועה חלקה)
+        // בניית Snapshot וציור כל הכלים
         auto snapshot = kungfu::view::SnapshotBuilder::build(
             *board,
             m_gameEngine->getArbiter(),
@@ -107,41 +135,88 @@ public:
 
         // 5. ציור הכלים ומדי הצינון (Cooldowns)
         for (const auto& pieceSnap : snapshot.pieces) {
-            // חישוב מרכז ורדיוס הציור של הכלי
-            Vector2D center{pieceSnap.pixelX + cellWidth / 2.0f, pieceSnap.pixelY + cellHeight / 2.0f};
-            float radius = std::min(cellWidth, cellHeight) * 0.35f;
+            // א. זיהוי ה-AssetId של הכלי (למשל "wP" עבור רגלי לבן, "bK" עבור מלך שחור)
+            std::string assetId = (pieceSnap.color == kungfu::PlayerColor::White) ? "w" : "b";
+            assetId += kungfu::PieceTokenCodec::toChar(pieceSnap.type);
 
-            // התאמת צבעים לפי צבע השחקן
-            Color pieceBg = (pieceSnap.color == kungfu::PlayerColor::White) ? Color{255, 255, 255, 255} : Color{45, 45, 45, 255};
-            Color pieceBorder = (pieceSnap.color == kungfu::PlayerColor::White) ? Color{0, 0, 0, 255} : Color{220, 220, 220, 255};
-            Color textCol = (pieceSnap.color == kungfu::PlayerColor::White) ? Color{0, 0, 0, 255} : Color{255, 255, 255, 255};
+            // ב. חישוב מיקום וגודל ה-Sprite של הכלי
+            Vector2D spritePos{pieceSnap.pixelX, pieceSnap.pixelY};
+            Vector2D spriteSize{cellWidth, cellHeight};
 
-            // א. ציור גוף הכלי (עיגול עם מסגרת)
-            renderer.drawCircle(center, radius, pieceBg, true);
-            renderer.drawCircle(center, radius, pieceBorder, false);
+            // ג. ציור ה-Sprite של הכלי באמצעות ה-Renderer האבסטרקטי
+            renderer.drawSprite(assetId, spritePos, spriteSize);
 
-            // ב. כתיבת תו הטוקן המייצג את סוג הכלי
-            char tokenChar = kungfu::PieceTokenCodec::toChar(pieceSnap.type);
-            std::string tokenStr(1, tokenChar);
-            renderer.drawText(tokenStr, {center.x - 10.0f, center.y + 10.0f}, 24, textCol);
-
-            // ג. זיהוי וציור מד הצינון (Cooldown) במידה והכלי בטעינה
+            // ד. זיהוי וציור מד הצינון (Cooldown) במידה והכלי בטעינה
             auto boardPieces = board->pieces();
             for (const auto& p : boardPieces) {
                 if (p && p->position() == pieceSnap.logicalPosition) {
                     int currentMs = m_gameEngine->getCurrentTimeMs();
-                    if (m_gameEngine->getArbiter().isOnCooldown(std::const_pointer_cast<kungfu::Piece>(p), currentMs)) {
-                        // מדגם פשוט המראה חיווי ויזואלי של טעינה
-                        m_cooldownBar.draw(renderer, center, 0.6f); 
+                    float progress = m_gameEngine->getArbiter().getCooldownProgress(
+                        std::const_pointer_cast<kungfu::Piece>(p), 
+                        currentMs
+                    );
+                    if (progress > 0.0f) {
+                        // חישוב המרכז לצורך מירכוז מד הצינון מעט מתחת לכלי
+                        Vector2D center{pieceSnap.pixelX + cellWidth / 2.0f, pieceSnap.pixelY + cellHeight / 2.0f};
+                        m_cooldownBar.draw(renderer, center, progress); 
                     }
                 }
             }
         }
+        // 5.5. ציור חיווי ויזואלי של מהלכים מתוכננים מראש (Premoves)
+        const auto& premoveQueue = m_gameEngine->getPremoveQueue();
+        for (const auto& entry : premoveQueue.entries()) {
+            auto piece = entry.first;
+            auto to = entry.second; 
+            if (!piece) continue;
 
-        // 6. חיווי מסך סוף משחק (Game Over)
+            // א. חישוב מיקום פיזיקלי של משבצת היעד המתוכננת
+            float destX = to.col() * cellWidth;
+            float destY = to.row() * cellHeight;
+
+            // ב. ציור ריבוע הדגשה כחול שקוף על משבצת היעד
+            renderer.drawRectangle({destX, destY}, {cellWidth, cellHeight}, {0, 120, 255, 45}, true);   // מילוי כחול שקוף
+            renderer.drawRectangle({destX, destY}, {cellWidth, cellHeight}, {0, 120, 255, 180}, false);  // מסגרת כחולה ברורה
+
+            // ג. חישוב נקודת ההתחלה של הקו המקשר (מתוך המרכז הפיזי החלק של הכלי)
+            Vector2D startPt{0.0f, 0.0f};
+            bool foundSnap = false;
+
+            // נחפש את המיקום הפיזיקלי המונפש של הכלי מתוך ה-Snapshot
+            for (const auto& pieceSnap : snapshot.pieces) {
+                if (pieceSnap.logicalPosition == piece->position() && 
+                    pieceSnap.type == piece->type() && 
+                    pieceSnap.color == piece->color()) {
+                    startPt.x = pieceSnap.pixelX + cellWidth / 2.0f;
+                    startPt.y = pieceSnap.pixelY + cellHeight / 2.0f;
+                    foundSnap = true;
+                    break;
+                }
+            }
+
+            // במקרה גיבוי (Fallback) אם הכלי לא ב-Snapshot, נשתמש במיקום הלוגי הסטטי
+            if (!foundSnap) {
+                startPt.x = piece->position().col() * cellWidth + cellWidth / 2.0f;
+                startPt.y = piece->position().row() * cellHeight + cellHeight / 2.0f;
+            }
+
+            // ד. חישוב נקודת הסוף של הקו (מרכז משבצת היעד)
+            Vector2D endPt{destX + cellWidth / 2.0f, destY + cellHeight / 2.0f};
+
+            // ה. מתיחת קו מקשר כחול ומרשים בעובי 3 פיקסלים
+            renderer.drawLine(startPt, endPt, {0, 120, 255, 180}, 3.0f);
+        }
+        // 6. חיווי ופאנל סוף משחק (Game Over Modal overlay)
         if (snapshot.isGameOver) {
-            renderer.drawRectangle({0.0f, 400.0f}, {1000.0f, 200.0f}, {0, 0, 0, 200}, true);
-            renderer.drawText("GAME OVER", {330.0f, 515.0f}, 48, {255, 60, 60, 255});
+            // ציור פאנל רקע מרובע כהה וחצי שקוף במרכז המסך
+            renderer.drawRectangle({0.0f, 320.0f}, {1000.0f, 320.0f}, {15, 15, 20, 220}, true);
+            renderer.drawRectangle({0.0f, 320.0f}, {1000.0f, 320.0f}, {120, 40, 40, 255}, false); // מסגרת אדומה דקה
+            
+            renderer.drawText("GAME OVER", {330.0f, 420.0f}, 54, {255, 60, 60, 255});
+            
+            // ציור כפתורי ה-Overlay האינטראקטיביים
+            m_rematchButton->draw(renderer);
+            m_menuButton->draw(renderer);
         }
     }
 
@@ -149,14 +224,21 @@ public:
         for (const auto& event : events) {
             if (event.type == InputEvent::Type::Mouse) {
                 const auto& mouse = event.mouse;
-                if (mouse.action == MouseEvent::Action::Press && mouse.button == MouseButton::Left) {
-                    // שליחת קואורדינטות לוגיות (0..1000) ישירות ל-Controller
-                    m_controller->click(static_cast<int>(mouse.logicalX), static_cast<int>(mouse.logicalY));
+                
+                // ניתוב קלט לפי מצב המשחק
+                if (m_gameEngine->isGameOver()) {
+                    // בסיום משחק, העכבר שולט אך ורק על כפתורי ה-Overlay
+                    m_rematchButton->handleInput(mouse);
+                    m_menuButton->handleInput(mouse);
+                } else {
+                    if (mouse.action == MouseEvent::Action::Press && mouse.button == MouseButton::Left) {
+                        m_controller->click(static_cast<int>(mouse.logicalX), static_cast<int>(mouse.logicalY));
+                    }
                 }
             }
             else if (event.type == InputEvent::Type::Keyboard) {
                 if (event.key.key == Key::Escape) {
-                    m_screenManager.popScreen();
+                    m_screenManager.popScreen(); // חזרה לתפריט
                 }
             }
         }

@@ -3,6 +3,7 @@
 #include <memory>
 #include "core/board/IBoard.hpp"
 #include "core/common/Position.hpp"
+#include "core/board/Piece.hpp" // הוספת ייבוא של Piece
 #include <string>
 
 namespace kungfu {
@@ -18,6 +19,9 @@ public:
 
     // בודק חוקיות מלאה של מהלך עבור הלוח הנוכחי ומחזיר שגיאות מובנות
     MoveValidation validateMove(const Position& from, const Position& to) const;
+
+    // מתודה חדשה: סימולציה ואימות של מהלך היפותטי (למשל פרה-מוב)
+    MoveValidation validateHypotheticalMove(const PiecePtr& piece, const Position& from, const Position& to) const;
 
 private:
     std::shared_ptr<IBoard> board_;

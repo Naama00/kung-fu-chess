@@ -37,9 +37,12 @@ MoveResult GameEngine::requestMove(const Position& from, const Position& to) {
     auto piece = sourcePieceOpt.value();
 
     // 2. שאילתת מצב פיזיקלי דרך ה-Arbiter בלבד (עקרון ה-DIP)
-    // הבדיקה הפיזיקלית קודמת לבדיקת התורות - כלי נע/בקירור צריך
-    // לדווח על מצבו ללא קשר למי התור כרגע.
     if (arbiter_.isPieceBusy(piece, currentTimeMs_)) {
+        // האצלת אימות המהלך ההיפותטי ל-RuleEngine (עמידה ב-SRP)
+        auto validation = ruleEngine_->validateHypotheticalMove(piece, from, to);
+        if (!validation.isValid) {
+            return {false, validation.reason};
+        }
         return handlePremoveRegistration(piece, from, to);
     }
 
@@ -53,13 +56,16 @@ MoveResult GameEngine::requestMove(const Position& from, const Position& to) {
         }
     }
 
-    // 4. אימות חוקי תנועה מול ה-RuleEngine הגיאומטרי
+    // 4. אימות חוקי תנועה מול ה-RuleEngine הגיאומטרי (מהלך רגיל)
     if (from != to) {
         auto validation = ruleEngine_->validateMove(from, to);
         if (!validation.isValid) {
             return {false, validation.reason};
         }
     } else {
+        if (!config_.allowJumping) {
+            return {false, "jumping_disabled"};
+        }
         if (piece->state() == PieceState::Captured) {
             return {false, "captured_piece_cannot_jump"};
         }
@@ -112,7 +118,6 @@ void GameEngine::wait(int ms) noexcept {
         auto promoted = promotionRule_->maybePromote(piece, to, *board_);
         if (promoted != piece) {
             premoveQueue_.replacePiece(piece, promoted);
-            // אם הכלי שקודם שמרנו הוא זה שמוכתר — מעדכנים לכלי החדש
             if (pendingTurnPiece_ == piece) {
                 pendingTurnPiece_ = promoted;
             }
@@ -125,16 +130,6 @@ void GameEngine::wait(int ms) noexcept {
             gameOver_ = true;
         }
     }
-
-    // איפוס תור: אם הכלי שהפעיל את החלפת התור כבר אינו עסוק (הגיע ופג צינונו),
-    // מחזירים את התור לצבע שלו כדי לאפשר לו לזוז שוב לפני שהיריב הגיב.
-    if (!config_.allowSimultaneousMovement && pendingTurnPiece_ && !gameOver_) {
-        if (!arbiter_.isPieceBusy(pendingTurnPiece_, currentTimeMs_)) {
-            currentTurn_ = pendingTurnPiece_->color();
-            pendingTurnPiece_ = nullptr;
-        }
-    }
-
     if (config_.enablePremoves && !gameOver_) {
         premoveFailures_.clear();
         premoveQueue_.processReady(

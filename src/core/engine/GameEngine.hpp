@@ -32,7 +32,7 @@ public:
     std::shared_ptr<const IBoard> getBoard() const noexcept { return board_; }
     const RealTimeArbiter& getArbiter() const noexcept { return arbiter_; }
     const std::vector<MoveResult>& lastPremoveFailures() const noexcept { return premoveFailures_; }
-
+    const PremoveQueue& getPremoveQueue() const noexcept { return premoveQueue_; }
 private:
     void advanceTurn() noexcept;
     MoveResult handlePremoveRegistration(const PiecePtr& piece, const Position& from, const Position& to) noexcept;

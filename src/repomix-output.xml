@@ -1,0 +1,3934 @@
+This file is a merged representation of the entire codebase, combined into a single document by Repomix.
+
+<file_summary>
+This section contains a summary of this file.
+
+<purpose>
+This file contains a packed representation of the entire repository's contents.
+It is designed to be easily consumable by AI systems for analysis, code review,
+or other automated processes.
+</purpose>
+
+<file_format>
+The content is organized as follows:
+1. This summary section
+2. Repository information
+3. Directory structure
+4. Repository files (if enabled)
+5. Multiple file entries, each consisting of:
+  - File path as an attribute
+  - Full contents of the file
+</file_format>
+
+<usage_guidelines>
+- This file should be treated as read-only. Any changes should be made to the
+  original repository files, not this packed version.
+- When processing this file, use the file path to distinguish
+  between different files in the repository.
+- Be aware that this file may contain sensitive information. Handle it with
+  the same level of security as you would the original repository.
+</usage_guidelines>
+
+<notes>
+- Some files may have been excluded based on .gitignore rules and Repomix's configuration
+- Binary files are not included in this packed representation. Please refer to the Repository Structure section for a complete list of file paths, including binary files
+- Files matching patterns in .gitignore are excluded
+- Files matching default ignore patterns are excluded
+- Files are sorted by Git change count (files with more changes are at the bottom)
+</notes>
+
+</file_summary>
+
+<directory_structure>
+core/
+  board/
+    Board.cpp
+    Board.hpp
+    IBoard.hpp
+    Piece.cpp
+    Piece.hpp
+  common/
+    ArrivalEvent.hpp
+    Enums.hpp
+    GameConfig.hpp
+    MoveResult.hpp
+    PieceTokenCodec.hpp
+    Position.cpp
+    Position.hpp
+  engine/
+    GameEngine.cpp
+    GameEngine.hpp
+    IGameEngine.hpp
+    PremoveQueue.cpp
+    PremoveQueue.hpp
+  input/
+    BoardMapper.cpp
+    BoardMapper.hpp
+    Controller.cpp
+    Controller.hpp
+    InputConfig.hpp
+  io/
+    BoardParser.cpp
+    BoardParser.hpp
+    BoardPrinter.cpp
+    BoardPrinter.hpp
+  realtime/
+    CollisionDetector.cpp
+    CollisionDetector.hpp
+    CooldownTracker.hpp
+    Motion.cpp
+    Motion.hpp
+    RealTimeArbiter.cpp
+    RealTimeArbiter.hpp
+  rules/
+    CollisionResolver.cpp
+    CollisionResolver.hpp
+    IPieceRule.hpp
+    IPromotionRule.hpp
+    PieceRules.cpp
+    PieceRules.hpp
+    PromotionRules.cpp
+    PromotionRules.hpp
+    RuleEngine.cpp
+    RuleEngine.hpp
+  view/
+    screens/
+      ChessGameScreen.hpp
+    GameSnapshot.hpp
+    IRenderer.hpp
+    SnapshotBuilder.cpp
+    SnapshotBuilder.hpp
+graphics_impl/
+  img_backend/
+    ImgInputTranslator.hpp
+    ImgRenderer.hpp
+  img.cpp
+  img.hpp
+ui/
+  components/
+    Button.hpp
+    CooldownBar.hpp
+  framework/
+    AssetManager.hpp
+    IInputTranslator.hpp
+    InputEvents.hpp
+    IRenderer.hpp
+    IScreen.hpp
+    ScreenManager.hpp
+main.cpp
+</directory_structure>
+
+<files>
+This section contains the contents of the repository's files.
+
+<file path="core/board/Board.cpp">
+// src/board/Board.cpp
+#include "core/board/Board.hpp"
+#include <algorithm>
+
+namespace kungfu {
+
+Board::Board() : rows_(8), cols_(8) {}
+
+Board::Board(int rows, int cols) : rows_(rows), cols_(cols) {}
+
+std::optional<PiecePtr> Board::pieceAt(const Position& position) {
+    for (auto& piece : pieces_) {
+        if (piece && piece->position() == position) {
+            return piece;
+        }
+    }
+    return std::nullopt;
+}
+
+std::optional<std::shared_ptr<const Piece>> Board::pieceAt(const Position& position) const {
+    for (const auto& piece : pieces_) {
+        if (piece && piece->position() == position) {
+            return piece;
+        }
+    }
+    return std::nullopt;
+}
+
+bool Board::placePiece(const PiecePtr& piece, const Position& position) {
+    if (!piece) {
+        return false;
+    }
+
+    if (pieceAt(position).has_value()) {
+        return false;
+    }
+
+    piece->setPosition(position);
+    pieces_.push_back(piece);
+    return true;
+}
+
+bool Board::removePiece(const Position& position) {
+    auto it = std::find_if(pieces_.begin(), pieces_.end(), [&](const PiecePtr& piece) {
+        return piece && piece->position() == position;
+    });
+
+    if (it == pieces_.end()) {
+        return false;
+    }
+
+    pieces_.erase(it);
+    return true;
+}
+
+bool Board::removePiece(const PiecePtr& piece) {
+    if (!piece) {
+        return false;
+    }    // חיפוש הכלי הספציפי במערך לפי המצביע שלו (Identity)
+    auto it = std::find(pieces_.begin(), pieces_.end(), piece);
+    if (it == pieces_.end()) {
+        return false;
+    }
+    pieces_.erase(it);
+    return true;
+}
+
+bool Board::movePiece(const Position& from, const Position& to) {
+    PiecePtr movingPiece = nullptr;
+    for (auto& piece : pieces_) {
+        if (piece && piece->position() == from) {
+            movingPiece = piece;
+            break;
+        }
+    }
+
+    if (!movingPiece) {
+        return false;
+    }
+
+    if (pieceAt(to).has_value()) {
+        return false;
+    }
+
+    movingPiece->setPosition(to);
+    return true;
+}
+
+bool Board::replacePiece(const Position& position, const PiecePtr& newPiece) {
+    auto it = std::find_if(pieces_.begin(), pieces_.end(), [&](const PiecePtr& p) {
+        return p && p->position() == position;
+    });
+
+    if (it == pieces_.end() || !newPiece) {
+        return false;
+    }
+
+    newPiece->setPosition(position);
+    *it = newPiece;
+    return true;
+}
+
+std::vector<PiecePtr> Board::pieces() {
+    return pieces_;
+}
+
+std::vector<std::shared_ptr<const Piece>> Board::pieces() const {
+    std::vector<std::shared_ptr<const Piece>> const_pieces;
+    const_pieces.reserve(pieces_.size());
+    for (const auto& piece : pieces_) {
+        const_pieces.push_back(piece);
+    }
+    return const_pieces;
+}
+
+}  // namespace kungfu
+</file>
+
+<file path="core/board/Board.hpp">
+// include/board/Board.hpp
+#pragma once
+
+#include <vector>
+#include "core/board/IBoard.hpp"
+#include "core/common/Enums.hpp"
+#include "core/common/Position.hpp"
+
+namespace kungfu {
+
+class Board : public IBoard {
+public:
+    Board();
+    Board(int rows, int cols); 
+
+    int rows() const override { return rows_; }
+    int cols() const override { return cols_; }
+    
+    std::vector<PiecePtr> pieces() override;
+    std::vector<std::shared_ptr<const Piece>> pieces() const override;
+
+    std::optional<PiecePtr> pieceAt(const Position& position) override;
+    std::optional<std::shared_ptr<const Piece>> pieceAt(const Position& position) const override;
+    
+    bool placePiece(const PiecePtr& piece, const Position& position) override;
+    bool removePiece(const Position& position) override;
+    bool movePiece(const Position& from, const Position& to) override;
+    bool removePiece(const PiecePtr& piece) override; 
+    bool replacePiece(const Position& position, const PiecePtr& newPiece) override;
+
+private:
+    std::vector<PiecePtr> pieces_;
+    int rows_ = 8;
+    int cols_ = 8;
+};
+
+}  // namespace kungfu
+</file>
+
+<file path="core/board/IBoard.hpp">
+#pragma once
+
+#include <memory>
+#include <optional>
+#include <vector>
+#include "core/common/Position.hpp"
+#include "core/board/Piece.hpp"
+
+namespace kungfu {
+
+class IBoard {
+public:
+    virtual ~IBoard() = default;
+
+    virtual int rows() const = 0;
+    virtual int cols() const = 0;
+    
+    // הפרדה בין גישת כתיבה לגישת קריאה בלבד (Const-Correctness)
+    virtual std::vector<PiecePtr> pieces() = 0;
+    virtual std::vector<std::shared_ptr<const Piece>> pieces() const = 0;
+
+    virtual std::optional<PiecePtr> pieceAt(const Position& position) = 0;
+    virtual std::optional<std::shared_ptr<const Piece>> pieceAt(const Position& position) const = 0;
+    
+    virtual bool placePiece(const PiecePtr& piece, const Position& position) = 0;
+    virtual bool removePiece(const Position& position) = 0;
+    virtual bool movePiece(const Position& from, const Position& to) = 0;
+    virtual bool removePiece(const PiecePtr& piece) = 0;
+    virtual bool replacePiece(const Position& position, const PiecePtr& newPiece) = 0;
+};
+
+using BoardPtr = std::shared_ptr<IBoard>;
+
+}  // namespace kungfu
+</file>
+
+<file path="core/board/Piece.cpp">
+// src/board/Piece.cpp
+#include "core/board/Piece.hpp"
+#include <atomic>
+
+namespace kungfu {
+
+// הגדרת המשתנה הסטטי של המחלקה והקצאת זיכרון עבורו (מתחיל מ-1)
+std::uint64_t Piece::nextId_ = 1;
+
+Piece::Piece(PieceType type, PlayerColor color, Position position)
+    : type_(type), color_(color), position_(position), state_(PieceState::Idle), id_(nextId_++) {}
+
+}  // namespace kungfu
+</file>
+
+<file path="core/board/Piece.hpp">
+#pragma once
+
+#include <cstdint>
+#include <memory>
+#include "core/common/Enums.hpp"
+#include "core/common/Position.hpp"
+
+namespace kungfu {
+
+class Piece {
+public:
+    Piece(PieceType type, PlayerColor color, Position position);
+    virtual ~Piece() = default;
+
+    PieceType type() const { return type_; }
+    PlayerColor color() const { return color_; }
+    Position position() const { return position_; }
+    PieceState state() const { return state_; }
+    bool hasMoved() const { return hasMoved_; }
+
+    // מזהה יציב וייחודי לכל אובייקט Piece, לאורך כל חייו - בלתי תלוי בכתובת הזיכרון שלו.
+    // משמש כמפתח בטוח למבני נתונים חיצוניים (למשל cooldowns ב-RealTimeArbiter),
+    // כדי למנוע התנגשות עם כלים חדשים שנוצרים לאחר שחרור זיכרון של כלי קודם.
+    std::uint64_t id() const noexcept { return id_; }
+
+    void setPosition(const Position& position) { position_ = position; }
+    void setState(PieceState state) { state_ = state; }
+    void markMoved() { hasMoved_ = true; }
+
+    bool isMovable() const { return state_ != PieceState::Captured; }
+
+protected:
+    PieceType type_;
+    PlayerColor color_;
+    Position position_;
+    PieceState state_ = PieceState::Idle;
+    bool hasMoved_ = false;
+
+private:
+    static std::uint64_t nextId_;
+    std::uint64_t id_;
+};
+
+using PiecePtr = std::shared_ptr<Piece>;
+using ConstPiecePtr = std::shared_ptr<const Piece>;
+
+}  // namespace kungfu
+</file>
+
+<file path="core/common/ArrivalEvent.hpp">
+#pragma once
+
+#include "core/common/Position.hpp"
+#include "core/board/Piece.hpp"
+
+namespace kungfu {
+
+struct ArrivalEvent {
+    Position from;
+    Position to;
+    PiecePtr piece;
+    bool capturedKing;
+    bool cancelled; 
+};
+
+} // namespace kungfu
+</file>
+
+<file path="core/common/Enums.hpp">
+#pragma once
+
+namespace kungfu {
+
+enum class PieceType {
+    King,
+    Queen,
+    Rook,
+    Bishop,
+    Knight,
+    Pawn
+};
+
+enum class PlayerColor {
+    White,
+    Black
+};
+
+enum class PieceState {
+    Idle,       // על הלוח, אינו בתנועה
+    Moving,     // נמצא בדרך ליעד
+    Captured,   // הוסר מהמשחק
+    Airborne    // כלי שנמצא כרגע בעיצומה של קפיצה באוויר
+};
+
+}  // namespace kungfu
+</file>
+
+<file path="core/common/GameConfig.hpp">
+#pragma once
+
+namespace kungfu {
+
+// קונפיגורציית ריצה של מנוע המשחק - כל הערכים ניתנים לשינוי
+struct GameConfig {
+    int cooldownDurationMs = 2000;
+    int msPerCellSpeed = 1000;
+    int jumpDurationMs = 1000;
+
+    bool allowSimultaneousMovement = true;
+    bool enablePremoves = true;
+};
+
+}  // namespace kungfu
+</file>
+
+<file path="core/common/MoveResult.hpp">
+// include/common/MoveResult.hpp
+#pragma once
+#include <string>
+
+namespace kungfu {
+
+struct MoveResult {
+    bool isAccepted;
+    std::string reason;
+};
+
+} // namespace kungfu
+</file>
+
+<file path="core/common/PieceTokenCodec.hpp">
+#pragma once
+
+#include <optional>
+#include "core/common/Enums.hpp"
+
+namespace kungfu {
+
+// מקור אמת יחיד למיפוי בין תו הטוקן הטקסטואלי לבין PieceType.
+// משמש הן ב-BoardParser (פענוח) והן ב-BoardPrinter (הדפסה) כדי למנוע כפילות.
+class PieceTokenCodec {
+public:
+    static std::optional<PieceType> fromChar(char c) noexcept {
+        switch (c) {
+            case 'K': return PieceType::King;
+            case 'Q': return PieceType::Queen;
+            case 'R': return PieceType::Rook;
+            case 'B': return PieceType::Bishop;
+            case 'N': return PieceType::Knight;
+            case 'P': return PieceType::Pawn;
+            default:  return std::nullopt;
+        }
+    }
+
+    static char toChar(PieceType type) noexcept {
+        switch (type) {
+            case PieceType::King:   return 'K';
+            case PieceType::Queen:  return 'Q';
+            case PieceType::Rook:   return 'R';
+            case PieceType::Bishop: return 'B';
+            case PieceType::Knight: return 'N';
+            case PieceType::Pawn:   return 'P';
+        }
+        return '?';
+    }
+};
+
+}  // namespace kungfu
+</file>
+
+<file path="core/common/Position.cpp">
+#include "core/common/Position.hpp"
+
+namespace kungfu {
+
+Position::Position() : row_(0), col_(0) {}
+
+Position::Position(int row, int col) : row_(row), col_(col) {}
+
+int Position::row() const {
+    return row_;
+}
+
+int Position::col() const {
+    return col_;
+}
+
+bool Position::operator==(const Position& other) const {
+    return row_ == other.row_ && col_ == other.col_;
+}
+
+bool Position::operator!=(const Position& other) const {
+    return !(*this == other);
+}
+
+}  // namespace kungfu
+</file>
+
+<file path="core/common/Position.hpp">
+#pragma once
+
+namespace kungfu {
+
+class Position {
+public:
+    Position();
+    Position(int row, int col);
+
+    int row() const;
+    int col() const;
+
+    bool operator==(const Position& other) const;
+    bool operator!=(const Position& other) const;
+
+private:
+    int row_;
+    int col_;
+};
+
+}  // namespace kungfu
+</file>
+
+<file path="core/engine/GameEngine.cpp">
+// src/engine/GameEngine.cpp
+#include "core/engine/GameEngine.hpp"
+#include "core/common/GameConfig.hpp"
+#include <algorithm>
+#include <cmath>
+
+namespace kungfu {
+
+GameEngine::GameEngine(std::shared_ptr<IBoard> board,
+                       std::shared_ptr<RuleEngine> ruleEngine,
+                       GameConfig config,
+                       std::shared_ptr<IPromotionRule> promotionRule) noexcept
+    : board_(std::move(board))
+    , ruleEngine_(std::move(ruleEngine))
+    , promotionRule_(std::move(promotionRule))
+    , config_(config)
+    , arbiter_(board_, config_) {}
+
+MoveResult GameEngine::requestMove(const Position& from, const Position& to) {
+    if (gameOver_) {
+        return {false, "game_over"};
+    }
+
+    if (!board_ || !ruleEngine_) {
+        return {false, "internal_error"};
+    }
+
+    // 1. איתור הכלי (על הלוח או בתנועה)
+    auto sourcePieceOpt = board_->pieceAt(from);
+    if (!sourcePieceOpt.has_value() || !sourcePieceOpt.value()) {
+        sourcePieceOpt = arbiter_.getPieceInTransitAt(from);
+    }
+
+    if (!sourcePieceOpt.has_value() || !sourcePieceOpt.value()) {
+        return {false, "empty_source"};
+    }
+    auto piece = sourcePieceOpt.value();
+
+    // 2. שאילתת מצב פיזיקלי דרך ה-Arbiter בלבד (עקרון ה-DIP)
+    // הבדיקה הפיזיקלית קודמת לבדיקת התורות - כלי נע/בקירור צריך
+    // לדווח על מצבו ללא קשר למי התור כרגע.
+    if (arbiter_.isPieceBusy(piece, currentTimeMs_)) {
+        return handlePremoveRegistration(piece, from, to);
+    }
+
+    // 3. אימות תורות וחוקיות סימולטנית (חוקי משחק עליונים)
+    if (!config_.allowSimultaneousMovement) {
+        if (piece->color() != currentTurn_) {
+            return {false, "not_your_turn"};
+        }
+        if (arbiter_.hasActiveMotion()) {
+            return {false, "motion_in_progress"};
+        }
+    }
+
+    // 4. אימות חוקי תנועה מול ה-RuleEngine הגיאומטרי
+    if (from != to) {
+        auto validation = ruleEngine_->validateMove(from, to);
+        if (!validation.isValid) {
+            return {false, validation.reason};
+        }
+    } else {
+        if (piece->state() == PieceState::Captured) {
+            return {false, "captured_piece_cannot_jump"};
+        }
+    }
+
+    // 5. האצלת ביצוע התנועה המלאה ל-Arbiter (עקרון ה-SRP)
+    auto result = arbiter_.executeMove(piece, from, to, currentTimeMs_);
+
+    // 6. עדכון מצב משחק עליון (החלפת תורות) במידת הצורך
+    if (result.isAccepted && !config_.allowSimultaneousMovement) {
+        pendingTurnPiece_ = piece; // שמירה לצורך איפוס תור אחרי צינון
+        advanceTurn();
+    }
+
+    return result;
+}
+
+MoveResult GameEngine::handlePremoveRegistration(const PiecePtr& piece, const Position& from, const Position& to) noexcept {
+    // במצב תורות (לא-סימולטני), פרה-מוב אינו נתמך ללא קשר לדגל enablePremoves
+    if (!config_.allowSimultaneousMovement) {
+        if (arbiter_.isPieceMoving(piece) || piece->state() == PieceState::Airborne) {
+            return {false, "motion_in_progress"};
+        }
+        return {false, "piece_on_cooldown"};
+    }
+
+    if (!config_.enablePremoves) {
+        if (arbiter_.isPieceMoving(piece) || piece->state() == PieceState::Airborne) {
+            return {false, "motion_in_progress"};
+        }
+        return {false, "piece_on_cooldown"};
+    }
+
+    premoveQueue_.registerOrUpdate(piece, to);
+    return {true, "premove_registered"};
+}
+
+void GameEngine::advanceTurn() noexcept {
+    currentTurn_ = (currentTurn_ == PlayerColor::White) ? PlayerColor::Black : PlayerColor::White;
+}
+
+void GameEngine::wait(int ms) noexcept {
+    if (ms <= 0 || !board_) {
+        return;
+    }
+    auto promotionCallback = [this](const PiecePtr& piece, const Position& to) -> PiecePtr {
+        if (!promotionRule_) {
+            return piece;
+        }
+        auto promoted = promotionRule_->maybePromote(piece, to, *board_);
+        if (promoted != piece) {
+            premoveQueue_.replacePiece(piece, promoted);
+            // אם הכלי שקודם שמרנו הוא זה שמוכתר — מעדכנים לכלי החדש
+            if (pendingTurnPiece_ == piece) {
+                pendingTurnPiece_ = promoted;
+            }
+        }
+        return promoted;
+    };
+    auto events = arbiter_.advanceTime(ms, currentTimeMs_, promotionCallback);
+    for (const auto& event : events) {
+        if (event.capturedKing) {
+            gameOver_ = true;
+        }
+    }
+
+    // איפוס תור: אם הכלי שהפעיל את החלפת התור כבר אינו עסוק (הגיע ופג צינונו),
+    // מחזירים את התור לצבע שלו כדי לאפשר לו לזוז שוב לפני שהיריב הגיב.
+    if (!config_.allowSimultaneousMovement && pendingTurnPiece_ && !gameOver_) {
+        if (!arbiter_.isPieceBusy(pendingTurnPiece_, currentTimeMs_)) {
+            currentTurn_ = pendingTurnPiece_->color();
+            pendingTurnPiece_ = nullptr;
+        }
+    }
+
+    if (config_.enablePremoves && !gameOver_) {
+        premoveFailures_.clear();
+        premoveQueue_.processReady(
+            [this](const PiecePtr& piece) { return arbiter_.isPieceBusy(piece, currentTimeMs_); },
+            [this](const Position& from, const Position& to) -> MoveResult {
+                auto result = requestMove(from, to);
+                if (!result.isAccepted) {
+                    premoveFailures_.push_back(result);
+                }
+                return result;
+            }
+        );
+    }
+}
+
+std::optional<PlayerColor> GameEngine::getPieceColorAt(const Position& pos) const {
+    if (!board_) {
+        return std::nullopt;
+    }
+    auto pieceOpt = board_->pieceAt(pos);
+    if (pieceOpt.has_value() && pieceOpt.value()) {
+        return pieceOpt.value()->color();
+    }
+    auto transitOpt = arbiter_.getPieceInTransitAt(pos);
+    if (transitOpt.has_value() && transitOpt.value()) {
+        return transitOpt.value()->color();
+    }
+    return std::nullopt;
+}
+
+bool GameEngine::hasPieceAt(const Position& pos) const {
+    if (!board_) {
+        return false;
+    }
+    auto pieceOpt = board_->pieceAt(pos);
+    if (pieceOpt.has_value() && pieceOpt.value() != nullptr) {
+        return true;
+    }
+    return arbiter_.getPieceInTransitAt(pos).has_value();
+}
+
+int GameEngine::getBoardRows() const {
+    return board_ ? board_->rows() : 0;
+}
+
+int GameEngine::getBoardCols() const {
+    return board_ ? board_->cols() : 0;
+}
+
+}  // namespace kungfu
+</file>
+
+<file path="core/engine/GameEngine.hpp">
+// include/engine/GameEngine.hpp
+#pragma once
+
+#include "core/engine/IGameEngine.hpp"
+#include "core/engine/PremoveQueue.hpp"
+#include "core/board/IBoard.hpp"
+#include "core/rules/RuleEngine.hpp"
+#include "core/rules/IPromotionRule.hpp"
+#include "core/rules/PromotionRules.hpp"
+#include "core/realtime/RealTimeArbiter.hpp"
+#include "core/common/GameConfig.hpp"
+#include <memory>
+
+namespace kungfu {
+
+class GameEngine : public IGameEngine {
+public:
+    GameEngine(std::shared_ptr<IBoard> board,
+               std::shared_ptr<RuleEngine> ruleEngine,
+               GameConfig config = GameConfig{},
+               std::shared_ptr<IPromotionRule> promotionRule = std::make_shared<ChessPromotionRule>()) noexcept;
+
+    MoveResult requestMove(const Position& from, const Position& to) override;
+    bool hasPieceAt(const Position& pos) const override;
+    int getBoardRows() const override;
+    int getBoardCols() const override;
+    std::optional<PlayerColor> getPieceColorAt(const Position& pos) const override;
+    void wait(int ms) noexcept;
+    bool isGameOver() const noexcept { return gameOver_; }
+    int getCurrentTimeMs() const noexcept { return currentTimeMs_; }
+    PlayerColor currentTurn() const noexcept { return currentTurn_; }
+    std::shared_ptr<const IBoard> getBoard() const noexcept { return board_; }
+    const RealTimeArbiter& getArbiter() const noexcept { return arbiter_; }
+    const std::vector<MoveResult>& lastPremoveFailures() const noexcept { return premoveFailures_; }
+
+private:
+    void advanceTurn() noexcept;
+    MoveResult handlePremoveRegistration(const PiecePtr& piece, const Position& from, const Position& to) noexcept;
+    std::shared_ptr<IBoard> board_;
+    std::shared_ptr<RuleEngine> ruleEngine_;
+    std::shared_ptr<IPromotionRule> promotionRule_;
+    GameConfig config_;
+    RealTimeArbiter arbiter_;
+    PremoveQueue premoveQueue_;
+    int currentTimeMs_ = 0;
+    bool gameOver_ = false;
+    PlayerColor currentTurn_ = PlayerColor::White;
+    PiecePtr pendingTurnPiece_;   // הכלי שהפעיל החלפת תור — לצורך איפוס לאחר צינון
+    std::vector<MoveResult> premoveFailures_;
+};
+
+}  // namespace kungfu
+</file>
+
+<file path="core/engine/IGameEngine.hpp">
+// include/engine/IGameEngine.hpp
+#pragma once
+
+#include <string>
+#include <optional>
+#include "core/common/Position.hpp"
+#include "core/common/Enums.hpp"
+#include "core/common/MoveResult.hpp"
+
+namespace kungfu {
+
+class IGameEngine {
+public:
+    virtual ~IGameEngine() = default;
+
+    virtual MoveResult requestMove(const Position& from, const Position& to) = 0;
+    virtual bool hasPieceAt(const Position& pos) const = 0;
+    virtual int getBoardRows() const = 0;
+    virtual int getBoardCols() const = 0;
+    virtual std::optional<PlayerColor> getPieceColorAt(const Position& pos) const = 0;
+};
+
+}  // namespace kungfu
+</file>
+
+<file path="core/engine/PremoveQueue.cpp">
+#include "core/engine/PremoveQueue.hpp"
+#include "core/common/Enums.hpp"
+#include <algorithm>
+
+namespace kungfu {
+
+void PremoveQueue::registerOrUpdate(const PiecePtr& piece, const Position& to) {
+    auto it = std::find_if(entries_.begin(), entries_.end(), [&](const auto& pair) {
+        return pair.first == piece;
+    });
+
+    if (it != entries_.end()) {
+        it->second = to;
+    } else {
+        entries_.push_back({piece, to});
+    }
+}
+
+void PremoveQueue::cancel(const PiecePtr& piece) noexcept {
+    entries_.erase(
+        std::remove_if(entries_.begin(), entries_.end(),
+            [&](const auto& pair) { return pair.first == piece; }),
+        entries_.end()
+    );
+}
+
+void PremoveQueue::replacePiece(const PiecePtr& oldPiece, const PiecePtr& newPiece) noexcept {
+    for (auto& entry : entries_) {
+        if (entry.first == oldPiece) {
+            entry.first = newPiece;
+        }
+    }
+}
+
+void PremoveQueue::processReady(const PieceBusyPredicate& isBusy, const MoveExecutor& execute) {
+    for (auto it = entries_.begin(); it != entries_.end(); ) {
+        auto piece = it->first;
+        auto to = it->second;
+
+        if (!piece || piece->state() == PieceState::Captured) {
+            it = entries_.erase(it);
+            continue;
+        }
+
+        if (!isBusy(piece)) {
+            execute(piece->position(), to);
+            it = entries_.erase(it);
+            continue;
+        }
+
+        ++it;
+    }
+}
+
+}  // namespace kungfu
+</file>
+
+<file path="core/engine/PremoveQueue.hpp">
+#pragma once
+
+#include <vector>
+#include <functional>
+#include "core/board/Piece.hpp"
+#include "core/common/Position.hpp"
+#include "core/engine/IGameEngine.hpp"
+
+namespace kungfu {
+
+using PieceBusyPredicate = std::function<bool(const PiecePtr&)>;
+using MoveExecutor = std::function<MoveResult(const Position& from, const Position& to)>;
+
+class PremoveQueue {
+public:
+    // רושמת premove חדש, או מעדכנת premove קיים לאותו כלי.
+    // רק היעד (to) נשמר - הביצוע תמיד ישתמש במיקום החי של הכלי כ-from,
+    // כי הכלי עשוי לזוז בינתיים (למשל אחרי שהמהלך הקודם שלו נחת).
+    void registerOrUpdate(const PiecePtr& piece, const Position& to);
+
+    // מבטלת premove קיים לכלי נתון (אם קיים).
+    // נקראת כאשר השחקן מבצע מהלך לא חוקי – הכוונה לדרוס ולבטל את ה-premove.
+    void cancel(const PiecePtr& piece) noexcept;
+
+    void replacePiece(const PiecePtr& oldPiece, const PiecePtr& newPiece) noexcept;
+    
+    void processReady(const PieceBusyPredicate& isBusy, const MoveExecutor& execute);
+
+    bool empty() const noexcept { return entries_.empty(); }
+    size_t size() const noexcept { return entries_.size(); }
+
+private:
+    std::vector<std::pair<PiecePtr, Position>> entries_;
+};
+
+}  // namespace kungfu
+</file>
+
+<file path="core/input/BoardMapper.cpp">
+#include "core/input/BoardMapper.hpp"
+
+namespace kungfu {
+
+BoardMapper::BoardMapper(int cellSize) : cellSize_(cellSize) {}
+
+std::optional<Position> BoardMapper::pixelToCell(int x, int y, int rows, int cols) const noexcept {
+    if (x < 0 || y < 0) {
+        return std::nullopt;
+    }
+
+    int col = x / cellSize_;
+    int row = y / cellSize_;
+
+    if (row >= 0 && row < rows && col >= 0 && col < cols) {
+        return Position(row, col);
+    }
+
+    return std::nullopt;
+}
+
+}  // namespace kungfu
+</file>
+
+<file path="core/input/BoardMapper.hpp">
+#pragma once
+
+#include <optional>
+#include "core/common/Position.hpp"
+#include "core/input/InputConfig.hpp"   
+
+namespace kungfu {
+
+class BoardMapper {
+public:
+    // שימוש בקבוע כערך ברירת מחדל
+    explicit BoardMapper(int cellSize = InputConfig::kDefaultCellSize);
+
+    std::optional<Position> pixelToCell(int x, int y, int rows, int cols) const noexcept;
+
+    void setCellSize(int cellSize) noexcept { cellSize_ = cellSize; }
+
+private:
+    int cellSize_;
+};
+
+}  // namespace kungfu
+</file>
+
+<file path="core/input/Controller.cpp">
+#include "core/input/Controller.hpp"
+#include "core/engine/IGameEngine.hpp"
+
+namespace kungfu {
+
+Controller::Controller(std::shared_ptr<IGameEngine> engine, int cellSize)
+    : engine_(std::move(engine)), mapper_(cellSize), selectedPosition_(std::nullopt) {}
+
+ControllerResult Controller::click(int x, int y) {
+    if (!engine_) {
+        return {false, "Engine reference is null"};
+    }
+
+    int rows = engine_->getBoardRows();
+    int cols = engine_->getBoardCols();
+    auto cellOpt = mapper_.pixelToCell(x, y, rows, cols);
+
+    // 1. קליק מחוץ לגבולות הלוח - התעלמות מוחלטת (אינו מבטל סימון קיים)
+    if (!cellOpt.has_value()) {
+        return {false, "Click outside board ignored"};
+    }
+
+    Position targetCell = cellOpt.value();
+
+    // 2. קליק בתוך הלוח כאשר כבר קיים כלי מסומן
+    if (selectedPosition_.has_value()) {
+        Position from = selectedPosition_.value();
+        
+        // מחליפים את הסימון רק אם לחצנו על כלי ידידותי אחר
+        if (from != targetCell && engine_->hasPieceAt(targetCell)) {
+            auto fromColor = engine_->getPieceColorAt(from);
+            auto targetColor = engine_->getPieceColorAt(targetCell);
+            if (fromColor.has_value() && targetColor.has_value() && fromColor.value() == targetColor.value()) {
+                selectedPosition_ = targetCell;
+                return {true, "Piece selection replaced"};
+            }
+        }
+        
+        // שליחת בקשת התנועה למנוע המשחק (כעת, לחיצה שנייה על אותו כלי תגיע לכאן ותפעיל קפיצה!)
+        auto moveResult = engine_->requestMove(from, targetCell);
+        
+        // פינוי הסימון באופן מיידי לאחר הניסיון
+        clearSelection();
+
+        if (moveResult.isAccepted) {
+            return {true, "Move requested: " + moveResult.reason};
+        } else {
+            return {true, "Move rejected: " + moveResult.reason};
+        }
+    }
+
+    // 3. קליק בתוך הלוח ללא כלי מסומן כרגע (קליק ראשון)
+    if (engine_->hasPieceAt(targetCell)) {
+        selectedPosition_ = targetCell;
+        return {true, "Piece selected"};
+    }
+
+    // התעלמות מקליק ראשון על משבצת ריקה
+    return {false, "Click on empty cell ignored"};
+}
+
+std::optional<Position> Controller::selectedPosition() const noexcept {
+    return selectedPosition_;
+}
+
+void Controller::clearSelection() noexcept {
+    selectedPosition_ = std::nullopt;
+}
+
+}  // namespace kungfu
+</file>
+
+<file path="core/input/Controller.hpp">
+#pragma once
+
+#include <memory>
+#include <optional>
+#include <string>
+#include "core/input/BoardMapper.hpp"
+#include "core/common/Position.hpp"
+#include "core/input/InputConfig.hpp" 
+
+namespace kungfu {
+
+class IGameEngine;
+
+struct ControllerResult {
+    bool actionTaken;
+    std::string description;
+};
+
+class Controller {
+public:
+    // שימוש בקבוע כערך ברירת מחדל
+    Controller(std::shared_ptr<IGameEngine> engine, int cellSize = InputConfig::kDefaultCellSize);
+
+    ControllerResult click(int x, int y);
+    std::optional<Position> selectedPosition() const noexcept;
+    void clearSelection() noexcept;
+    void setCellSize(int cellSize) noexcept { mapper_.setCellSize(cellSize); }
+private:
+    std::shared_ptr<IGameEngine> engine_;
+    BoardMapper mapper_;
+    std::optional<Position> selectedPosition_;
+};
+
+}  // namespace kungfu
+</file>
+
+<file path="core/input/InputConfig.hpp">
+#pragma once
+
+namespace kungfu {
+
+struct InputConfig {
+    static constexpr int kDefaultCellSize = 100;
+};
+
+}  // namespace kungfu
+</file>
+
+<file path="core/io/BoardParser.cpp">
+#include "core/io/BoardParser.hpp"
+#include "core/board/Piece.hpp"
+#include "core/common/PieceTokenCodec.hpp"
+#include <sstream>
+#include <algorithm>
+#include <cctype>
+
+namespace kungfu {
+
+std::vector<std::string> BoardParser::splitLines(const std::string& text) {
+    std::vector<std::string> lines;
+    std::string line;
+    std::istringstream stream(text);
+    while (std::getline(stream, line)) {
+        // הסרת רווחים מיותרים מקצוות השורה
+        line.erase(line.begin(), std::find_if(line.begin(), line.end(), [](unsigned char ch) {
+            return !std::isspace(ch);
+        }));
+        line.erase(std::find_if(line.rbegin(), line.rend(), [](unsigned char ch) {
+            return !std::isspace(ch);
+        }).base(), line.end());
+
+        if (!line.empty()) {
+            lines.push_back(line);
+        }
+    }
+    return lines;
+}
+
+std::vector<std::string> BoardParser::tokenize(const std::string& line) {
+    std::vector<std::string> tokens;
+    std::string token;
+    std::istringstream stream(line);
+    while (stream >> token) {
+        tokens.push_back(token);
+    }
+    return tokens;
+}
+
+bool BoardParser::isValidToken(const std::string& token) {
+    if (token == ".") return true;
+    if (token.size() != 2) return false;
+
+    char color = token[0];
+    bool validColor = (color == 'w' || color == 'b');
+
+    return validColor && PieceTokenCodec::fromChar(token[1]).has_value();
+}
+
+std::shared_ptr<Piece> BoardParser::createPiece(const std::string& token, const Position& pos) {
+    if (token == "." || token.size() < 2) {
+        return nullptr;
+    }
+
+    PlayerColor color = (token[0] == 'w') ? PlayerColor::White : PlayerColor::Black;
+    auto typeOpt = PieceTokenCodec::fromChar(token[1]);
+    if (!typeOpt.has_value()) {
+        return nullptr;
+    }
+
+    return std::make_shared<Piece>(typeOpt.value(), color, pos);
+}
+
+
+std::shared_ptr<Board> BoardParser::parse(const std::string& text) {
+    auto lines = splitLines(text);
+    if (lines.empty()) {
+        return nullptr;
+    }
+
+    int rows = static_cast<int>(lines.size());
+    std::vector<std::vector<std::string>> grid;
+    int cols = -1;
+
+    for (int r = 0; r < rows; ++r) {
+        auto tokens = tokenize(lines[r]);
+        if (tokens.empty()) {
+            return nullptr;
+        }
+        if (cols == -1) {
+            cols = static_cast<int>(tokens.size());
+        } else if (static_cast<int>(tokens.size()) != cols) {
+            // הלוח אינו מלבני תקין
+            return nullptr;
+        }
+        grid.push_back(tokens);
+    }
+
+    auto board = std::make_shared<Board>(rows, cols);
+
+    for (int r = 0; r < rows; ++r) {
+        for (int c = 0; c < cols; ++c) {
+            const std::string& token = grid[r][c];
+            if (!isValidToken(token)) {
+                return nullptr; // טוקן שגוי בלוח
+            }
+            auto piece = createPiece(token, Position(r, c));
+            if (piece) {
+                board->placePiece(piece, Position(r, c));
+            }
+        }
+    }
+
+    return board;
+}
+
+}  // namespace kungfu
+</file>
+
+<file path="core/io/BoardParser.hpp">
+#pragma once
+
+#include <string>
+#include <memory>
+#include <vector>
+#include "core/board/Board.hpp"
+
+namespace kungfu {
+
+class BoardParser {
+public:
+    // מפענח מחרוזת טקסט ומייצר אובייקט Board מוגדר דינמית.
+    // במקרה של קלט לא תקין, הפונקציה תחזיר nullptr (או תזרוק std::invalid_argument).
+    static std::shared_ptr<Board> parse(const std::string& text);
+
+private:
+    static std::vector<std::string> splitLines(const std::string& text);
+    static std::vector<std::string> tokenize(const std::string& line);
+    static bool isValidToken(const std::string& token);
+    static std::shared_ptr<Piece> createPiece(const std::string& token, const Position& pos);
+};
+
+}  // namespace kungfu
+</file>
+
+<file path="core/io/BoardPrinter.cpp">
+#include "core/io/BoardPrinter.hpp"
+#include "core/common/PieceTokenCodec.hpp"
+#include <sstream>
+#include <algorithm>
+
+namespace kungfu {
+
+// פונקציית עזר יחידה ואחידה לקריאת כלי (עבור ConstPiecePtr)
+std::string BoardPrinter::getPieceToken(const ConstPiecePtr& piece) {
+    if (!piece) {
+        return "."; // תו יחיד לייצוג משבצת ריקה
+    }
+
+    std::string token = (piece->color() == PlayerColor::White) ? "w" : "b";
+    token += PieceTokenCodec::toChar(piece->type());
+    return token;
+}
+
+// מימוש פונקציית ההדפסה הראשית
+std::string BoardPrinter::print(const Board& board) {
+    std::ostringstream out;
+    int rows = board.rows();
+    int cols = board.cols();
+
+    for (int r = 0; r < rows; ++r) {
+        for (int c = 0; c < cols; ++c) {
+            auto pieceOpt = board.pieceAt(Position(r, c));
+            
+            if (pieceOpt.has_value()) {
+                // קריאה לפונקציה שמקבלת את ה-ConstPiecePtr שהתקבל מהלוח
+                out << getPieceToken(pieceOpt.value());
+            } else {
+                out << "."; // תו יחיד לייצוג משבצת ריקה
+            }
+            
+            if (c + 1 < cols) {
+                out << " "; // רווח בין משבצות באותה שורה
+            }
+        }
+        out << "\n";
+    }
+    return out.str();
+}
+
+}  // namespace kungfu
+</file>
+
+<file path="core/io/BoardPrinter.hpp">
+#pragma once
+
+#include <string>
+#include "core/board/Board.hpp"
+
+namespace kungfu {
+
+class BoardPrinter {
+public:
+    // מדפיס את המצב הלוגי הנוכחי של הלוח
+    static std::string print(const Board& board);
+
+private:
+    static std::string getPieceToken(const ConstPiecePtr& piece);
+};
+
+}  // namespace kungfu
+</file>
+
+<file path="core/realtime/CollisionDetector.cpp">
+#include "core/realtime/CollisionDetector.hpp"
+#include <algorithm>
+
+namespace kungfu
+{
+    namespace
+    {
+
+        // בדיקת חפיפת זמנים פשוטה
+        bool hasTimeOverlap(const kungfu::Motion &m1, const kungfu::Motion &m2) noexcept
+        {
+            int maxStart = std::max(m1.startTime(), m2.startTime());
+            int minArrival = std::min(m1.arrivalTime(), m2.arrivalTime());
+            return maxStart < minArrival;
+        }
+
+        // בדיקת חפיפת קופסה חוסמת (Bounding Box) במרחב הלוח
+        bool hasBoundingBoxOverlap(const kungfu::Motion &m1, const kungfu::Motion &m2) noexcept
+        {
+            int minRow1 = std::min(m1.from().row(), m1.to().row());
+            int maxRow1 = std::max(m1.from().row(), m1.to().row());
+            int minCol1 = std::min(m1.from().col(), m1.to().col());
+            int maxCol1 = std::max(m1.from().col(), m1.to().col());
+
+            int minRow2 = std::min(m2.from().row(), m2.to().row());
+            int maxRow2 = std::max(m2.from().row(), m2.to().row());
+            int minCol2 = std::min(m2.from().col(), m2.to().col());
+            int maxCol2 = std::max(m2.from().col(), m2.to().col());
+
+            return !(maxRow1 < minRow2 || minRow1 > maxRow2 || maxCol1 < minCol2 || minCol1 > maxCol2);
+        }
+
+    } // namespace
+
+    // פונקציית עזר שמחזירה את רשימת המשבצות שבהן הכלי עובר (כולל start ו-end)
+    std::vector<Position> getDetailedPath(const Position &from, const Position &to)
+    {
+        std::vector<Position> path;
+        path.push_back(from);
+
+        int dr = to.row() - from.row();
+        int dc = to.col() - from.col();
+        if (dr == 0 && dc == 0)
+            return path;
+
+        int stepR = (dr > 0) ? 1 : ((dr < 0) ? -1 : 0);
+        int stepC = (dc > 0) ? 1 : ((dc < 0) ? -1 : 0);
+
+        int curR = from.row() + stepR;
+        int curC = from.col() + stepC;
+
+        while (curR != to.row() || curC != to.col())
+        {
+            path.emplace_back(curR, curC);
+            curR += stepR;
+            curC += stepC;
+        }
+        path.push_back(to);
+        return path;
+    }
+
+    std::vector<MidRouteCollision> CollisionDetector::detectMidRouteCollisions(
+        const std::vector<Motion> &activeMotions,
+        const GameConfig &config) noexcept
+    {
+        std::vector<MidRouteCollision> collisions;
+        if (!config.allowSimultaneousMovement || activeMotions.size() < 2)
+        {
+            return collisions;
+        }
+
+        for (size_t i = 0; i < activeMotions.size(); ++i)
+        {
+            for (size_t j = i + 1; j < activeMotions.size(); ++j)
+            {
+                const auto &m1 = activeMotions[i];
+                const auto &m2 = activeMotions[j];
+
+                // 1. סינון לפי סוג כלי (פרשים) ולפי מצב (Airborne = "לא שם")
+                if (m1.piece()->type() == PieceType::Knight || m2.piece()->type() == PieceType::Knight)
+                {
+                    continue;
+                }
+                if (m1.piece()->state() == PieceState::Airborne || m2.piece()->state() == PieceState::Airborne)
+                {
+                    continue;
+                }
+
+                // 2. סינון מהיר (Broad Phase): בדיקת חפיפת זמנים כוללת
+                if (!hasTimeOverlap(m1, m2))
+                {
+                    continue;
+                }
+
+                // 3. סינון מהיר (Broad Phase): בדיקת קופסה חוסמת מרחבית
+                if (!hasBoundingBoxOverlap(m1, m2))
+                {
+                    continue;
+                }
+
+                // 4. בדיקה מעמיקה (Narrow Phase) רק עבור זוגות רלוונטיים
+                if (auto collision = checkDetailedCollision(m1, m2))
+                {
+                    collisions.push_back(*collision);
+                }
+            }
+        }
+        return collisions;
+    }
+
+    std::optional<kungfu::MidRouteCollision> CollisionDetector::checkDetailedCollision(
+        const Motion &m1, const Motion &m2) noexcept
+    {
+        auto path1 = getDetailedPath(m1.from(), m1.to());
+        auto path2 = getDetailedPath(m2.from(), m2.to());
+
+        int duration1 = m1.arrivalTime() - m1.startTime();
+        int duration2 = m2.arrivalTime() - m2.startTime();
+
+        float timePerStep1 = (path1.size() > 1) ? (float)duration1 / (path1.size() - 1) : 0;
+        float timePerStep2 = (path2.size() > 1) ? (float)duration2 / (path2.size() - 1) : 0;
+
+        for (size_t idx1 = 0; idx1 < path1.size(); ++idx1)
+        {
+            for (size_t idx2 = 0; idx2 < path2.size(); ++idx2)
+            {
+                if (path1[idx1] == path2[idx2])
+                {
+
+                    int t1_enter = m1.startTime() + static_cast<int>(idx1 * timePerStep1);
+                    int t2_enter = m2.startTime() + static_cast<int>(idx2 * timePerStep2);
+
+                    int t1_exit = (idx1 == path1.size() - 1) ? m1.arrivalTime() + 100000 : m1.startTime() + static_cast<int>((idx1 + 1) * timePerStep1);
+                    int t2_exit = (idx2 == path2.size() - 1) ? m2.arrivalTime() + 100000 : m2.startTime() + static_cast<int>((idx2 + 1) * timePerStep2);
+
+                  
+                    if (std::max(t1_enter, t2_enter) < std::min(t1_exit, t2_exit))
+                    {
+                        // 1. מי שיצא לדרך מוקדם יותר (startTime נמוך יותר) הוא המנצח
+                        if (m1.startTime() < m2.startTime())
+                        {
+                            return MidRouteCollision{m1, m2}; // m1 הוא winner, m2 הוא loser
+                        }
+                        else if (m2.startTime() < m1.startTime())
+                        {
+                            return MidRouteCollision{m2, m1}; // m2 הוא winner, m1 הוא loser
+                        }
+                        else
+                        {
+                            // 2. שובר שוויון: אם הם יצאו בדיוק באותו זמן, מי שהגיע פיזית ראשון למשבצת המפגש מנצח
+                            if (t1_enter <= t2_enter)
+                            {
+                                return MidRouteCollision{m1, m2};
+                            }
+                            else
+                            {
+                                return MidRouteCollision{m2, m1};
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        return std::nullopt;
+    }
+    std::vector<Motion> CollisionDetector::detectArrivals(
+        const std::vector<Motion> &activeMotions,
+        int currentTimeMs) noexcept
+    {
+        std::vector<Motion> arrivals;
+        for (const auto &m : activeMotions)
+        {
+            if (currentTimeMs >= m.arrivalTime())
+            {
+                arrivals.push_back(m);
+            }
+        }
+        return arrivals;
+    }
+
+} // namespace kungfu
+</file>
+
+<file path="core/realtime/CollisionDetector.hpp">
+#pragma once
+
+#include <vector>
+#include <optional>
+#include "core/realtime/Motion.hpp"
+#include "core/common/GameConfig.hpp"
+
+namespace kungfu {
+
+struct MidRouteCollision {
+    Motion winner;
+    Motion loser;
+};
+
+// רכיב גיאומטרי טהור: אחראי אך ורק על איתור פיזי של חפיפות ונקודות מפגש
+class CollisionDetector {
+public:
+    static std::vector<MidRouteCollision> detectMidRouteCollisions(
+        const std::vector<Motion>& activeMotions,
+        const GameConfig& config
+    ) noexcept;
+
+    static std::vector<Motion> detectArrivals(
+        const std::vector<Motion>& activeMotions,
+        int currentTimeMs
+    ) noexcept;
+
+private:
+    // מתודת עזר פנימית לביצוע בדיקה מעמיקה (Narrow Phase) של התנגשות בין שני מסלולים
+    static std::optional<MidRouteCollision> checkDetailedCollision(
+        const Motion& m1, 
+        const Motion& m2
+    ) noexcept;
+};
+
+} // namespace kungfu
+</file>
+
+<file path="core/realtime/CooldownTracker.hpp">
+#pragma once
+
+#include <cstdint>
+#include <unordered_map>
+
+namespace kungfu {
+
+// אחראית בלעדית על מעקב אחר זמני צינון (cooldown) של כלים, לפי מזהה יציב (piece->id()).
+// אינה יודעת דבר על תנועה, לוח, או כללי משחק - רק "מתי כל כלי חופשי לפעול שוב".
+class CooldownTracker {
+public:
+    void setCooldown(std::uint64_t pieceId, int expiresAtMs) noexcept {
+        cooldowns_[pieceId] = expiresAtMs;
+    }
+
+    void clear(std::uint64_t pieceId) noexcept {
+        cooldowns_.erase(pieceId);
+    }
+
+    bool isOnCooldown(std::uint64_t pieceId, int currentTimeMs) const noexcept {
+        auto it = cooldowns_.find(pieceId);
+        if (it == cooldowns_.end()) {
+            return false;
+        }
+        return currentTimeMs < it->second;
+    }
+
+    size_t entryCount() const noexcept {
+        return cooldowns_.size();
+    }
+
+private:
+    std::unordered_map<std::uint64_t, int> cooldowns_;
+};
+
+}  // namespace kungfu
+</file>
+
+<file path="core/realtime/Motion.cpp">
+#include "core/realtime/Motion.hpp"
+
+namespace kungfu {
+
+Motion::Motion(PiecePtr piece, const Position& from, const Position& to, int startTimeMs, int durationMs) noexcept
+    : piece_(std::move(piece)), from_(from), to_(to), startTimeMs_(startTimeMs), arrivalTimeMs_(startTimeMs + durationMs) {}
+
+}  // namespace kungfu
+</file>
+
+<file path="core/realtime/Motion.hpp">
+#pragma once
+
+#include <memory>
+#include "core/common/Position.hpp"
+#include "core/board/Piece.hpp"
+
+namespace kungfu {
+
+class Motion {
+public:
+    Motion(PiecePtr piece, const Position& from, const Position& to, int startTimeMs, int durationMs) noexcept;
+
+    PiecePtr piece() const noexcept { return piece_; }
+    Position from() const noexcept { return from_; }
+    Position to() const noexcept { return to_; }
+    int startTime() const noexcept { return startTimeMs_; }
+    int arrivalTime() const noexcept { return arrivalTimeMs_; }
+
+private:
+    PiecePtr piece_;
+    Position from_;
+    Position to_;
+    int startTimeMs_;
+    int arrivalTimeMs_;
+};
+
+}  // namespace kungfu
+</file>
+
+<file path="core/realtime/RealTimeArbiter.cpp">
+// src/realtime/RealTimeArbiter.cpp
+#include "core/realtime/RealTimeArbiter.hpp"
+#include "core/realtime/CollisionDetector.hpp"
+#include "core/rules/CollisionResolver.hpp"
+#include "core/common/GameConfig.hpp"
+#include <algorithm>
+#include <cmath>
+
+namespace kungfu {
+
+RealTimeArbiter::RealTimeArbiter(std::shared_ptr<IBoard> board, GameConfig config) noexcept
+    : board_(std::move(board)), config_(std::move(config)) {}
+
+bool RealTimeArbiter::hasActiveMotion() const noexcept {
+    return !activeMotions_.empty();
+}
+
+void RealTimeArbiter::startMotion(PiecePtr piece, const Position& from, const Position& to, int currentTimeMs, int durationMs) noexcept {
+    activeMotions_.emplace_back(piece, from, to, currentTimeMs, durationMs);
+    // הכלי מתחיל בעמדת המקור; advanceTime יחשב ויעדכן מיקום אינטרפולטיבי בכל tick.
+}
+
+// מחשב את המשבצת הנוכחית של כלי בתנועה לפי הזמן שעבר (interpolation).
+// הכלי זזה משבצת אחת כל msPerCell מילישניות, החל מ-from ועד to.
+static Position interpolatePosition(const Motion& motion, int currentTimeMs, int msPerCell) noexcept {
+    if (motion.from() == motion.to()) {
+        return motion.from(); // קפיצה במקום - הכלי נשאר בעמדתו
+    }
+
+    int elapsed = currentTimeMs - motion.startTime();
+    if (elapsed <= 0) return motion.from();
+
+    int duration = motion.arrivalTime() - motion.startTime();
+    if (duration <= 0 || elapsed >= duration) return motion.to();
+
+    int fromR = motion.from().row(), fromC = motion.from().col();
+    int toR   = motion.to().row(),   toC   = motion.to().col();
+    int dr = toR - fromR, dc = toC - fromC;
+    int steps = std::max(std::abs(dr), std::abs(dc)); // מספר הצעדים הכולל
+    if (steps == 0) return motion.from();
+
+    // כל כמה מילישניות הכלי עושה צעד אחד
+    int msPerStep = duration / steps;
+    if (msPerStep <= 0) return motion.to();
+
+    int stepsDone = elapsed / msPerStep;
+    if (stepsDone >= steps) return motion.to();
+
+    int stepR = (dr > 0) ? 1 : (dr < 0 ? -1 : 0);
+    int stepC = (dc > 0) ? 1 : (dc < 0 ? -1 : 0);
+    return Position(fromR + stepR * stepsDone, fromC + stepC * stepsDone);
+}
+
+std::vector<ArrivalEvent> RealTimeArbiter::advanceTime(int ms, int& currentTimeMs, PromotionHandler promoteCallback) noexcept {
+    std::vector<ArrivalEvent> events;
+    currentTimeMs += ms;
+
+    CollisionResolver resolver(board_, cooldownTracker_, config_);
+
+    auto midRouteCollisions = CollisionDetector::detectMidRouteCollisions(activeMotions_, config_);
+    for (const auto& col : midRouteCollisions) {
+        if (col.winner.piece()->state() != PieceState::Captured &&
+            col.loser.piece()->state() != PieceState::Captured) {
+            resolver.resolveMidRouteCollision(col.winner, col.loser, currentTimeMs, events);
+        }
+    }
+
+    activeMotions_.erase(
+        std::remove_if(activeMotions_.begin(), activeMotions_.end(),
+            [](const Motion& m) { return m.piece()->state() == PieceState::Captured; }),
+        activeMotions_.end()
+    );
+
+    std::vector<Motion> dueMotions;
+    std::vector<Motion> remainingMotions;
+    dueMotions.reserve(activeMotions_.size());
+    remainingMotions.reserve(activeMotions_.size());
+
+    for (auto& m : activeMotions_) {
+        if (currentTimeMs >= m.arrivalTime()) {
+            dueMotions.push_back(std::move(m));
+        } else {
+            remainingMotions.push_back(std::move(m));
+        }
+    }
+    activeMotions_ = std::move(remainingMotions);
+
+    std::stable_sort(dueMotions.begin(), dueMotions.end(), [](const Motion& a, const Motion& b) noexcept {
+        return a.arrivalTime() < b.arrivalTime();
+    });
+
+    for (const auto& motion : dueMotions) {
+        if (motion.piece()->state() == PieceState::Captured) {
+            continue;
+        }
+
+        if (!resolver.resolveArrival(motion, currentTimeMs, events, promoteCallback)) {
+            activeMotions_.push_back(motion);
+        }
+    }
+
+    // עדכון מיקום אינטרפולטיבי — רק לכלים שעדיין בתנועה (לא הגיעו ביחידת הזמן הזו)
+    for (const auto& motion : activeMotions_) {
+        if (motion.from() != motion.to()) {
+            auto interpolated = interpolatePosition(motion, currentTimeMs, config_.msPerCellSpeed);
+            motion.piece()->setPosition(interpolated);
+        }
+    }
+
+    return events;
+}
+
+bool RealTimeArbiter::isOnCooldown(const PiecePtr& piece, int currentTimeMs) const noexcept {
+    if (!piece) return false;
+    return cooldownTracker_.isOnCooldown(piece->id(), currentTimeMs);
+}
+
+bool RealTimeArbiter::isPieceMoving(const PiecePtr& piece) const noexcept {
+    if (!piece) return false;
+    for (const auto& motion : activeMotions_) {
+        if (motion.piece() == piece) {
+            return true;
+        }
+    }
+    return false;
+}
+
+std::optional<Motion> RealTimeArbiter::getMotionForPiece(const ConstPiecePtr& piece) const noexcept {
+    if (!piece) {
+        return std::nullopt;
+    }
+    for (const auto& motion : activeMotions_) {
+        if (motion.piece() == piece) {
+            return motion;
+        }
+    }
+    return std::nullopt;
+}
+
+std::optional<PiecePtr> RealTimeArbiter::getPieceInTransitAt(const Position& pos) const noexcept {
+    for (const auto& m : activeMotions_) {
+        if (m.from() == pos || m.to() == pos) {
+            return m.piece();
+        }
+    }
+    return std::nullopt;
+}
+
+// מימוש בדיקת המצב הפיזיקלי בצורה מרוכזת (DIP) [1]
+bool RealTimeArbiter::isPieceBusy(const PiecePtr& piece, int currentTimeMs) const noexcept {
+    if (!piece) return false;
+    return isPieceMoving(piece) || 
+           piece->state() == PieceState::Airborne || 
+           isOnCooldown(piece, currentTimeMs);
+}
+
+// מימוש קביעת הזמנים ומצבי התנועה הפיזיקליים של הכלי (SRP) [1]
+MoveResult RealTimeArbiter::executeMove(PiecePtr piece, const Position& from, const Position& to, int currentTimeMs) noexcept {
+    if (from == to) {
+        piece->setState(PieceState::Airborne);
+        // כלי קופץ "עוזב" את המשבצת לוגית — מוצא מהלוח עד שינחת.
+        // כלים אחרים יכולים לשבת על המשבצת שלו; כשינחת הוא יאכל אותם.
+        board_->removePiece(piece);
+        startMotion(piece, from, to, currentTimeMs, config_.jumpDurationMs);
+        return {true, "jump_started"};
+    } else {
+        int dr = std::abs(to.row() - from.row());
+        int dc = std::abs(to.col() - from.col());
+        int distance = std::max(dr, dc);
+        int durationMs = distance * config_.msPerCellSpeed;
+
+        piece->setState(PieceState::Moving);
+        startMotion(piece, from, to, currentTimeMs, durationMs);
+        return {true, "ok"};
+    }
+}
+
+}  // namespace kungfu
+</file>
+
+<file path="core/realtime/RealTimeArbiter.hpp">
+// include/realtime/RealTimeArbiter.hpp
+#pragma once
+
+#include <memory>
+#include <optional>
+#include <vector>
+#include <functional>
+#include "core/realtime/Motion.hpp"
+#include "core/realtime/CooldownTracker.hpp"
+#include "core/board/IBoard.hpp"
+#include "core/common/GameConfig.hpp"
+#include "core/common/ArrivalEvent.hpp"
+#include "core/common/MoveResult.hpp"
+
+namespace kungfu {
+
+using PromotionHandler = std::function<PiecePtr(const PiecePtr&, const Position&)>;
+
+class RealTimeArbiter {
+public:
+    explicit RealTimeArbiter(std::shared_ptr<IBoard> board, GameConfig config = GameConfig{}) noexcept;
+    bool hasActiveMotion() const noexcept;
+    void startMotion(PiecePtr piece, const Position& from, const Position& to, int currentTimeMs, int durationMs) noexcept;
+    std::vector<ArrivalEvent> advanceTime(int ms, int& currentTimeMs, PromotionHandler promoteCallback = nullptr) noexcept;
+    bool isOnCooldown(const PiecePtr& piece, int currentTimeMs) const noexcept;
+    bool isPieceMoving(const PiecePtr& piece) const noexcept;
+    std::optional<Motion> getMotionForPiece(const ConstPiecePtr& piece) const noexcept;
+    std::optional<PiecePtr> getPieceInTransitAt(const Position& pos) const noexcept;
+    size_t cooldownEntryCount() const noexcept { return cooldownTracker_.entryCount(); }
+    // מתודות הניהול הפיזיקלי של תנועות הכלים
+    bool isPieceBusy(const PiecePtr& piece, int currentTimeMs) const noexcept;
+    MoveResult executeMove(PiecePtr piece, const Position& from, const Position& to, int currentTimeMs) noexcept;
+
+private:
+    std::shared_ptr<IBoard> board_;
+    std::vector<Motion> activeMotions_;
+    CooldownTracker cooldownTracker_;
+    GameConfig config_;
+};
+
+}  // namespace kungfu
+</file>
+
+<file path="core/rules/CollisionResolver.cpp">
+#include "core/rules/CollisionResolver.hpp"
+#include <cmath>
+#include <algorithm>
+
+namespace kungfu {
+
+// מוצא את המשבצת האחרונה הפנויה בנתיב מ-from לכיוון to (הליכה קדימה).
+// blockedPos הוא יעד של כלי אחר שגם הוא חוסם (למשל winner בהתנגשות ידידותית).
+Position findLastVacantPositionOnPath(
+    const Position& from,
+    const Position& to,
+    const std::shared_ptr<IBoard>& board,
+    const Position* blockedPos = nullptr
+) noexcept {
+    int dr = to.row() - from.row();
+    int dc = to.col() - from.col();
+
+    if (dr == 0 && dc == 0) {
+        return from;
+    }
+
+    int stepR = (dr > 0) ? 1 : ((dr < 0) ? -1 : 0);
+    int stepC = (dc > 0) ? 1 : ((dc < 0) ? -1 : 0);
+
+    Position last = from;
+    int curR = from.row() + stepR;
+    int curC = from.col() + stepC;
+
+    while (true) {
+        Position cur(curR, curC);
+
+        // משבצת חסומה על ידי כלי קיים על הלוח (שאינו airborne)
+        auto pieceOpt = board->pieceAt(cur);
+        bool occupiedByStationary = pieceOpt.has_value() &&
+                                    pieceOpt.value()->state() != PieceState::Airborne;
+
+        // משבצת חסומה על ידי יעד winner
+        bool occupiedByBlocked = (blockedPos != nullptr && cur == *blockedPos);
+
+        if (occupiedByStationary || occupiedByBlocked) {
+            break; // עצור לפני המשבצת החסומה
+        }
+
+        last = cur;
+
+        if (cur == to) break;
+        curR += stepR;
+        curC += stepC;
+    }
+
+    return last;
+}
+
+CollisionResolver::CollisionResolver(
+    std::shared_ptr<IBoard> board, 
+    CooldownTracker& cooldownTracker, 
+    const GameConfig& config
+) noexcept
+    : board_(std::move(board))
+    , cooldownTracker_(cooldownTracker)
+    , config_(config) {}
+
+void CollisionResolver::resolveMidRouteCollision(
+    const Motion& winner, // הכלי שיצא ראשון - שורד וממשיך במסלולו
+    const Motion& loser,  // הכלי שיצא שני (המאוחר) - מובס ונלכד
+    int currentTimeMs,
+    std::vector<ArrivalEvent>& events
+) noexcept {
+     if (winner.piece()->color() != loser.piece()->color()) {
+        Position collisionPos = loser.piece()->position();
+        loser.piece()->setState(PieceState::Captured);
+        cooldownTracker_.clear(loser.piece()->id());
+        // מחיקת הכלי לפי הזהות שלו
+        board_->removePiece(loser.piece()); 
+        events.push_back({loser.from(), collisionPos, loser.piece(), false, true});
+    }
+    // מקרה 2: כלים ידידותיים
+    else {
+        // הכלי שהגיע מאוחר יותר (loser) נחסם ונעצר במשבצת הפנויה האחרונה
+        Position winnerDest = winner.to();
+        Position stopPos = findLastVacantPositionOnPath(loser.from(), loser.to(), board_, &winnerDest);
+        
+        loser.piece()->setState(PieceState::Idle);
+        loser.piece()->setPosition(stopPos);
+        
+        cooldownTracker_.setCooldown(loser.piece()->id(), currentTimeMs + config_.cooldownDurationMs);
+        events.push_back({loser.from(), stopPos, loser.piece(), false, true});
+    }
+}
+
+bool CollisionResolver::resolveArrival(
+    const Motion& motion,
+    int currentTimeMs,
+    std::vector<ArrivalEvent>& events,
+    const PromotionHandler& promoteCallback
+) noexcept {
+    Position from = motion.from();
+    Position to = motion.to();
+    auto piece = motion.piece();
+
+    // מאפשרים הגעה מוקדמת רק אם משבצת הנחיתה בקפיצה במקום אכן פנויה
+    if (from == to && !board_->pieceAt(to).has_value()) {
+        piece->setState(PieceState::Idle);
+        piece->setPosition(to);
+        cooldownTracker_.setCooldown(piece->id(), motion.arrivalTime() + config_.cooldownDurationMs);
+        events.push_back({from, to, piece, false, false});
+        return true;
+    }
+
+    auto targetPieceOpt = board_->pieceAt(to);
+
+    // כלי airborne על משבצת היעד — הוא "לא שם" לוגית.
+    // הכלי המגיע יושב על המשבצת, והairborne יאכל אותו כשינחת.
+    if (targetPieceOpt.has_value() &&
+        targetPieceOpt.value() &&
+        targetPieceOpt.value()->state() == PieceState::Airborne) {
+        targetPieceOpt = std::nullopt;
+    }
+
+    // בדיקת חסימה על ידי כלי ידידותי ביעד
+    bool isFriendlyBlock = false;
+    if (targetPieceOpt.has_value() && targetPieceOpt.value()) {
+        auto targetPiece = targetPieceOpt.value();
+        if (targetPiece->color() == piece->color()) {
+            if (piece->type() != PieceType::Knight) { // פרשים מתעלמים מחסימות ידידותיות
+                isFriendlyBlock = true;
+            }
+        }
+    }
+
+    Position finalDestination = to;
+
+    if (isFriendlyBlock) {
+        if (from == to) {
+            // תיקון באג 3: קפיצה במקום שנחסמה על ידי כלי ידידותי - מציאת משבצת פנויה סמוכה
+            finalDestination = from;
+            for (int rOffset = -1; rOffset <= 1; ++rOffset) {
+                for (int cOffset = -1; cOffset <= 1; ++cOffset) {
+                    if (rOffset == 0 && cOffset == 0) continue;
+                    Position adj(from.row() + rOffset, from.col() + cOffset);
+                    if (adj.row() >= 0 && adj.row() < board_->rows() &&
+                        adj.col() >= 0 && adj.col() < board_->cols()) {
+                        if (!board_->pieceAt(adj).has_value()) {
+                            finalDestination = adj;
+                            break;
+                        }
+                    }
+                }
+                if (finalDestination != from) break;
+            }
+        } else {
+            finalDestination = findLastVacantPositionOnPath(from, to, board_);
+        }
+
+        piece->setState(PieceState::Idle);
+        piece->setPosition(finalDestination);
+        
+        // תיקון באג 5: שימוש בזמן הגעה תאורטי מדוייק של הכלי לצורך קביעת הצינון
+        cooldownTracker_.setCooldown(piece->id(), motion.arrivalTime() + config_.cooldownDurationMs);
+        
+        events.push_back({from, finalDestination, piece, false, true});
+        return true;
+    }
+
+    // נחיתה רגילה ללא חסימות ידידותיות
+    bool capturedKing = false;
+    if (targetPieceOpt.has_value() && targetPieceOpt.value()) {
+        auto targetPiece = targetPieceOpt.value();
+        if (targetPiece->type() == PieceType::King) {
+            capturedKing = true;
+        }
+        targetPiece->setState(PieceState::Captured);
+        cooldownTracker_.clear(targetPiece->id());
+        board_->removePiece(targetPiece);
+    }
+
+    piece->setPosition(finalDestination);
+    piece->setState(PieceState::Idle);
+    piece->markMoved();
+
+    PiecePtr finalPiece = piece;
+    if (promoteCallback) {
+        finalPiece = promoteCallback(piece, finalDestination);
+    }
+    if (finalPiece != piece) {
+        cooldownTracker_.clear(piece->id());
+    }
+    cooldownTracker_.setCooldown(finalPiece->id(), motion.arrivalTime() + config_.cooldownDurationMs);
+    events.push_back({from, finalDestination, finalPiece, capturedKing, false});
+
+    return true;
+}
+
+} // namespace kungfu
+</file>
+
+<file path="core/rules/CollisionResolver.hpp">
+#pragma once
+
+#include <memory>
+#include <vector>
+#include <functional>
+#include "core/board/IBoard.hpp"
+#include "core/realtime/Motion.hpp"
+#include "core/realtime/CooldownTracker.hpp"
+#include "core/realtime/RealTimeArbiter.hpp"
+#include "core/common/GameConfig.hpp"
+
+namespace kungfu {
+
+using PromotionHandler = std::function<PiecePtr(const PiecePtr&, const Position&)>;
+
+class CollisionResolver {
+public:
+    CollisionResolver(
+        std::shared_ptr<IBoard> board, 
+        CooldownTracker& cooldownTracker, 
+        const GameConfig& config
+    ) noexcept;
+
+    void resolveMidRouteCollision(
+        const Motion& winner, // הגיע ראשון (המוקדם)
+        const Motion& loser,  // הגיע שני (המאוחר)
+        int currentTimeMs,    // נוסף לצורך פתרון הצינון של המהלך הידידותי
+        std::vector<ArrivalEvent>& events
+    ) noexcept;
+
+    bool resolveArrival(
+        const Motion& motion,
+        int currentTimeMs,
+        std::vector<ArrivalEvent>& events,
+        const PromotionHandler& promoteCallback
+    ) noexcept;
+
+private:
+    std::shared_ptr<IBoard> board_;
+    CooldownTracker& cooldownTracker_;
+    GameConfig config_;
+};
+
+} // namespace kungfu
+</file>
+
+<file path="core/rules/IPieceRule.hpp">
+#pragma once
+
+#include <vector>
+#include "core/common/Position.hpp"
+#include "core/board/IBoard.hpp"
+#include "core/board/Piece.hpp"
+
+namespace kungfu {
+
+class IPieceRule {
+public:
+    virtual ~IPieceRule() = default;
+
+    // מחשבת ומחזירה את כל קואורדינטות היעד הגיאומטריות האפשריות עבור הכלי הנתון במצב הלוח הנוכחי.
+    virtual std::vector<Position> getLegalDestinations(const IBoard& board, const Piece& piece) const = 0;
+};
+
+}  // namespace kungfu
+</file>
+
+<file path="core/rules/IPromotionRule.hpp">
+#pragma once
+
+#include "core/board/Piece.hpp"
+#include "core/board/IBoard.hpp"
+#include "core/common/Position.hpp"
+
+namespace kungfu {
+
+class IPromotionRule {
+public:
+    virtual ~IPromotionRule() = default;
+
+    // בודקת האם הכלי הנתון זכאי להכתרה במיקום היעד, ובמידת הצורך
+    // מבצעת את ההחלפה בפועל בלוח ומחזירה את הכלי החדש.
+    // אם אין הכתרה - מחזירה את אותו piece שהתקבל ללא שינוי.
+    virtual PiecePtr maybePromote(const PiecePtr& piece, const Position& to, IBoard& board) const = 0;
+};
+
+}  // namespace kungfu
+</file>
+
+<file path="core/rules/PieceRules.cpp">
+// src/rules/PieceRules.cpp
+#include "core/rules/PieceRules.hpp"
+#include "core/common/GameConfig.hpp"
+#include <algorithm>
+#include <unordered_map>
+
+namespace kungfu {
+
+namespace {
+
+void getSlidingDestinations(const IBoard& board, const Piece& piece, int rowStep, int colStep, std::vector<Position>& dests) {
+    int r = piece.position().row() + rowStep;
+    int c = piece.position().col() + colStep;
+    int maxRows = board.rows();
+    int maxCols = board.cols();
+
+    while (r >= 0 && r < maxRows && c >= 0 && c < maxCols) {
+        Position target(r, c);
+        auto targetPieceOpt = board.pieceAt(target);
+
+        if (!targetPieceOpt.has_value()) {
+            dests.push_back(target);
+        } else {
+            if (targetPieceOpt.value()->color() != piece.color()) {
+                dests.push_back(target); 
+            }
+            break; 
+        }
+        r += rowStep;
+        c += colStep;
+    }
+}
+
+} // namespace
+
+// --- Rook ---
+std::vector<Position> RookRule::getLegalDestinations(const IBoard& board, const Piece& piece) const {
+    std::vector<Position> dests;
+    dests.reserve(14);
+    getSlidingDestinations(board, piece, 1, 0, dests);  
+    getSlidingDestinations(board, piece, -1, 0, dests); 
+    getSlidingDestinations(board, piece, 0, 1, dests);  
+    getSlidingDestinations(board, piece, 0, -1, dests); 
+    return dests;
+}
+
+// --- Bishop ---
+std::vector<Position> BishopRule::getLegalDestinations(const IBoard& board, const Piece& piece) const {
+    std::vector<Position> dests;
+    dests.reserve(13);
+    getSlidingDestinations(board, piece, 1, 1, dests);   
+    getSlidingDestinations(board, piece, 1, -1, dests);  
+    getSlidingDestinations(board, piece, -1, 1, dests);  
+    getSlidingDestinations(board, piece, -1, -1, dests); 
+    return dests;
+}
+
+// --- Queen ---
+std::vector<Position> QueenRule::getLegalDestinations(const IBoard& board, const Piece& piece) const {
+    std::vector<Position> dests;
+    dests.reserve(27);
+
+    const auto& rook = PieceRuleFactory::getRule(PieceType::Rook);
+    const auto& bishop = PieceRuleFactory::getRule(PieceType::Bishop);
+
+    auto rookDests = rook.getLegalDestinations(board, piece);
+    auto bishopDests = bishop.getLegalDestinations(board, piece);
+
+    dests.insert(dests.end(), rookDests.begin(), rookDests.end());
+    dests.insert(dests.end(), bishopDests.begin(), bishopDests.end());
+
+    return dests;
+}
+
+// --- Knight ---
+std::vector<Position> KnightRule::getLegalDestinations(const IBoard& board, const Piece& piece) const {
+    std::vector<Position> dests;
+    dests.reserve(8);
+
+    static const std::vector<std::pair<int, int>> knightOffsets = {
+        {2, 1}, {2, -1}, {-2, 1}, {-2, -1}, {1, 2}, {1, -2}, {-1, 2}, {-1, -2}
+    };
+
+    int currentRow = piece.position().row();
+    int currentCol = piece.position().col();
+    int maxRows = board.rows();
+    int maxCols = board.cols();
+
+    for (const auto& offset : knightOffsets) {
+        int r = currentRow + offset.first;
+        int c = currentCol + offset.second;
+
+        if (r >= 0 && r < maxRows && c >= 0 && c < maxCols) {
+            dests.push_back(Position(r, c));
+        }
+    }
+    return dests;
+}
+
+// --- King ---
+std::vector<Position> KingRule::getLegalDestinations(const IBoard& board, const Piece& piece) const {
+    std::vector<Position> dests;
+    dests.reserve(8);
+
+    int currentRow = piece.position().row();
+    int currentCol = piece.position().col();
+    int maxRows = board.rows();
+    int maxCols = board.cols();
+
+    for (int rOffset = -1; rOffset <= 1; ++rOffset) {
+        for (int cOffset = -1; cOffset <= 1; ++cOffset) {
+            if (rOffset == 0 && cOffset == 0) continue;
+
+            int r = currentRow + rOffset;
+            int c = currentCol + cOffset;
+
+            if (r >= 0 && r < maxRows && c >= 0 && c < maxCols) {
+                Position target(r, c);
+                auto targetPieceOpt = board.pieceAt(target);
+                if (!targetPieceOpt.has_value() || targetPieceOpt.value()->color() != piece.color()) {
+                    dests.push_back(target);
+                }
+            }
+        }
+    }
+    return dests;
+}
+
+// --- Pawn (Simplified) ---
+std::vector<Position> PawnRule::getLegalDestinations(const IBoard& board, const Piece& piece) const {
+    std::vector<Position> dests;
+    dests.reserve(4);
+
+    int currentRow = piece.position().row();
+    int currentCol = piece.position().col();
+    int maxRows = board.rows();
+    int maxCols = board.cols();
+
+    int direction = (piece.color() == PlayerColor::White) ? 1 : -1;
+
+    int nextRow = currentRow + direction;
+    if (nextRow >= 0 && nextRow < maxRows) {
+        Position forward(nextRow, currentCol);
+        bool isForwardEmpty = !board.pieceAt(forward).has_value();
+
+        if (isForwardEmpty) {
+            dests.push_back(forward);
+        }
+
+        if (!piece.hasMoved()) {
+            int doubleRow = currentRow + 2 * direction;
+            if (doubleRow >= 0 && doubleRow < maxRows) {
+                Position doubleForward(doubleRow, currentCol);
+                if (isForwardEmpty && !board.pieceAt(doubleForward).has_value()) {
+                    dests.push_back(doubleForward);
+                }
+            }
+        }
+
+        for (int cOffset : {-1, 1}) {
+            int nextCol = currentCol + cOffset;
+            if (nextCol >= 0 && nextCol < maxCols) {
+                Position diagonal(nextRow, nextCol);
+                auto targetPieceOpt = board.pieceAt(diagonal);
+                if (targetPieceOpt.has_value() && targetPieceOpt.value()->color() != piece.color()) {
+                    dests.push_back(diagonal);
+                }
+            }
+        }
+    }
+
+    return dests;
+}
+
+// --- PieceRuleFactory Dynamic Registry Implementation ---
+static std::unordered_map<PieceType, std::unique_ptr<IPieceRule>>& getRegistry() noexcept {
+    static std::unordered_map<PieceType, std::unique_ptr<IPieceRule>> registry;
+    if (registry.empty()) {
+        registry[PieceType::Rook] = std::make_unique<RookRule>();
+        registry[PieceType::Bishop] = std::make_unique<BishopRule>();
+        registry[PieceType::Queen] = std::make_unique<QueenRule>();
+        registry[PieceType::Knight] = std::make_unique<KnightRule>();
+        registry[PieceType::King] = std::make_unique<KingRule>();
+        registry[PieceType::Pawn] = std::make_unique<PawnRule>();
+    }
+    return registry;
+}
+
+const IPieceRule& PieceRuleFactory::getRule(PieceType type) noexcept {
+    auto& reg = getRegistry();
+    auto it = reg.find(type);
+    if (it != reg.end() && it->second) {
+        return *(it->second);
+    }
+    static const PawnRule defaultRule;
+    return defaultRule;
+}
+
+void PieceRuleFactory::registerRule(PieceType type, std::unique_ptr<IPieceRule> rule) noexcept {
+    getRegistry()[type] = std::move(rule);
+}
+
+}  // namespace kungfu
+</file>
+
+<file path="core/rules/PieceRules.hpp">
+// include/rules/PieceRules.hpp
+#pragma once
+
+#include "core/rules/IPieceRule.hpp"
+#include <memory>
+
+namespace kungfu {
+
+class RookRule : public IPieceRule {
+public:
+    std::vector<Position> getLegalDestinations(const IBoard& board, const Piece& piece) const override;
+};
+
+class BishopRule : public IPieceRule {
+public:
+    std::vector<Position> getLegalDestinations(const IBoard& board, const Piece& piece) const override;
+};
+
+class QueenRule : public IPieceRule {
+public:
+    std::vector<Position> getLegalDestinations(const IBoard& board, const Piece& piece) const override;
+};
+
+class KnightRule : public IPieceRule {
+public:
+    std::vector<Position> getLegalDestinations(const IBoard& board, const Piece& piece) const override;
+};
+
+class KingRule : public IPieceRule {
+public:
+    std::vector<Position> getLegalDestinations(const IBoard& board, const Piece& piece) const override;
+};
+
+class PawnRule : public IPieceRule {
+public:
+    std::vector<Position> getLegalDestinations(const IBoard& board, const Piece& piece) const override;
+};
+
+class PieceRuleFactory {
+public:
+    // מחזיר הפנייה לחוק המתאים לסוג הכלי, תומך ברישום דינמי של חוקים (עמידה ב-OCP)
+    static const IPieceRule& getRule(PieceType type) noexcept;
+    static void registerRule(PieceType type, std::unique_ptr<IPieceRule> rule) noexcept;
+};
+
+}  // namespace kungfu
+</file>
+
+<file path="core/rules/PromotionRules.cpp">
+#include "core/rules/PromotionRules.hpp"
+
+namespace kungfu {
+
+PiecePtr ChessPromotionRule::maybePromote(const PiecePtr& piece, const Position& to, IBoard& board) const {
+    if (!piece || piece->type() != PieceType::Pawn) {
+        return piece;
+    }
+
+    bool reachedLastRow = (piece->color() == PlayerColor::White && to.row() == board.rows() - 1) ||
+                          (piece->color() == PlayerColor::Black && to.row() == 0);
+
+    if (!reachedLastRow) {
+        return piece;
+    }
+
+    auto queen = std::make_shared<Piece>(PieceType::Queen, piece->color(), to);
+    board.replacePiece(to, queen);
+    return queen;
+}
+
+}  // namespace kungfu
+</file>
+
+<file path="core/rules/PromotionRules.hpp">
+#pragma once
+
+#include "core/rules/IPromotionRule.hpp"
+
+namespace kungfu {
+
+// חוק הכתרה קלאסי: רגלי שמגיע לשורה האחרונה (יחסית לכיוון התקדמותו ולגובה הלוח בפועל)
+// הופך אוטומטית למלכה.
+class ChessPromotionRule : public IPromotionRule {
+public:
+    PiecePtr maybePromote(const PiecePtr& piece, const Position& to, IBoard& board) const override;
+};
+
+}  // namespace kungfu
+</file>
+
+<file path="core/rules/RuleEngine.cpp">
+#include "core/rules/RuleEngine.hpp"
+#include "core/rules/PieceRules.hpp"
+#include <algorithm>
+
+namespace kungfu {
+
+RuleEngine::RuleEngine(std::shared_ptr<IBoard> board) noexcept : board_(std::move(board)) {}
+
+MoveValidation RuleEngine::validateMove(const Position& from, const Position& to) const {
+    if (!board_) {
+        return {false, "internal_error"};
+    }
+
+    int maxRows = board_->rows();
+    int maxCols = board_->cols();
+
+    // 1. בדיקת גבולות לוח
+    auto isOutOfBounds = [maxRows, maxCols](const Position& pos) noexcept {
+        return pos.row() < 0 || pos.row() >= maxRows || pos.col() < 0 || pos.col() >= maxCols;
+    };
+
+    if (isOutOfBounds(from) || isOutOfBounds(to)) {
+        return {false, "outside_board"};
+    }
+
+    // 2. בדיקה שיש כלי במיקום המוצא
+    auto sourcePieceOpt = board_->pieceAt(from);
+    if (!sourcePieceOpt.has_value() || !sourcePieceOpt.value()) {
+        return {false, "empty_source"};
+    }
+
+    auto piece = sourcePieceOpt.value();
+
+    // 3. מניעת תנועה לאותה משבצת בדיוק
+    if (from == to) {
+        return {false, "illegal_piece_move"};
+    }
+
+    // 4. מניעת פגיעה בכלי ידידותי ביעד – לא חל על פרש, שיכול לנחות על כל משבצת
+    if (piece->type() != PieceType::Knight) {
+        auto targetPieceOpt = board_->pieceAt(to);
+        if (targetPieceOpt.has_value() && targetPieceOpt.value()->color() == piece->color()) {
+            return {false, "friendly_destination"};
+        }
+    }
+
+    // 5. שאילתת חוקיות גיאומטרית מול ה-Strategy המתאים
+    const auto& rule = PieceRuleFactory::getRule(piece->type());
+    auto legalDestinations = rule.getLegalDestinations(*board_, *piece);
+
+    auto it = std::find(legalDestinations.begin(), legalDestinations.end(), to);
+    if (it != legalDestinations.end()) {
+        return {true, "ok"};
+    }
+
+    return {false, "illegal_piece_move"};
+}
+
+}  // namespace kungfu
+</file>
+
+<file path="core/rules/RuleEngine.hpp">
+#pragma once
+
+#include <memory>
+#include "core/board/IBoard.hpp"
+#include "core/common/Position.hpp"
+#include <string>
+
+namespace kungfu {
+
+struct MoveValidation {
+    bool isValid;
+    std::string reason;
+};
+
+class RuleEngine {
+public:
+    explicit RuleEngine(std::shared_ptr<IBoard> board) noexcept;
+
+    // בודק חוקיות מלאה של מהלך עבור הלוח הנוכחי ומחזיר שגיאות מובנות
+    MoveValidation validateMove(const Position& from, const Position& to) const;
+
+private:
+    std::shared_ptr<IBoard> board_;
+};
+
+}  // namespace kungfu
+</file>
+
+<file path="core/view/screens/ChessGameScreen.hpp">
+#pragma once
+
+#include "ui/framework/IScreen.hpp"
+#include "ui/framework/ScreenManager.hpp"
+#include "ui/components/CooldownBar.hpp"
+#include "core/engine/GameEngine.hpp"
+#include "core/input/Controller.hpp"
+#include "core/view/SnapshotBuilder.hpp"
+#include "core/io/BoardParser.hpp"
+#include "core/common/PieceTokenCodec.hpp"
+#include <memory>
+#include <iostream>
+#include <algorithm>
+
+class ChessGameScreen : public IScreen {
+private:
+    std::shared_ptr<kungfu::GameEngine> m_gameEngine;
+    std::shared_ptr<kungfu::Controller> m_controller;
+    CooldownBar m_cooldownBar;
+    
+    // מרחב הקואורדינטות הלוגי (1000x1000)
+    float m_logicalRangeX = 1000.0f;
+    float m_logicalRangeY = 1000.0f;
+
+public:
+    explicit ChessGameScreen(ScreenManager& manager) : IScreen(manager) {
+        // 1. הגדרת לוח שחמט סטנדרטי התחלתי
+        std::string startBoard = 
+            "wR wN wB wQ wK wB wN wR\n"
+            "wP wP wP wP wP wP wP wP\n"
+            ". . . . . . . .\n"
+            ". . . . . . . .\n"
+            ". . . . . . . .\n"
+            ". . . . . . . .\n"
+            "bP bP bP bP bP bP bP bP\n"
+            "bR bN bB bQ bK bB bN bR\n";
+
+        auto board = kungfu::BoardParser::parse(startBoard);
+        auto ruleEngine = std::make_shared<kungfu::RuleEngine>(board);
+        
+        // 2. אתחול מנוע המשחק והבקר (Controller)
+        m_gameEngine = std::make_shared<kungfu::GameEngine>(board, ruleEngine);
+        m_controller = std::make_shared<kungfu::Controller>(m_gameEngine);
+        
+        // 3. סנכרון גודל התא של הבקר עם מערכת הצירים הלוגית (1000 / 8 עמודות = 125)
+        int cols = board->cols();
+        int logicalCellSize = static_cast<int>(m_logicalRangeX / cols);
+        m_controller->setCellSize(logicalCellSize);
+    }
+
+    void onEnter() override {
+        std::cout << "Chess Game Screen Activated!" << std::endl;
+    }
+
+    void onExit() override {
+        std::cout << "Chess Game Screen Deactivated!" << std::endl;
+    }
+
+    void update(float deltaTime) override {
+        // המרת deltaTime (בשניות) למילישניות ועדכון מנוע המשחק בזמן אמת
+        int ms = static_cast<int>(deltaTime * 1000.0f);
+        m_gameEngine->wait(ms);
+    }
+
+    void draw(IRenderer& renderer) override {
+        // 1. ניקוי המסך לרקע כהה נעים
+        renderer.clear({30, 30, 40, 255});
+
+        auto board = m_gameEngine->getBoard();
+        int rows = board->rows();
+        int cols = board->cols();
+        
+        float cellWidth = m_logicalRangeX / cols;
+        float cellHeight = m_logicalRangeY / rows;
+
+        // 2. ציור לוח השחמט (משבצות בהירות וכהות)
+        for (int r = 0; r < rows; ++r) {
+            for (int c = 0; c < cols; ++c) {
+                Vector2D pos{c * cellWidth, r * cellHeight};
+                Vector2D size{cellWidth, cellHeight};
+                
+                Color cellColor = ((r + c) % 2 == 0) 
+                    ? Color{240, 217, 181, 255}   // קרם בהיר
+                    : Color{181, 136, 99, 255};    // חום עץ
+                
+                renderer.drawRectangle(pos, size, cellColor, true);
+            }
+        }
+
+        // 3. סימון והדגשת המשבצת שנבחרה כרגע על ידי השחקן
+        auto selectedOpt = m_controller->selectedPosition();
+        if (selectedOpt.has_value()) {
+            Vector2D pos{selectedOpt->col() * cellWidth, selectedOpt->row() * cellHeight};
+            Vector2D size{cellWidth, cellHeight};
+            renderer.drawRectangle(pos, size, {255, 255, 0, 80}, true); // צהוב חצי שקוף
+        }
+
+        // 4. בניית תמונת המצב (Snapshot) הכוללת את מיקומי הכלים (כולל תנועה חלקה)
+        auto snapshot = kungfu::view::SnapshotBuilder::build(
+            *board,
+            m_gameEngine->getArbiter(),
+            m_gameEngine->getCurrentTimeMs(),
+            m_gameEngine->isGameOver(),
+            selectedOpt,
+            cellWidth
+        );
+
+        // 5. ציור הכלים ומדי הצינון (Cooldowns)
+        for (const auto& pieceSnap : snapshot.pieces) {
+            // חישוב מרכז ורדיוס הציור של הכלי
+            Vector2D center{pieceSnap.pixelX + cellWidth / 2.0f, pieceSnap.pixelY + cellHeight / 2.0f};
+            float radius = std::min(cellWidth, cellHeight) * 0.35f;
+
+            // התאמת צבעים לפי צבע השחקן
+            Color pieceBg = (pieceSnap.color == kungfu::PlayerColor::White) ? Color{255, 255, 255, 255} : Color{45, 45, 45, 255};
+            Color pieceBorder = (pieceSnap.color == kungfu::PlayerColor::White) ? Color{0, 0, 0, 255} : Color{220, 220, 220, 255};
+            Color textCol = (pieceSnap.color == kungfu::PlayerColor::White) ? Color{0, 0, 0, 255} : Color{255, 255, 255, 255};
+
+            // א. ציור גוף הכלי (עיגול עם מסגרת)
+            renderer.drawCircle(center, radius, pieceBg, true);
+            renderer.drawCircle(center, radius, pieceBorder, false);
+
+            // ב. כתיבת תו הטוקן המייצג את סוג הכלי
+            char tokenChar = kungfu::PieceTokenCodec::toChar(pieceSnap.type);
+            std::string tokenStr(1, tokenChar);
+            renderer.drawText(tokenStr, {center.x - 10.0f, center.y + 10.0f}, 24, textCol);
+
+            // ג. זיהוי וציור מד הצינון (Cooldown) במידה והכלי בטעינה
+            auto boardPieces = board->pieces();
+            for (const auto& p : boardPieces) {
+                if (p && p->position() == pieceSnap.logicalPosition) {
+                    int currentMs = m_gameEngine->getCurrentTimeMs();
+                    if (m_gameEngine->getArbiter().isOnCooldown(std::const_pointer_cast<kungfu::Piece>(p), currentMs)) {
+                        // מדגם פשוט המראה חיווי ויזואלי של טעינה
+                        m_cooldownBar.draw(renderer, center, 0.6f); 
+                    }
+                }
+            }
+        }
+
+        // 6. חיווי מסך סוף משחק (Game Over)
+        if (snapshot.isGameOver) {
+            renderer.drawRectangle({0.0f, 400.0f}, {1000.0f, 200.0f}, {0, 0, 0, 200}, true);
+            renderer.drawText("GAME OVER", {330.0f, 515.0f}, 48, {255, 60, 60, 255});
+        }
+    }
+
+    void handleInput(const std::vector<InputEvent>& events) override {
+        for (const auto& event : events) {
+            if (event.type == InputEvent::Type::Mouse) {
+                const auto& mouse = event.mouse;
+                if (mouse.action == MouseEvent::Action::Press && mouse.button == MouseButton::Left) {
+                    // שליחת קואורדינטות לוגיות (0..1000) ישירות ל-Controller
+                    m_controller->click(static_cast<int>(mouse.logicalX), static_cast<int>(mouse.logicalY));
+                }
+            }
+            else if (event.type == InputEvent::Type::Keyboard) {
+                if (event.key.key == Key::Escape) {
+                    m_screenManager.popScreen();
+                }
+            }
+        }
+    }
+};
+</file>
+
+<file path="core/view/GameSnapshot.hpp">
+#pragma once
+
+#include <vector>
+#include <optional>
+#include "core/common/Position.hpp"
+#include "core/common/Enums.hpp"
+
+namespace kungfu {
+namespace view {
+
+struct PieceSnapshot {
+    PieceType type;
+    PlayerColor color;
+    Position logicalPosition;
+    PieceState state;
+    
+    // מיקומי ציור בפיקסלים לטובת ה-Renderer
+    float pixelX;
+    float pixelY;
+};
+
+struct GameSnapshot {
+    int boardCols;
+    int boardRows;
+    std::vector<PieceSnapshot> pieces;
+    std::optional<Position> selectedCell;
+    bool isGameOver;
+};
+
+}  // namespace view
+}  // namespace kungfu
+</file>
+
+<file path="core/view/IRenderer.hpp">
+#pragma once
+
+#include "core/view/GameSnapshot.hpp"
+
+namespace kungfu {
+namespace view {
+
+class IRenderer {
+public:
+    virtual ~IRenderer() = default;
+
+    // מקבל תמונת מצב ויזואלית ומצייר אותה למסך
+    virtual void render(const GameSnapshot& snapshot) = 0;
+};
+
+}  // namespace view
+}  // namespace kungfu
+</file>
+
+<file path="core/view/SnapshotBuilder.cpp">
+#include "core/view/SnapshotBuilder.hpp"
+#include <algorithm>
+
+namespace kungfu
+{
+    namespace view
+    {
+
+        GameSnapshot SnapshotBuilder::build(
+            const IBoard &board,
+            const RealTimeArbiter &arbiter,
+            int currentTimeMs,
+            bool gameOver,
+            std::optional<Position> selectedCell,
+            float cellSize) noexcept
+        {
+            GameSnapshot snap;
+            snap.boardCols = board.cols();
+            snap.boardRows = board.rows();
+            snap.isGameOver = gameOver;
+            snap.selectedCell = selectedCell;
+
+            for (const auto &piece : board.pieces())
+            {
+                if (!piece || piece->state() == PieceState::Captured)
+                {
+                    continue;
+                }
+
+                PieceSnapshot pSnap;
+                pSnap.type = piece->type();
+                pSnap.color = piece->color();
+                pSnap.logicalPosition = piece->position();
+                pSnap.state = piece->state();
+
+                float currentX = piece->position().col() * cellSize;
+                float currentY = piece->position().row() * cellSize;
+
+                pSnap.pixelX = currentX;
+                pSnap.pixelY = currentY;
+
+                if (piece->state() == PieceState::Moving || piece->state() == PieceState::Airborne)
+                {
+                    auto motionOpt = arbiter.getMotionForPiece(piece);
+                    if (motionOpt.has_value())
+                    {
+                        const auto &motion = motionOpt.value();
+                        float startX = motion.from().col() * cellSize;
+                        float startY = motion.from().row() * cellSize;
+                        float endX = motion.to().col() * cellSize;
+                        float endY = motion.to().row() * cellSize;
+
+                        int duration = motion.arrivalTime() - motion.startTime();
+                        if (duration > 0)
+                        {
+                            int elapsed = currentTimeMs - motion.startTime();
+                            float t = static_cast<float>(elapsed) / static_cast<float>(duration);
+                            t = std::max(0.0f, std::min(t, 1.0f));
+
+                            pSnap.pixelX = startX + t * (endX - startX);
+                            pSnap.pixelY = startY + t * (endY - startY);
+                        }
+                    }
+                }
+
+                snap.pieces.push_back(pSnap);
+            }
+
+            return snap;
+        }
+
+    } // namespace view
+} // namespace kungfu
+</file>
+
+<file path="core/view/SnapshotBuilder.hpp">
+#pragma once
+
+#include <optional>
+#include "core/view/GameSnapshot.hpp"
+#include "core/board/IBoard.hpp"
+#include "core/realtime/RealTimeArbiter.hpp"
+
+namespace kungfu {
+namespace view {
+
+class SnapshotBuilder {
+public:
+    static GameSnapshot build(
+        const IBoard& board,
+        const RealTimeArbiter& arbiter,
+        int currentTimeMs,
+        bool gameOver,
+        std::optional<Position> selectedCell,
+        float cellSize
+    ) noexcept;
+};
+
+}  // namespace view
+}  // namespace kungfu
+</file>
+
+<file path="graphics_impl/img_backend/ImgInputTranslator.hpp">
+#pragma once
+#include "ui/framework/InputEvents.hpp"
+#include <opencv2/opencv.hpp>
+#include <vector>
+#include <mutex>
+
+class ImgInputTranslator {
+private:
+    Vector2D m_logicalRange{1000.0f, 1000.0f};
+    
+    // מפתח לאחסון זמני של אירועי עכבר שמגיעים מה-Callback של OpenCV (המשתמש ב-Thread נפרד)
+    static std::vector<InputEvent> s_pendingMouseEvents;
+    static std::mutex s_eventsMutex;
+
+    // פונקציית ה-Callback הסטטית שמתקבלת מ-OpenCV
+    static void onMouse(int event, int x, int y, int flags, void* userdata) {
+        (void)flags;
+        auto* translator = static_cast<ImgInputTranslator*>(userdata);
+        if (!translator) return;
+
+        MouseEvent mouseEvent;
+        // תרגום קואורדינטות פיזיות לקואורדינטות לוגיות
+        Vector2D physicalSize = translator->getPhysicalWindowSize();
+        
+        mouseEvent.logicalX = (static_cast<float>(x) / physicalSize.x) * translator->m_logicalRange.x;
+        mouseEvent.logicalY = (static_cast<float>(y) / physicalSize.y) * translator->m_logicalRange.y;
+
+        bool relevantEvent = false;
+
+        switch (event) {
+            case cv::EVENT_MOUSEMOVE:
+                mouseEvent.action = MouseEvent::Action::Move;
+                mouseEvent.button = MouseButton::None;
+                relevantEvent = true;
+                break;
+
+            case cv::EVENT_LBUTTONDOWN:
+                mouseEvent.action = MouseEvent::Action::Press;
+                mouseEvent.button = MouseButton::Left;
+                relevantEvent = true;
+                break;
+
+            case cv::EVENT_LBUTTONUP:
+                mouseEvent.action = MouseEvent::Action::Release;
+                mouseEvent.button = MouseButton::Left;
+                relevantEvent = true;
+                break;
+
+            case cv::EVENT_RBUTTONDOWN:
+                mouseEvent.action = MouseEvent::Action::Press;
+                mouseEvent.button = MouseButton::Right;
+                relevantEvent = true;
+                break;
+
+            case cv::EVENT_RBUTTONUP:
+                mouseEvent.action = MouseEvent::Action::Release;
+                mouseEvent.button = MouseButton::Right;
+                relevantEvent = true;
+                break;
+
+            default:
+                break;
+        }
+
+        if (relevantEvent) {
+            std::lock_guard<std::mutex> lock(s_eventsMutex);
+            InputEvent ie;
+            ie.type = InputEvent::Type::Mouse;
+            ie.mouse = mouseEvent;
+            s_pendingMouseEvents.push_back(ie);
+        }
+    }
+
+    Vector2D m_windowSize{800.0f, 800.0f}; // גודל פיזי ברירת מחדל של החלון
+
+public:
+    ImgInputTranslator() = default;
+
+    // רישום ה-Callback לחלון של OpenCV
+    void registerWindow(const std::string& windowName, Vector2D windowSize) {
+        m_windowSize = windowSize;
+        cv::setMouseCallback(windowName, onMouse, this);
+    }
+
+    Vector2D getPhysicalWindowSize() const {
+        return m_windowSize;
+    }
+
+    void setPhysicalWindowSize(Vector2D size) {
+        m_windowSize = size;
+    }
+
+    /**
+     * אוסף את כל אירועי הקלט שהצטברו מהפריים האחרון (עכבר ומקלדת).
+     * @param keyResult תוצאת הקריאה ל-cv::waitKey בפריים הנוכחי (או -1 אם לא נלחץ מקש).
+     * @return וקטור המכיל את כל אירועי הקלט המתורגמים.
+     */
+    std::vector<InputEvent> pollEvents(int keyResult) {
+        std::vector<InputEvent> processedEvents;
+
+        // 1. שליפת אירועי העכבר שהצטברו בצורה בטוחה מרובוטיקת ה-Thread של ה-Callback
+        {
+            std::lock_guard<std::mutex> lock(s_eventsMutex);
+            processedEvents = std::move(s_pendingMouseEvents);
+            s_pendingMouseEvents.clear();
+        }
+
+        // 2. תרגום אירוע מקלדת (במידה ונלחץ מקש ב-OpenCV)
+        if (keyResult != -1) {
+            KeyEvent keyEvent;
+            keyEvent.rawCode = keyResult;
+            
+            // מיפוי בסיסי של מקשים שימושיים מתוך קודי ה-ASCII ש-OpenCV מחזיר
+            switch (keyResult & 0xFF) { // סינון מסכות קוד מקש בסיסי
+                case 27: // Escape key
+                    keyEvent.key = Key::Escape;
+                    break;
+                case 32: // Space
+                    keyEvent.key = Key::Space;
+                    break;
+                case 'w': case 'W':
+                    keyEvent.key = Key::W;
+                    break;
+                case 's': case 'S':
+                    keyEvent.key = Key::S;
+                    break;
+                case 'a': case 'A':
+                    keyEvent.key = Key::A;
+                    break;
+                case 'd': case 'D':
+                    keyEvent.key = Key::D;
+                    break;
+                default:
+                    keyEvent.key = Key::Unknown;
+                    break;
+            }
+
+            InputEvent ie;
+            ie.type = InputEvent::Type::Keyboard;
+            ie.key = keyEvent;
+            processedEvents.push_back(ie);
+        }
+
+        return processedEvents;
+    }
+};
+
+// אתחול המשתנים הסטטיים של המחלקה
+inline std::vector<InputEvent> ImgInputTranslator::s_pendingMouseEvents;
+inline std::mutex ImgInputTranslator::s_eventsMutex;
+</file>
+
+<file path="graphics_impl/img_backend/ImgRenderer.hpp">
+#pragma once
+#include "ui/framework/IRenderer.hpp"
+#include "ui/framework/AssetManager.hpp"
+#include "graphics_impl/img.hpp" 
+#include <opencv2/opencv.hpp>
+#include <algorithm>
+#include <string_view>
+
+// מימוש נכס תמונה עבור ה-AssetManager המבוסס על ה-Img שלכם
+class ImgTextureAsset : public IAsset {
+public:
+    Img image;
+    
+    explicit ImgTextureAsset(const std::string& filePath) {
+        image.read(filePath);
+    }
+};
+
+class ImgRenderer : public IRenderer {
+private:
+    Img& m_screenCanvas;                       // קנבס הציור הראשי של המשחק
+    Vector2D m_logicalRange{1000.0f, 1000.0f}; // מרחב הקואורדינטות הלוגי
+    AssetManager m_assetManager;
+
+    // המרת צבע לוגי ל-cv::Scalar של OpenCV (בפורמט BGRA/BGR)
+    cv::Scalar toCvScalar(Color color) const {
+        return cv::Scalar(color.b, color.g, color.r, color.a);
+    }
+
+    // תרגום קואורדינטה לוגית לנקודה פיזית על ה-cv::Mat
+    cv::Point toPhysical(Vector2D logicalPos) const {
+        Vector2D targetSize = getTargetSize();
+        return cv::Point(
+            static_cast<int>((logicalPos.x / m_logicalRange.x) * targetSize.x),
+            static_cast<int>((logicalPos.y / m_logicalRange.y) * targetSize.y)
+        );
+    }
+
+    // תרגום מימדים לוגיים למימדים פיזיים
+    cv::Size sizeToPhysical(Vector2D logicalSize) const {
+        Vector2D targetSize = getTargetSize();
+        return cv::Size(
+            static_cast<int>((logicalSize.x / m_logicalRange.x) * targetSize.x),
+            static_cast<int>((logicalSize.y / m_logicalRange.y) * targetSize.y)
+        );
+    }
+
+public:
+    explicit ImgRenderer(Img& screenCanvas) : m_screenCanvas(screenCanvas) {}
+
+    void beginFrame() override {
+        // הכנה לתחילת פריים (ניתן להוסיף לוגיקה במידת הצורך)
+    }
+
+    void clear(Color color) override {
+        if (!m_screenCanvas.is_loaded()) {
+            return;
+        }
+        // צביעת המטריצה כולה בצבע הרקע שנבחר
+        m_screenCanvas.mat().setTo(toCvScalar(color));
+    }
+
+    void endFrame() override {
+        // סיום פריים (למשל רענון חלון או כתיבה לדיסק)
+    }
+
+    void drawRectangle(Vector2D position, Vector2D size, Color color, bool fill) override {
+        if (!m_screenCanvas.is_loaded()) return;
+
+        cv::Point topLeft = toPhysical(position);
+        cv::Size physSize = sizeToPhysical(size);
+        cv::Point bottomRight(topLeft.x + physSize.width, topLeft.y + physSize.height);
+
+        int thickness = fill ? cv::FILLED : 1;
+        cv::rectangle(m_screenCanvas.mat(), topLeft, bottomRight, toCvScalar(color), thickness, cv::LINE_AA);
+    }
+
+    void drawLine(Vector2D start, Vector2D end, Color color, float thickness) override {
+        if (!m_screenCanvas.is_loaded()) return;
+
+        cv::Point p1 = toPhysical(start);
+        cv::Point p2 = toPhysical(end);
+
+        cv::line(m_screenCanvas.mat(), p1, p2, toCvScalar(color), static_cast<int>(thickness), cv::LINE_AA);
+    }
+
+    void drawCircle(Vector2D center, float radius, Color color, bool fill) override {
+        if (!m_screenCanvas.is_loaded()) return;
+
+        cv::Point physCenter = toPhysical(center);
+        // Scale radius the same way a width dimension is scaled, using a
+        // direct ratio rather than routing through sizeToPhysical (which
+        // would zero-out the result when the y-component is 0).
+        Vector2D targetSize = getTargetSize();
+        int r = static_cast<int>((radius / m_logicalRange.x) * targetSize.x);
+
+        int thickness = fill ? cv::FILLED : 1;
+        cv::circle(m_screenCanvas.mat(), physCenter, r, toCvScalar(color), thickness, cv::LINE_AA);
+    }
+
+    void drawSprite(std::string_view assetId, 
+                    Vector2D position, 
+                    Vector2D size, 
+                    float rotationDegrees,
+                    const Vector2D* srcOffset,
+                    const Vector2D* srcSize) override {
+        if (!m_screenCanvas.is_loaded()) return;
+
+        try {
+            auto& asset = m_assetManager.getAsset<ImgTextureAsset>(assetId);
+            if (!asset.image.is_loaded()) return;
+
+            cv::Point physPos = toPhysical(position);
+            cv::Size physSize = sizeToPhysical(size);
+
+            // במקרה שנדרשת תת-תמונה (Sprite Sheet / Atlas)
+            Img spriteToDraw;
+            if (srcOffset && srcSize) {
+                // חיתוך האזור הרלוונטי ממטריצת המקור
+                const cv::Mat& srcMat = asset.image.get_mat();
+                cv::Rect roi(
+                    static_cast<int>(srcOffset->x), 
+                    static_cast<int>(srcOffset->y), 
+                    static_cast<int>(srcSize->x), 
+                    static_cast<int>(srcSize->y)
+                );
+                
+                // יצירת אובייקט Img זמני עבור ה-ROI וחשיפת המטריצה שלו
+                cv::Mat cutMat = srcMat(roi).clone();
+                cv::resize(cutMat, cutMat, physSize, 0, 0, cv::INTER_LINEAR);
+
+                Img croppedImg;
+                croppedImg.mat() = cutMat;
+                spriteToDraw = croppedImg;
+            } else {
+                // לקיחת התמונה המלאה ושינוי גודלה לגודל הפיזי הנדרש
+                spriteToDraw = asset.image;
+                cv::Mat scaledMat;
+                cv::resize(spriteToDraw.get_mat(), scaledMat, physSize, 0, 0, cv::INTER_LINEAR);
+                spriteToDraw.mat() = scaledMat;
+            }
+
+            // ביצוע סיבוב לתמונה במידה וצוין (rotationDegrees != 0)
+            if (std::abs(rotationDegrees) > 0.01f) {
+                cv::Mat rotated;
+                cv::Point2f center(spriteToDraw.get_mat().cols / 2.0f, spriteToDraw.get_mat().rows / 2.0f);
+                cv::Mat rotationMatrix = cv::getRotationMatrix2D(center, -rotationDegrees, 1.0);
+                cv::warpAffine(spriteToDraw.get_mat(), rotated, rotationMatrix, spriteToDraw.get_mat().size(), cv::INTER_LINEAR, cv::BORDER_CONSTANT, cv::Scalar(0,0,0,0));
+                spriteToDraw.mat() = rotated;
+            }
+
+            // ציור ה-Sprite על גבי קנבס המסך הראשי
+            spriteToDraw.draw_on(m_screenCanvas, physPos.x, physPos.y);
+
+        } catch (...) {
+            // ציור מלבן ורוד חלופי (Fallback במקרה של שגיאה בטעינת הנכס)
+            drawRectangle(position, size, {255, 0, 255, 255}, true);
+        }
+    }
+
+    void drawText(std::string_view text, Vector2D position, int fontSize, Color color) override {
+        if (!m_screenCanvas.is_loaded()) return;
+
+        cv::Point physPos = toPhysical(position);
+        
+        // התאמת גודל הגופן של OpenCV (Scale) ביחס לגודל הלוגי המבוקש
+        double fontScale = fontSize / 24.0; 
+        
+        m_screenCanvas.put_text(
+            std::string(text), 
+            physPos.x, 
+            physPos.y, 
+            fontScale, 
+            toCvScalar(color), 
+            1
+        );
+    }
+
+    Vector2D getTargetSize() const override {
+        if (!m_screenCanvas.is_loaded()) {
+            return { 800.0f, 800.0f }; // ברירת מחדל בטוחה
+        }
+        const cv::Mat& mat = m_screenCanvas.get_mat();
+        return { static_cast<float>(mat.cols), static_cast<float>(mat.rows) };
+    }
+
+    AssetManager& getAssetManager() {
+        return m_assetManager;
+    }
+};
+</file>
+
+<file path="graphics_impl/img.cpp">
+#include "graphics_impl/img.hpp"
+#include <iostream>
+#include <stdexcept>
+
+Img::Img() {
+    // Constructor - img is automatically initialized as empty
+}
+
+Img& Img::read(const std::string& path,
+               const std::pair<int, int>& size,
+               bool keep_aspect,
+               int interpolation) {
+    img = cv::imread(path, cv::IMREAD_UNCHANGED);
+    if (img.empty()) {
+        throw std::runtime_error("Cannot load image: " + path);
+    }
+
+    if (size.first != 0 && size.second != 0) {  // Check if size is not empty
+        int target_w = size.first;
+        int target_h = size.second;
+        int h = img.rows;
+        int w = img.cols;
+
+        if (keep_aspect) {
+            double scale = std::min(static_cast<double>(target_w) / w, 
+                                   static_cast<double>(target_h) / h);
+            int new_w = static_cast<int>(w * scale);
+            int new_h = static_cast<int>(h * scale);
+            cv::resize(img, img, cv::Size(new_w, new_h), 0, 0, interpolation);
+        } else {
+            cv::resize(img, img, cv::Size(target_w, target_h), 0, 0, interpolation);
+        }
+    }
+
+    return *this;
+}
+
+void Img::draw_on(Img& other_img, int x, int y) {
+    if (img.empty() || other_img.img.empty()) {
+        throw std::runtime_error("Both images must be loaded before drawing.");
+    }
+
+    // Handle different channel counts
+    cv::Mat source_img = img;
+    cv::Mat target_img = other_img.img;
+    
+    if (source_img.channels() != target_img.channels()) {
+        if (source_img.channels() == 3 && target_img.channels() == 4) {
+            cv::cvtColor(source_img, source_img, cv::COLOR_BGR2BGRA);
+        } else if (source_img.channels() == 4 && target_img.channels() == 3) {
+            cv::cvtColor(source_img, source_img, cv::COLOR_BGRA2BGR);
+        }
+    }
+
+    int h = source_img.rows;
+    int w = source_img.cols;
+    int H = target_img.rows;
+    int W = target_img.cols;
+
+    if (y + h > H || x + w > W) {
+        throw std::runtime_error("Image does not fit at the specified position.");
+    }
+
+    cv::Mat roi = target_img(cv::Rect(x, y, w, h));
+
+    if (source_img.channels() == 4) {
+        // Alpha-blend BGRA source onto BGR/BGRA destination per-pixel.
+        // Split source into B, G, R, A planes (each is an h×w single-channel Mat).
+        std::vector<cv::Mat> srcPlanes;
+        cv::split(source_img, srcPlanes);
+
+        // Build a float alpha mask in [0,1] with the same spatial size as roi.
+        cv::Mat alphaMask;
+        srcPlanes[3].convertTo(alphaMask, CV_32F, 1.0 / 255.0);
+
+        // Split the destination ROI into its own channel planes.
+        std::vector<cv::Mat> dstPlanes;
+        cv::split(roi, dstPlanes);
+
+        // Blend each colour channel: dst = (1-a)*dst + a*src
+        for (int c = 0; c < 3; ++c) {
+            cv::Mat srcF, dstF;
+            srcPlanes[c].convertTo(srcF, CV_32F);
+            dstPlanes[c].convertTo(dstF, CV_32F);
+
+            cv::Mat blended = (1.0f - alphaMask).mul(dstF) + alphaMask.mul(srcF);
+            blended.convertTo(dstPlanes[c], CV_8U);
+        }
+
+        // If the destination has an alpha channel too, keep it fully opaque.
+        if (dstPlanes.size() == 4) {
+            dstPlanes[3].setTo(255);
+        }
+
+        cv::merge(dstPlanes, roi);
+    } else {
+        // Direct copy for BGR images (no transparency).
+        source_img.copyTo(roi);
+    }
+}
+
+void Img::put_text(const std::string& txt, int x, int y, double font_size,
+                   const cv::Scalar& color, int thickness) {
+    if (img.empty()) {
+        throw std::runtime_error("Image not loaded.");
+    }
+    
+    cv::putText(img, txt, cv::Point(x, y),
+                cv::FONT_HERSHEY_SIMPLEX, font_size,
+                color, thickness, cv::LINE_AA);
+}
+
+void Img::show() {
+    if (img.empty()) {
+        throw std::runtime_error("Image not loaded.");
+    }
+    
+    cv::imshow("Image", img);
+    cv::waitKey(0);
+    cv::destroyAllWindows();
+}
+</file>
+
+<file path="graphics_impl/img.hpp">
+#pragma once
+
+#include <opencv2/opencv.hpp>
+#include <string>
+#include <filesystem>
+
+class Img {
+public:
+    Img();
+    
+    /**
+     * Load image from path and optionally resize.
+     * 
+     * @param path Image file to load
+     * @param size Target size in pixels (width, height). If empty, keep original
+     * @param keep_aspect If true, shrink so the longer side fits size while preserving aspect ratio
+     * @param interpolation OpenCV interpolation flag (e.g., cv::INTER_AREA for shrink, cv::INTER_LINEAR for enlarge)
+     * @return Reference to this object for method chaining
+     */
+    Img& read(const std::string& path,
+              const std::pair<int, int>& size = {},
+              bool keep_aspect = false,
+              int interpolation = cv::INTER_AREA);
+    
+    /**
+     * Draw this image onto another image at position (x, y)
+     * 
+     * @param other_img The target image to draw on
+     * @param x X coordinate for top-left corner
+     * @param y Y coordinate for top-left corner
+     */
+    void draw_on(Img& other_img, int x, int y);
+    
+    /**
+     * Put text on the image
+     * 
+     * @param txt Text to draw
+     * @param x X coordinate for text position
+     * @param y Y coordinate for text position (baseline)
+     * @param font_size Font scale factor
+     * @param color Text color (BGR or BGRA)
+     * @param thickness Text thickness
+     */
+    void put_text(const std::string& txt, int x, int y, double font_size,
+                  const cv::Scalar& color = cv::Scalar(255, 255, 255, 255),
+                  int thickness = 1);
+    
+    /**
+     * Display the image in a window
+     */
+    void show();
+    
+    /**
+     * Get the underlying OpenCV Mat (read-only)
+     */
+    const cv::Mat& get_mat() const { return img; }
+
+    /**
+     * Get the underlying OpenCV Mat (read-write).
+     * Use this instead of const_cast when you need to write directly into
+     * the Mat (e.g. initialising the canvas from cv::Mat::zeros).
+     */
+    cv::Mat& mat() { return img; }
+
+    /**
+     * Check if image is loaded
+     */
+    bool is_loaded() const { return !img.empty(); }
+
+private:
+    cv::Mat img;
+};
+</file>
+
+<file path="ui/components/Button.hpp">
+// מחלקה זו מייצגת כפתור לוגי. היא מנהלת את המצב הוויזואלי שלו 
+// (רגיל, ריחופית - Hover, או לחוץ) ומזהה לחיצות במערכת הצירים הלוגית
+#pragma once
+#include "../framework/InputEvents.hpp"
+#include <string>
+#include <string_view>
+#include <functional>
+#include "ui/framework/IRenderer.hpp"
+
+class Button {
+private:
+    Vector2D m_position;
+    Vector2D m_size;
+    std::string m_text;
+    
+    Color m_normalColor{60, 60, 60, 255};
+    Color m_hoverColor{90, 90, 90, 255};
+    Color m_textColor{255, 255, 255, 255};
+    
+    bool m_isHovered = false;
+    std::function<void()> m_onClickCallback;
+
+public:
+    Button(Vector2D position, Vector2D size, std::string text, std::function<void()> onClickCallback)
+        : m_position(position), m_size(size), m_text(std::move(text)), m_onClickCallback(std::move(onClickCallback)) {}
+
+    // עדכון מצב הכפתור (למשל לצורך אנימציות עתידיות)
+    void update(float deltaTime) {
+        (void)deltaTime; // כרגע ללא שימוש
+    }
+
+    // ציור הכפתור באמצעות ה-Renderer האבסטרקטי
+    void draw(IRenderer& renderer) const {
+        Color currentBg = m_isHovered ? m_hoverColor : m_normalColor;
+        
+        // ציור הרקע של הכפתור
+        renderer.drawRectangle(m_position, m_size, currentBg, true);
+        
+        // ציור מסגרת דקה
+        renderer.drawRectangle(m_position, m_size, {120, 120, 120, 255}, false);
+        
+        // חישוב מיקום טקסט מקורב למרכז (ניתן לשפר בהתאם ליכולות רינדור הטקסט של ה-Renderer)
+        Vector2D textPos{m_position.x + 15.0f, m_position.y + (m_size.y * 0.3f)};
+        renderer.drawText(m_text, textPos, 16, m_textColor);
+    }
+
+    // טיפול בקלט ובדיקת אינטראקציה עם העכבר
+    void handleInput(const MouseEvent& mouseEvent) {
+        // בדיקה האם העכבר נמצא מעל שטח הכפתור הלוגי
+        m_isHovered = (mouseEvent.logicalX >= m_position.x && 
+                       mouseEvent.logicalX <= m_position.x + m_size.x &&
+                       mouseEvent.logicalY >= m_position.y && 
+                       mouseEvent.logicalY <= m_position.y + m_size.y);
+
+        // אם בוצעה לחיצה כשהעכבר מעל הכפתור, מפעילים את ה-Callback
+        if (m_isHovered && mouseEvent.action == MouseEvent::Action::Press && mouseEvent.button == MouseButton::Left) {
+            if (m_onClickCallback) {
+                m_onClickCallback();
+            }
+        }
+    }
+
+    // הגדרת צבעים מותאמים אישית
+    void setColors(Color normal, Color hover, Color text) {
+        m_normalColor = normal;
+        m_hoverColor = hover;
+        m_textColor = text;
+    }
+};
+</file>
+
+<file path="ui/components/CooldownBar.hpp">
+// מד צינון ויזואלי המיועד להצגה מעל או מתחת לכלי השחמט הפעילים. 
+// הוא מקבל את אחוז ההתקדמות ומצייר מלבן שמתמלא או מתרוקן בהתאם
+#pragma once
+#include "../framework/InputEvents.hpp"
+#include "ui/framework/IRenderer.hpp"
+
+class CooldownBar {
+private:
+    Vector2D m_size{40.0f, 6.0f}; // ממדים קבועים לוגיים של מד הצינון
+    Color m_backgroundColor{40, 40, 40, 200};
+    Color m_fillColor{0, 220, 100, 255}; // צבע ירוק למצב מוכן או טעינה
+    Color m_cooldownColor{220, 50, 50, 255}; // צבע אדום בזמן צינון פעיל
+
+public:
+    CooldownBar() = default;
+
+    /**
+     * ציור מד הצינון.
+     * @param renderer המצייר האבסטרקטי.
+     * @param centerPosition המיקום המרכזי של הכלי (המד יצוירו מעט מתחתיו).
+     * @param cooldownProgress ערך בין 0.0f ל-1.0f (כאשר 1.0f מייצג צינון מלא ופעיל, ו-0.0f מייצג כלי מוכן לתנועה).
+     */
+    void draw(IRenderer& renderer, Vector2D centerPosition, float cooldownProgress) const {
+        if (cooldownProgress <= 0.0f) {
+            return; // אם הכלי לא בצינון, אין צורך לצייר את המד
+        }
+
+        // חישוב מיקום המלבן כך שיהיה מיושר למרכז הכלי ומעט מתחתיו
+        Vector2D barPos{
+            centerPosition.x - (m_size.x / 2.0f),
+            centerPosition.y + 25.0f // היסט אנכי מתחת לכלי
+        };
+
+        // 1. ציור רקע המד (מלבן אפור כהה)
+        renderer.drawRectangle(barPos, m_size, m_backgroundColor, true);
+
+        // 2. חישוב רוחב החלק המלא לפי אחוז הצינון שנותר
+        float filledWidth = m_size.x * (1.0f - cooldownProgress);
+        Vector2D fillSize{filledWidth, m_size.y};
+
+        // 3. ציור מד המילוי (בצבע הצינון)
+        renderer.drawRectangle(barPos, fillSize, m_cooldownColor, true);
+
+        // 4. ציור מסגרת דקה סביב המד
+        renderer.drawRectangle(barPos, m_size, {200, 200, 200, 255}, false);
+    }
+
+    void setSize(Vector2D size) {
+        m_size = size;
+    }
+};
+</file>
+
+<file path="ui/framework/AssetManager.hpp">
+// רכיב זה משתמש בטכניקה של מחיקת טיפוסים (Type Erasure) על ידי החזקת מצביעים למחלקת בסיס ריקה IAsset
+// ה-AssetManager מאפשר לטעון כל משאב גרפי (כמו תמונות, גופנים או קטעי שמע) בצורה מנותקת,
+// ומספק גישה אליהם באמצעות ביצוע המרה דינמית (dynamic_cast) לטיפוס הקונקרטי רק בזמן הציור ב-Backend
+#pragma once
+#include <string>
+#include <unordered_map>
+#include <memory>
+#include <stdexcept>
+#include <string_view>
+#include <utility>
+#include <type_traits>
+
+// מחלקת בסיס ריקה לייצוג משאב מופשט בזיכרון
+class IAsset {
+public:
+    virtual ~IAsset() = default;
+};
+
+class AssetManager {
+private:
+    // מיפוי בין מזהה טקסטואלי ייחודי לבין המשאב המופשט שלו בזיכרון
+    std::unordered_map<std::string, std::unique_ptr<IAsset>> m_assets;
+
+public:
+    AssetManager() = default;
+    ~AssetManager() = default;
+
+    // מניעת העתקה של מנהל הנכסים כדי למנוע כפילויות משאבים ובעיות בעלות על זיכרון
+    AssetManager(const AssetManager&) = delete;
+    AssetManager& operator=(const AssetManager&) = delete;
+    
+    AssetManager(AssetManager&&) noexcept = default;
+    AssetManager& operator=(AssetManager&&) noexcept = default;
+
+    /**
+     * טעינה ורישום של משאב חדש במערכת.
+     * @tparam T סוג המשאב הקונקרטי (חייב לרשת מ-IAsset).
+     * @param assetId המזהה הטקסטואלי הייחודי שנשתמש בו לגישה למשאב.
+     * @param args הפרמטרים שיועברו לבנאי של המשאב הקונקרטי (למשל נתיב לקובץ).
+     */
+    template <typename T, typename... Args>
+    void loadAsset(const std::string& assetId, Args&&... args) {
+        static_assert(std::is_base_of_v<IAsset, T>, "T must derive from IAsset");
+        
+        if (m_assets.find(assetId) != m_assets.end()) {
+            return; // המשאב כבר קיים בזיכרון, אין צורך לטעון שוב
+        }
+
+        m_assets[assetId] = std::make_unique<T>(std::forward<Args>(args)...);
+    }
+
+    /**
+     * שליפת משאב מהמערכת וביצוע המרה לטיפוס המבוקש.
+     * @tparam T סוג המשאב הקונקרטי אליו אנו רוצים להמיר.
+     * @param assetId המזהה הטקסטואלי של המשאב.
+     */
+    template <typename T>
+    T& getAsset(std::string_view assetId) const {
+        static_assert(std::is_base_of_v<IAsset, T>, "T must derive from IAsset");
+        
+        auto it = m_assets.find(std::string(assetId));
+        if (it == m_assets.end()) {
+            throw std::runtime_error("Asset not found: " + std::string(assetId));
+        }
+
+        auto* casted = dynamic_cast<T*>(it->second.get());
+        if (!casted) {
+            throw std::runtime_error("Invalid asset type cast for: " + std::string(assetId));
+        }
+
+        return *casted;
+    }
+
+    // הסרת משאב ספציפי מהזיכרון
+    void unloadAsset(std::string_view assetId) {
+        m_assets.erase(std::string(assetId));
+    }
+
+    // ניקוי מוחלט של כל המשאבים הטעונים
+    void clear() {
+        m_assets.clear();
+    }
+};
+</file>
+
+<file path="ui/framework/IInputTranslator.hpp">
+// ממשק זה מגדיר כיצד קלט פיזי מתורגם לאירועים הגנריים של ה-UI במערכת הצירים הלוגית
+#pragma once
+#include "InputEvents.hpp"
+#include <vector>
+
+class IInputTranslator {
+public:
+    virtual ~IInputTranslator() = default;
+
+    // דגימה ועדכון של אירועי הקלט מהחלון הפיזי באותו פריים
+    virtual void pollEvents(std::vector<InputEvent>& outEvents) = 0;
+
+    // פונקציית עזר סטטית לתרגום קואורדינטות פיזיות ללוגיות
+    static Vector2D translateToLogical(Vector2D physicalPos, Vector2D windowSize, Vector2D logicalRange) {
+        Vector2D logicalPos{0.0f, 0.0f};
+        if (windowSize.x > 0.0f && windowSize.y > 0.0f) {
+            logicalPos.x = (physicalPos.x / windowSize.x) * logicalRange.x;
+            logicalPos.y = (physicalPos.y / windowSize.y) * logicalRange.y;
+        }
+        return logicalPos;
+    }
+};
+</file>
+
+<file path="ui/framework/InputEvents.hpp">
+// קובץ זה מגדיר את אירועי המקלדת והעכבר הלוגיים בצורה מנותקת לחלוטין מהספרייה הגרפית
+#pragma once
+
+// קואורדינטות דו-מימדיות גנריות
+struct Vector2D {
+    float x = 0.0f;
+    float y = 0.0f;
+};
+
+// צבע גנרי בפורמט RGBA
+struct Color {
+    unsigned char r = 255;
+    unsigned char g = 255;
+    unsigned char b = 255;
+    unsigned char a = 255;
+};
+
+// הגדרת מקשים גנריים התואמת את השימוש ב-Translator וב-main
+enum class Key {
+    Unknown,
+    Escape,
+    Space,
+    W, S, A, D,
+    Left, Right
+};
+
+// הגדרת כפתורי עכבר
+enum class MouseButton {
+    None,
+    Left,
+    Right,
+    Middle
+};
+
+// נתונים עבור אירועי מקלדת
+struct KeyEvent {
+    Key key;
+    int rawCode;
+};
+
+// נתונים עבור אירועי עכבר - משתמשים בקואורדינטות לוגיות בלבד
+struct MouseEvent {
+    enum class Action { Press, Release, Move };
+    Action action;
+    MouseButton button;
+    float logicalX;
+    float logicalY;
+};
+
+// אירוע קלט מאוחד המאפשר גישה נוחה וישירה לשדות
+struct InputEvent {
+    enum class Type { Mouse, Keyboard };
+    Type type;
+    MouseEvent mouse;
+    KeyEvent key;
+};
+</file>
+
+<file path="ui/framework/IRenderer.hpp">
+// זהו הממשק הטהור המגדיר את פקודות הציור הלוגיות של המערכת
+#pragma once
+#include "InputEvents.hpp"
+#include <string_view>
+
+class IRenderer {
+public:
+    virtual ~IRenderer() = default;
+
+    // מחזור חיים של פריים
+    virtual void beginFrame() = 0;
+    virtual void clear(Color color) = 0;
+    virtual void endFrame() = 0;
+
+    // פעולות ציור בסיסיות (פרימיטיביים)
+    virtual void drawRectangle(Vector2D position, Vector2D size, Color color, bool fill = true) = 0;
+    virtual void drawLine(Vector2D start, Vector2D end, Color color, float thickness = 1.0f) = 0;
+    virtual void drawCircle(Vector2D center, float radius, Color color, bool fill = true) = 0;
+
+    // ציור תמונה/טקסטורה מבוססת מזהה טקסטואלי
+    virtual void drawSprite(std::string_view assetId, 
+                            Vector2D position, 
+                            Vector2D size, 
+                            float rotationDegrees = 0.0f,
+                            const Vector2D* srcOffset = nullptr,
+                            const Vector2D* srcSize = nullptr) = 0;
+
+    // רינדור טקסט
+    virtual void drawText(std::string_view text, Vector2D position, int fontSize, Color color) = 0;
+
+    // קבלת ממדי חלון הציור הפיזי בפועל
+    virtual Vector2D getTargetSize() const = 0;
+};
+</file>
+
+<file path="ui/framework/IScreen.hpp">
+// ממשק הבסיס המגדיר את החוזה עבור כל מסך או תפריט במערכת
+#pragma once
+#include <vector>
+
+class IRenderer;
+struct InputEvent;
+class ScreenManager;
+
+class IScreen {
+protected:
+    ScreenManager& m_screenManager;
+
+public:
+    explicit IScreen(ScreenManager& manager) : m_screenManager(manager) {}
+    virtual ~IScreen() = default;
+
+    // נקרא בעת כניסה למסך או הפיכתו לפעיל בראש המחסנית
+    virtual void onEnter() = 0;
+    
+    // נקרא בעת עזיבת המסך או הסרתו מהמחסנית
+    virtual void onExit() = 0;
+
+    // עדכון הלוגיקה הפנימית של המסך (deltaTime בשניות)
+    virtual void update(float deltaTime) = 0;
+
+    // רינדור רכיבי המסך אל ה-Renderer
+    virtual void draw(IRenderer& renderer) = 0;
+
+    // עיבוד אירועי הקלט שהתקבלו בפריים הנוכחי
+    virtual void handleInput(const std::vector<InputEvent>& events) = 0;
+};
+</file>
+
+<file path="ui/framework/ScreenManager.hpp">
+// מנהל המסכים המחזיק את המחסנית ומבצע את פעולות המעבר בצורה בטוחה בסוף מחזור העדכון
+// (באמצעות מנגנון Pending Actions) כדי למנוע קריסות זיכרון
+#pragma once
+#include "IScreen.hpp"
+#include <vector>
+#include <memory>
+
+class IRenderer;
+struct InputEvent;
+
+class ScreenManager {
+private:
+    std::vector<std::unique_ptr<IScreen>> m_screens;
+
+    enum class PendingActionType { Push, Pop, Change };
+    struct PendingAction {
+        PendingActionType type;
+        std::unique_ptr<IScreen> screen;
+    };
+    std::vector<PendingAction> m_pendingActions;
+
+    void applyPendingActions() {
+        for (auto& action : m_pendingActions) {
+            switch (action.type) {
+                case PendingActionType::Push:
+                    m_screens.push_back(std::move(action.screen));
+                    m_screens.back()->onEnter();
+                    break;
+
+                case PendingActionType::Pop:
+                    if (!m_screens.empty()) {
+                        m_screens.back()->onExit();
+                        m_screens.pop_back();
+                    }
+                    break;
+
+                case PendingActionType::Change:
+                    while (!m_screens.empty()) {
+                        m_screens.back()->onExit();
+                        m_screens.pop_back();
+                    }
+                    m_screens.push_back(std::move(action.screen));
+                    m_screens.back()->onEnter();
+                    break;
+            }
+        }
+        m_pendingActions.clear();
+    }
+
+public:
+    ScreenManager() = default;
+    ~ScreenManager() {
+        while (!m_screens.empty()) {
+            m_screens.back()->onExit();
+            m_screens.pop_back();
+        }
+    }
+
+    // מניעת העתקה של מנהל המסכים
+    ScreenManager(const ScreenManager&) = delete;
+    ScreenManager& operator=(const ScreenManager&) = delete;
+
+    // מעבר למסך חדש וניקוי כל המחסנית
+    void changeScreen(std::unique_ptr<IScreen> newScreen) {
+        m_pendingActions.push_back({PendingActionType::Change, std::move(newScreen)});
+    }
+
+    // דחיפת מסך חדש מעל המסך הנוכחי (למשל תפריט השהיה)
+    void pushScreen(std::unique_ptr<IScreen> newScreen) {
+        m_pendingActions.push_back({PendingActionType::Push, std::move(newScreen)});
+    }
+
+    // הסרת המסך העליון וחזרה למסך הקודם
+    void popScreen() {
+        m_pendingActions.push_back({PendingActionType::Pop, nullptr});
+    }
+
+    // עדכון המסך הפעיל
+    void update(float deltaTime) {
+        applyPendingActions();
+        if (!m_screens.empty()) {
+            m_screens.back()->update(deltaTime);
+        }
+    }
+
+    // רינדור המסך הפעיל
+    void draw(IRenderer& renderer) {
+        if (!m_screens.empty()) {
+            m_screens.back()->draw(renderer);
+        }
+    }
+
+    // ניתוב קלט למסך הפעיל
+    void handleInput(const std::vector<InputEvent>& events) {
+        if (!m_screens.empty()) {
+            m_screens.back()->handleInput(events);
+        }
+    }
+
+    bool isEmpty() const {
+        return m_screens.empty() && m_pendingActions.empty();
+    }
+};
+</file>
+
+<file path="main.cpp">
+// src/main.cpp
+#include "graphics_impl/img_backend/ImgRenderer.hpp"
+#include "graphics_impl/img_backend/ImgInputTranslator.hpp"
+#include "ui/framework/ScreenManager.hpp"
+#include "core/view/screens/ChessGameScreen.hpp" 
+#include "graphics_impl/img.hpp"
+#include <chrono>
+#include <memory>
+#include <iostream>
+
+int main() {
+    try {
+        const std::string windowName = "Kung-Fu Chess Game";
+        const int windowWidth = 800;
+        const int windowHeight = 800;
+
+        // 1. אתחול קנבס הציור הראשי של חלון ה-OpenCV
+        Img screenCanvas;
+        screenCanvas.mat() = cv::Mat::zeros(windowHeight, windowWidth, CV_8UC4);
+
+        // 2. אתחול מנהלי התשתית
+        ImgRenderer renderer(screenCanvas);
+        ImgInputTranslator inputTranslator;
+        ScreenManager screenManager;
+
+        // 3. רישום החלון לקבלת אירועי עכבר ומקלדת מ-OpenCV
+        cv::namedWindow(windowName, cv::WINDOW_AUTOSIZE);
+        inputTranslator.registerWindow(windowName, {static_cast<float>(windowWidth), static_cast<float>(windowHeight)});
+
+        // 4. טעינת מסך השחמט האינטראקטיבי כמסך הראשי
+        screenManager.changeScreen(std::make_unique<ChessGameScreen>(screenManager));
+
+        // הצגת פריים ריק ראשוני כדי שהחלון יהיה גלוי לפני הכניסה ללולאה.
+        // בלי זה, WND_PROP_VISIBLE מחזיר 0 בפריים הראשון ויוצא מיד.
+        cv::imshow(windowName, screenCanvas.get_mat());
+        cv::waitKey(1); // נותן ל-OS להציג את החלון לפני שנבדוק visibility
+
+        // 5. לולאת המשחק הראשית (Main Game Loop) בזמן אמת
+        auto previousTime = std::chrono::high_resolution_clock::now();
+        bool running = true;
+
+        std::cout << "Starting main loop..." << std::endl;
+
+        while (running && !screenManager.isEmpty()) {
+            // חישוב Delta Time
+            auto currentTime = std::chrono::high_resolution_clock::now();
+            std::chrono::duration<float> elapsed = currentTime - previousTime;
+            previousTime = currentTime;
+            float deltaTime = elapsed.count();
+            if (deltaTime > 0.1f) deltaTime = 0.1f;
+
+            // א. איסוף וניתוב אירועי קלט
+            int keyResult = cv::waitKey(1);
+            std::vector<InputEvent> events = inputTranslator.pollEvents(keyResult);
+            screenManager.handleInput(events);
+
+            // ב. עדכון לוגיקה פיזיקלית וצינון של מנוע המשחק
+            screenManager.update(deltaTime);
+
+            // ג. רינדור הפריים הנוכחי אל ה-Canvas
+            renderer.beginFrame();
+            screenManager.draw(renderer);
+            renderer.endFrame();
+
+            // ד. הצגת התמונה הסופית על גבי החלון בעזרת OpenCV
+            cv::imshow(windowName, screenCanvas.get_mat());
+
+            // ה. בדיקת סגירת החלון על ידי מערכת ההפעלה
+            if (cv::getWindowProperty(windowName, cv::WND_PROP_VISIBLE) < 1.0) {
+                running = false;
+            }
+        }
+        std::cout << "Loop exited. running=" << running << " isEmpty=" << screenManager.isEmpty() << std::endl;
+
+        cv::destroyAllWindows();
+        std::cout << "Game Engine shut down cleanly." << std::endl;
+
+    } catch (const std::exception& e) {
+        std::cerr << "Critical Error: " << e.what() << std::endl;
+        return -1;
+    }
+
+    return 0;
+}
+</file>
+
+</files>
