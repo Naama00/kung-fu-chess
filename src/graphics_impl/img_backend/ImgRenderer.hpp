@@ -57,8 +57,7 @@ public:
             return;
         }
         // צביעת המטריצה כולה בצבע הרקע שנבחר
-        cv::Mat& mat = const_cast<cv::Mat&>(m_screenCanvas.get_mat());
-        mat.setTo(toCvScalar(color));
+        m_screenCanvas.mat().setTo(toCvScalar(color));
     }
 
     void endFrame() override {
@@ -72,10 +71,8 @@ public:
         cv::Size physSize = sizeToPhysical(size);
         cv::Point bottomRight(topLeft.x + physSize.width, topLeft.y + physSize.height);
 
-        cv::Mat& mat = const_cast<cv::Mat&>(m_screenCanvas.get_mat());
         int thickness = fill ? cv::FILLED : 1;
-
-        cv::rectangle(mat, topLeft, bottomRight, toCvScalar(color), thickness, cv::LINE_AA);
+        cv::rectangle(m_screenCanvas.mat(), topLeft, bottomRight, toCvScalar(color), thickness, cv::LINE_AA);
     }
 
     void drawLine(Vector2D start, Vector2D end, Color color, float thickness) override {
@@ -84,22 +81,21 @@ public:
         cv::Point p1 = toPhysical(start);
         cv::Point p2 = toPhysical(end);
 
-        cv::Mat& mat = const_cast<cv::Mat&>(m_screenCanvas.get_mat());
-        
-        cv::line(mat, p1, p2, toCvScalar(color), static_cast<int>(thickness), cv::LINE_AA);
+        cv::line(m_screenCanvas.mat(), p1, p2, toCvScalar(color), static_cast<int>(thickness), cv::LINE_AA);
     }
 
     void drawCircle(Vector2D center, float radius, Color color, bool fill) override {
         if (!m_screenCanvas.is_loaded()) return;
 
         cv::Point physCenter = toPhysical(center);
-        cv::Size physRadiusSize = sizeToPhysical({radius, 0.0f});
-        int r = physRadiusSize.width;
+        // Scale radius the same way a width dimension is scaled, using a
+        // direct ratio rather than routing through sizeToPhysical (which
+        // would zero-out the result when the y-component is 0).
+        Vector2D targetSize = getTargetSize();
+        int r = static_cast<int>((radius / m_logicalRange.x) * targetSize.x);
 
-        cv::Mat& mat = const_cast<cv::Mat&>(m_screenCanvas.get_mat());
         int thickness = fill ? cv::FILLED : 1;
-
-        cv::circle(mat, physCenter, r, toCvScalar(color), thickness, cv::LINE_AA);
+        cv::circle(m_screenCanvas.mat(), physCenter, r, toCvScalar(color), thickness, cv::LINE_AA);
     }
 
     void drawSprite(std::string_view assetId, 
@@ -132,19 +128,16 @@ public:
                 // יצירת אובייקט Img זמני עבור ה-ROI וחשיפת המטריצה שלו
                 cv::Mat cutMat = srcMat(roi).clone();
                 cv::resize(cutMat, cutMat, physSize, 0, 0, cv::INTER_LINEAR);
-                
-                // שימוש ב-Reflection / פריצה קלה כדי לעקוף את מנגנון ה-Read
+
                 Img croppedImg;
-                cv::Mat& croppedMat = const_cast<cv::Mat&>(croppedImg.get_mat());
-                croppedMat = cutMat;
+                croppedImg.mat() = cutMat;
                 spriteToDraw = croppedImg;
             } else {
                 // לקיחת התמונה המלאה ושינוי גודלה לגודל הפיזי הנדרש
                 spriteToDraw = asset.image;
                 cv::Mat scaledMat;
                 cv::resize(spriteToDraw.get_mat(), scaledMat, physSize, 0, 0, cv::INTER_LINEAR);
-                cv::Mat& refMat = const_cast<cv::Mat&>(spriteToDraw.get_mat());
-                refMat = scaledMat;
+                spriteToDraw.mat() = scaledMat;
             }
 
             // ביצוע סיבוב לתמונה במידה וצוין (rotationDegrees != 0)
@@ -153,8 +146,7 @@ public:
                 cv::Point2f center(spriteToDraw.get_mat().cols / 2.0f, spriteToDraw.get_mat().rows / 2.0f);
                 cv::Mat rotationMatrix = cv::getRotationMatrix2D(center, -rotationDegrees, 1.0);
                 cv::warpAffine(spriteToDraw.get_mat(), rotated, rotationMatrix, spriteToDraw.get_mat().size(), cv::INTER_LINEAR, cv::BORDER_CONSTANT, cv::Scalar(0,0,0,0));
-                cv::Mat& refMat = const_cast<cv::Mat&>(spriteToDraw.get_mat());
-                refMat = rotated;
+                spriteToDraw.mat() = rotated;
             }
 
             // ציור ה-Sprite על גבי קנבס המסך הראשי

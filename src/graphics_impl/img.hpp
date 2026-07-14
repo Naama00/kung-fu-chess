@@ -51,10 +51,17 @@ public:
     void show();
     
     /**
-     * Get the underlying OpenCV Mat
+     * Get the underlying OpenCV Mat (read-only)
      */
     const cv::Mat& get_mat() const { return img; }
-    
+
+    /**
+     * Get the underlying OpenCV Mat (read-write).
+     * Use this instead of const_cast when you need to write directly into
+     * the Mat (e.g. initialising the canvas from cv::Mat::zeros).
+     */
+    cv::Mat& mat() { return img; }
+
     /**
      * Check if image is loaded
      */

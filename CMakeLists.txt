@@ -73,3 +73,18 @@ add_test(NAME unit_tests COMMAND kungfu_tests)
 add_executable(kungfu_game src/main.cpp)
 target_link_libraries(kungfu_game PRIVATE kungfu_engine)
 target_include_directories(kungfu_game PRIVATE src)
+
+# Auto-copy OpenCV DLL next to the exe on Windows.
+# OpenCV_DIR resolves to <opencv_root>/build, so the Release DLL lives at
+# <opencv_root>/build/x64/vc16/bin/opencv_world*.dll
+if(WIN32)
+    file(GLOB OPENCV_DLLS "${OpenCV_DIR}/x64/vc16/bin/opencv_world*.dll")
+    foreach(DLL ${OPENCV_DLLS})
+        add_custom_command(TARGET kungfu_game POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${DLL}"
+                $<TARGET_FILE_DIR:kungfu_game>
+            COMMENT "Copying ${DLL} to output directory"
+        )
+    endforeach()
+endif()

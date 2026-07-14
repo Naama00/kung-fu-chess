@@ -16,8 +16,7 @@ int main() {
 
         // 1. אתחול קנבס הציור הראשי של חלון ה-OpenCV
         Img screenCanvas;
-        cv::Mat& rawMat = const_cast<cv::Mat&>(screenCanvas.get_mat());
-        rawMat = cv::Mat::zeros(windowHeight, windowWidth, CV_8UC4);
+        screenCanvas.mat() = cv::Mat::zeros(windowHeight, windowWidth, CV_8UC4);
 
         // 2. אתחול מנהלי התשתית
         ImgRenderer renderer(screenCanvas);
@@ -31,6 +30,11 @@ int main() {
         // 4. טעינת מסך השחמט האינטראקטיבי כמסך הראשי
         screenManager.changeScreen(std::make_unique<ChessGameScreen>(screenManager));
 
+        // הצגת פריים ריק ראשוני כדי שהחלון יהיה גלוי לפני הכניסה ללולאה.
+        // בלי זה, WND_PROP_VISIBLE מחזיר 0 בפריים הראשון ויוצא מיד.
+        cv::imshow(windowName, screenCanvas.get_mat());
+        cv::waitKey(1); // נותן ל-OS להציג את החלון לפני שנבדוק visibility
+
         // 5. לולאת המשחק הראשית (Main Game Loop) בזמן אמת
         auto previousTime = std::chrono::high_resolution_clock::now();
         bool running = true;
@@ -43,8 +47,6 @@ int main() {
             std::chrono::duration<float> elapsed = currentTime - previousTime;
             previousTime = currentTime;
             float deltaTime = elapsed.count();
-
-            // הגבלת Delta Time למניעת קפיצות חדות במקרה של תקיעה זמנית
             if (deltaTime > 0.1f) deltaTime = 0.1f;
 
             // א. איסוף וניתוב אירועי קלט
@@ -68,6 +70,7 @@ int main() {
                 running = false;
             }
         }
+        std::cout << "Loop exited. running=" << running << " isEmpty=" << screenManager.isEmpty() << std::endl;
 
         cv::destroyAllWindows();
         std::cout << "Game Engine shut down cleanly." << std::endl;

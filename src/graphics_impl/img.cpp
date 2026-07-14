@@ -64,16 +64,37 @@ void Img::draw_on(Img& other_img, int x, int y) {
     cv::Mat roi = target_img(cv::Rect(x, y, w, h));
 
     if (source_img.channels() == 4) {
-        // Handle alpha blending for BGRA images
-        std::vector<cv::Mat> channels;
-        cv::split(source_img, channels);
-        cv::Mat alpha = channels[3] / 255.0;
-        
+        // Alpha-blend BGRA source onto BGR/BGRA destination per-pixel.
+        // Split source into B, G, R, A planes (each is an h×w single-channel Mat).
+        std::vector<cv::Mat> srcPlanes;
+        cv::split(source_img, srcPlanes);
+
+        // Build a float alpha mask in [0,1] with the same spatial size as roi.
+        cv::Mat alphaMask;
+        srcPlanes[3].convertTo(alphaMask, CV_32F, 1.0 / 255.0);
+
+        // Split the destination ROI into its own channel planes.
+        std::vector<cv::Mat> dstPlanes;
+        cv::split(roi, dstPlanes);
+
+        // Blend each colour channel: dst = (1-a)*dst + a*src
         for (int c = 0; c < 3; ++c) {
-            roi.col(c) = (1.0 - alpha) * roi.col(c) + alpha * channels[c];
+            cv::Mat srcF, dstF;
+            srcPlanes[c].convertTo(srcF, CV_32F);
+            dstPlanes[c].convertTo(dstF, CV_32F);
+
+            cv::Mat blended = (1.0f - alphaMask).mul(dstF) + alphaMask.mul(srcF);
+            blended.convertTo(dstPlanes[c], CV_8U);
         }
+
+        // If the destination has an alpha channel too, keep it fully opaque.
+        if (dstPlanes.size() == 4) {
+            dstPlanes[3].setTo(255);
+        }
+
+        cv::merge(dstPlanes, roi);
     } else {
-        // Direct copy for BGR images
+        // Direct copy for BGR images (no transparency).
         source_img.copyTo(roi);
     }
 }

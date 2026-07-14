@@ -98,6 +98,6 @@ public:
     }
 
     bool isEmpty() const {
-        return m_screens.empty();
+        return m_screens.empty() && m_pendingActions.empty();
     }
 };
