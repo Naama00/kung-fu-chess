@@ -1,8 +1,8 @@
 #include <catch2/catch_test_macros.hpp>
-#include "board/Board.hpp"
-#include "io/BoardParser.hpp"
-#include "rules/RuleEngine.hpp"
-#include "engine/GameEngine.hpp"
+#include "core/board/Board.hpp"
+#include "core/io/BoardParser.hpp"
+#include "core/rules/RuleEngine.hpp"
+#include "core/engine/GameEngine.hpp"
 
 TEST_CASE("Simultaneous Mode Allows Both Colors Freely", "[engine][simultaneous]") {
     std::string boardStr =

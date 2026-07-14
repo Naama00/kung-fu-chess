@@ -1,6 +1,6 @@
 #include <catch2/catch_test_macros.hpp>
-#include "engine/PremoveQueue.hpp"
-#include "board/Piece.hpp"
+#include "core/engine/PremoveQueue.hpp"
+#include "core/board/Piece.hpp"
 
 TEST_CASE("PremoveQueue Registration and Update", "[engine][premove]") {
     kungfu::PremoveQueue queue;

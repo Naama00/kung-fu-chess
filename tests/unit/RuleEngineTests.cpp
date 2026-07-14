@@ -1,7 +1,7 @@
 #include <catch2/catch_test_macros.hpp>
-#include "board/Board.hpp"
-#include "io/BoardParser.hpp"
-#include "rules/RuleEngine.hpp"
+#include "core/board/Board.hpp"
+#include "core/io/BoardParser.hpp"
+#include "core/rules/RuleEngine.hpp"
 
 TEST_CASE("RuleEngine Basic Validations", "[rules]") {
     auto board = std::make_shared<kungfu::Board>(8, 8);

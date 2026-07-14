@@ -1,9 +1,9 @@
 #include <catch2/catch_test_macros.hpp>
-#include "io/BoardParser.hpp"
-#include "io/BoardPrinter.hpp"
-#include "rules/RuleEngine.hpp"
-#include "engine/GameEngine.hpp"
-#include "input/Controller.hpp"
+#include "core/io/BoardParser.hpp"
+#include "core/io/BoardPrinter.hpp"
+#include "core/rules/RuleEngine.hpp"
+#include "core/engine/GameEngine.hpp"
+#include "core/input/Controller.hpp"
 
 TEST_CASE("Full System Integration Flow", "[integration]") {
     std::string setup = 

@@ -1,8 +1,8 @@
 #include <catch2/catch_test_macros.hpp>
-#include "realtime/CollisionDetector.hpp"
-#include "rules/CollisionResolver.hpp"
-#include "board/Board.hpp"
-#include "io/BoardParser.hpp"
+#include "core/realtime/CollisionDetector.hpp"
+#include "core/rules/CollisionResolver.hpp"
+#include "core/board/Board.hpp"
+#include "core/io/BoardParser.hpp"
 
 TEST_CASE("CollisionDetector Spatial Calculations", "[realtime][collision]") {
     kungfu::GameConfig config;

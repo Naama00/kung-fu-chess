@@ -1,7 +1,7 @@
 #include <catch2/catch_test_macros.hpp>
-#include "common/Position.hpp"
-#include "board/Piece.hpp"
-#include "board/Board.hpp"
+#include "core/common/Position.hpp"
+#include "core/board/Piece.hpp"
+#include "core/board/Board.hpp"
 
 TEST_CASE("Position Model Behavior", "[model]") {
     kungfu::Position p1(2, 3);

@@ -19,39 +19,42 @@ FetchContent_Declare(
 FetchContent_MakeAvailable(Catch2)
 # -----------------------------------------
 
-# ספריית הליבה של המשחק - כולל מחלקת Img וקובצי ה-UI הלוגיים והפיזיים
+# ── Core game library ─────────────────────────────────────────────────────────
+# All headers and sources now live under src/core/<module>/
+# The graphics glue (Img) lives under src/graphics_impl/
 add_library(kungfu_engine
-    src/img.cpp
-    src/common/Position.cpp
-    src/board/Piece.cpp   
-    src/board/Board.cpp
-    src/io/BoardParser.cpp
-    src/io/BoardPrinter.cpp
-    src/input/BoardMapper.cpp
-    src/input/Controller.cpp
-    src/rules/PieceRules.cpp
-    src/rules/RuleEngine.cpp
-    src/rules/PromotionRules.cpp
-    src/rules/CollisionResolver.cpp  
-    src/realtime/Motion.cpp
-    src/realtime/CollisionDetector.cpp 
-    src/realtime/RealTimeArbiter.cpp
-    src/engine/GameEngine.cpp
-    src/engine/PremoveQueue.cpp
-    src/view/SnapshotBuilder.cpp
+    src/graphics_impl/img.cpp
+    src/core/common/Position.cpp
+    src/core/board/Piece.cpp
+    src/core/board/Board.cpp
+    src/core/io/BoardParser.cpp
+    src/core/io/BoardPrinter.cpp
+    src/core/input/BoardMapper.cpp
+    src/core/input/Controller.cpp
+    src/core/rules/PieceRules.cpp
+    src/core/rules/RuleEngine.cpp
+    src/core/rules/PromotionRules.cpp
+    src/core/rules/CollisionResolver.cpp
+    src/core/realtime/Motion.cpp
+    src/core/realtime/CollisionDetector.cpp
+    src/core/realtime/RealTimeArbiter.cpp
+    src/core/engine/GameEngine.cpp
+    src/core/engine/PremoveQueue.cpp
+    src/core/view/SnapshotBuilder.cpp
 )
 
-# קישור המנוע ל-OpenCV והגדרת נתיבי כותרות (Headers)
+# Single include root: everything is resolved relative to src/
+target_include_directories(kungfu_engine PUBLIC src ${OpenCV_INCLUDE_DIRS})
 target_link_libraries(kungfu_engine PUBLIC ${OpenCV_LIBS})
-target_include_directories(kungfu_engine PUBLIC include ${OpenCV_INCLUDE_DIRS})
 
+# ── Tests ─────────────────────────────────────────────────────────────────────
 add_executable(kungfu_tests
     tests/unit/ModelTests.cpp
     tests/unit/ControllerAndMapperTests.cpp
     tests/unit/RuleEngineTests.cpp
     tests/unit/BoardIoTests.cpp
     tests/unit/PremoveQueueTests.cpp
-    tests/unit/CollisionSystemTests.cpp 
+    tests/unit/CollisionSystemTests.cpp
     tests/unit/engine/GameEngineTurnBasedTests.cpp
     tests/unit/engine/GameEngineSimultaneousTests.cpp
     tests/unit/engine/GameEnginePromotionTests.cpp
@@ -59,13 +62,14 @@ add_executable(kungfu_tests
     tests/unit/engine/GameEngineJumpTests.cpp
     tests/integration/SimpleFlowTests.cpp
 )
+
 target_link_libraries(kungfu_tests PRIVATE kungfu_engine Catch2::Catch2WithMain)
-target_include_directories(kungfu_tests PRIVATE include)
+target_include_directories(kungfu_tests PRIVATE src)
 
 enable_testing()
 add_test(NAME unit_tests COMMAND kungfu_tests)
 
-# קובץ הריצה הראשי של המשחק
+# ── Main executable ───────────────────────────────────────────────────────────
 add_executable(kungfu_game src/main.cpp)
 target_link_libraries(kungfu_game PRIVATE kungfu_engine)
-target_include_directories(kungfu_game PRIVATE include)
+target_include_directories(kungfu_game PRIVATE src)

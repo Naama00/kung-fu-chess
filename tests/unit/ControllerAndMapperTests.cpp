@@ -1,6 +1,6 @@
 #include <catch2/catch_test_macros.hpp>
-#include "input/Controller.hpp"
-#include "engine/IGameEngine.hpp"
+#include "core/input/Controller.hpp"
+#include "core/engine/IGameEngine.hpp"
 #include <vector>
 #include <algorithm>
 
