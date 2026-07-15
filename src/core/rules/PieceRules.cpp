@@ -138,10 +138,28 @@ std::vector<Position> PawnRule::getLegalDestinations(const IBoard& board, const 
 
     int direction = (piece.color() == PlayerColor::White) ? 1 : -1;
 
+    // עוזר: האם יש כלי סטטי (לא Moving/Airborne) בעמדה נתונה
+    auto hasStaticPiece = [&](const Position& pos) -> bool {
+        auto opt = board.pieceAt(pos);
+        if (!opt.has_value() || !opt.value()) return false;
+        auto state = opt.value()->state();
+        return state != PieceState::Moving && state != PieceState::Airborne;
+    };
+
+    // עוזר: האם יש כלי אויב סטטי בעמדה נתונה
+    auto hasStaticEnemy = [&](const Position& pos) -> bool {
+        auto opt = board.pieceAt(pos);
+        if (!opt.has_value() || !opt.value()) return false;
+        auto state = opt.value()->state();
+        if (state == PieceState::Moving || state == PieceState::Airborne) return false;
+        return opt.value()->color() != piece.color();
+    };
+
     int nextRow = currentRow + direction;
     if (nextRow >= 0 && nextRow < maxRows) {
         Position forward(nextRow, currentCol);
-        bool isForwardEmpty = !board.pieceAt(forward).has_value();
+        // מהלך קדימה: רק אם אין כלי סטטי (כלי בתנועה לא חוסם)
+        bool isForwardEmpty = !hasStaticPiece(forward);
 
         if (isForwardEmpty) {
             dests.push_back(forward);
@@ -151,18 +169,18 @@ std::vector<Position> PawnRule::getLegalDestinations(const IBoard& board, const 
             int doubleRow = currentRow + 2 * direction;
             if (doubleRow >= 0 && doubleRow < maxRows) {
                 Position doubleForward(doubleRow, currentCol);
-                if (isForwardEmpty && !board.pieceAt(doubleForward).has_value()) {
+                if (isForwardEmpty && !hasStaticPiece(doubleForward)) {
                     dests.push_back(doubleForward);
                 }
             }
         }
 
+        // לכידה אלכסונית: רק אם יש אויב סטטי שם (לא כלי בתנועה)
         for (int cOffset : {-1, 1}) {
             int nextCol = currentCol + cOffset;
             if (nextCol >= 0 && nextCol < maxCols) {
                 Position diagonal(nextRow, nextCol);
-                auto targetPieceOpt = board.pieceAt(diagonal);
-                if (targetPieceOpt.has_value() && targetPieceOpt.value()->color() != piece.color()) {
+                if (hasStaticEnemy(diagonal)) {
                     dests.push_back(diagonal);
                 }
             }

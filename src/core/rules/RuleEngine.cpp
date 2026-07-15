@@ -37,9 +37,17 @@ MoveValidation RuleEngine::validateMove(const Position& from, const Position& to
     }
 
     // 4. מניעת פגיעה בכלי ידידותי ביעד.
+    // כלים שנמצאים בתנועה (Moving) או באוויר (Airborne) אינם חוסמים את היעד —
+    // מיקומם על הלוח הוא אינטרפולטיבי בלבד ועשוי לחפוף את היעד בטעות.
     auto targetPieceOpt = board_->pieceAt(to);
-    if (targetPieceOpt.has_value() && targetPieceOpt.value()->color() == piece->color()) {
-        return {false, "friendly_destination"};
+    if (targetPieceOpt.has_value()) {
+        auto targetPiece = targetPieceOpt.value();
+        if (targetPiece &&
+            targetPiece->state() != PieceState::Moving &&
+            targetPiece->state() != PieceState::Airborne &&
+            targetPiece->color() == piece->color()) {
+            return {false, "friendly_destination"};
+        }
     }
 
     // 5. שאילתת חוקיות גיאומטרית מול ה-Strategy המתאים

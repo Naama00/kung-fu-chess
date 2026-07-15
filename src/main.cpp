@@ -9,12 +9,25 @@
 #include <chrono>
 #include <memory>
 #include <iostream>
+#define NOMINMAX
+#include <windows.h>
+#include <algorithm>
 
 int main() {
     try {
         const std::string windowName = "Kung-Fu Chess Game";
-        const int windowWidth = 800;  
-        const int windowHeight = 800;
+
+        // חישוב גודל החלון המרבי שמתאים למסך — מביא בחשבון את ה-taskbar
+        // ומשאיר מקום לכותרת החלון (titlebar ~30px).
+        RECT workArea{};
+        SystemParametersInfo(SPI_GETWORKAREA, 0, &workArea, 0);
+        int availableWidth  = workArea.right  - workArea.left;
+        int availableHeight = workArea.bottom - workArea.top;
+        const int titleBarHeight = 30;
+        int maxSide = std::min(availableWidth, availableHeight - titleBarHeight);
+
+        const int windowWidth = 650;   
+        const int windowHeight = 650;
 
         // 1. אתחול קנבס הציור הראשי של חלון ה-OpenCV
         Img screenCanvas;
@@ -32,8 +45,16 @@ int main() {
 
         // 3. רישום החלון לקבלת אירועי עכבר ומקלדת מ-OpenCV (פעולת אתחול
         //    חד-פעמית וספציפית ל-backend - נשארת מול הטיפוס הקונקרטי)
-        cv::namedWindow(windowName, cv::WINDOW_AUTOSIZE);
+        cv::namedWindow(windowName, cv::WINDOW_NORMAL);
+        cv::resizeWindow(windowName, windowWidth, windowHeight);
         imgInputTranslator.registerWindow(windowName, {static_cast<float>(windowWidth), static_cast<float>(windowHeight)});
+
+        // מיקום החלון במרכז המסך
+        int screenWidth  = GetSystemMetrics(SM_CXSCREEN);
+        int screenHeight = GetSystemMetrics(SM_CYSCREEN);
+        int windowX = (screenWidth  - windowWidth)  / 2;
+        int windowY = (screenHeight - windowHeight) / 2;
+        cv::moveWindow(windowName, windowX, windowY);
 
         // 4. טעינת מסך הפתיחה כמסך הראשי
         screenManager.changeScreen(std::make_unique<MainMenuScreen>(screenManager));

@@ -67,7 +67,12 @@ std::vector<ArrivalEvent> RealTimeArbiter::advanceTime(int ms, int& currentTimeM
 
     activeMotions_.erase(
         std::remove_if(activeMotions_.begin(), activeMotions_.end(),
-            [](const Motion& m) { return m.piece()->state() == PieceState::Captured; }),
+            [](const Motion& m) {
+                // מסירים כלים שנלכדו, אבל גם כלים שנעצרו ע"י פתרון mid-route
+                // (state == Idle אחרי resolveMidRouteCollision — הם כבר לא בתנועה).
+                return m.piece()->state() == PieceState::Captured ||
+                       m.piece()->state() == PieceState::Idle;
+            }),
         activeMotions_.end()
     );
 

@@ -2,29 +2,49 @@
 #include "ui/framework/IInputTranslator.hpp"
 #include "ui/framework/InputEvents.hpp"
 #include <opencv2/opencv.hpp>
+#include <algorithm>
 #include <vector>
 #include <mutex>
+#include <string>
 
 class ImgInputTranslator : public IInputTranslator {
 private:
     Vector2D m_logicalRange{1000.0f, 1000.0f};
+    std::string m_windowName;
+    Vector2D m_contentSize{1000.0f, 1000.0f}; // גודל קנבס התוכן הלוגי
 
-    // מפתח לאחסון זמני של אירועי עכבר שמגיעים מה-Callback של OpenCV (המשתמש ב-Thread נפרד)
     static std::vector<InputEvent> s_pendingMouseEvents;
     static std::mutex s_eventsMutex;
 
-    // פונקציית ה-Callback הסטטית שמתקבלת מ-OpenCV
     static void onMouse(int event, int x, int y, int flags, void* userdata) {
         (void)flags;
         auto* translator = static_cast<ImgInputTranslator*>(userdata);
         if (!translator) return;
 
         MouseEvent mouseEvent;
-        // תרגום קואורדינטות פיזיות לקואורדינטות לוגיות
-        Vector2D physicalSize = translator->getPhysicalWindowSize();
 
-        mouseEvent.logicalX = (static_cast<float>(x) / physicalSize.x) * translator->m_logicalRange.x;
-        mouseEvent.logicalY = (static_cast<float>(y) / physicalSize.y) * translator->m_logicalRange.y;
+        // שואלים את OpenCV על גודל אזור הציור הנוכחי של החלון (client area)
+        // ומחשבים letterbox בדיוק כמו ב-presentFrame — כך תמיד מסונכרן.
+        cv::Rect winRect = cv::getWindowImageRect(translator->m_windowName);
+        int winW = winRect.width;
+        int winH = winRect.height;
+        int contentW = static_cast<int>(translator->m_contentSize.x);
+        int contentH = static_cast<int>(translator->m_contentSize.y);
+
+        if (winW > 0 && winH > 0 && contentW > 0 && contentH > 0) {
+            float scale = std::min(static_cast<float>(winW) / contentW,
+                                   static_cast<float>(winH) / contentH);
+            float padX = (winW - contentW * scale) / 2.0f;
+            float padY = (winH - contentH * scale) / 2.0f;
+
+            // מנכים את הריפוד ומחלקים ב-scale → קואורדינטה לוגית
+            mouseEvent.logicalX = (x - padX) / scale;
+            mouseEvent.logicalY = (y - padY) / scale;
+        } else {
+            // fallback בטוח: לפני שהחלון מוכן
+            mouseEvent.logicalX = static_cast<float>(x);
+            mouseEvent.logicalY = static_cast<float>(y);
+        }
 
         bool relevantEvent = false;
 
@@ -34,31 +54,26 @@ private:
                 mouseEvent.button = MouseButton::None;
                 relevantEvent = true;
                 break;
-
             case cv::EVENT_LBUTTONDOWN:
                 mouseEvent.action = MouseEvent::Action::Press;
                 mouseEvent.button = MouseButton::Left;
                 relevantEvent = true;
                 break;
-
             case cv::EVENT_LBUTTONUP:
                 mouseEvent.action = MouseEvent::Action::Release;
                 mouseEvent.button = MouseButton::Left;
                 relevantEvent = true;
                 break;
-
             case cv::EVENT_RBUTTONDOWN:
                 mouseEvent.action = MouseEvent::Action::Press;
                 mouseEvent.button = MouseButton::Right;
                 relevantEvent = true;
                 break;
-
             case cv::EVENT_RBUTTONUP:
                 mouseEvent.action = MouseEvent::Action::Release;
                 mouseEvent.button = MouseButton::Right;
                 relevantEvent = true;
                 break;
-
             default:
                 break;
         }
@@ -72,11 +87,10 @@ private:
         }
     }
 
-    Vector2D m_windowSize{800.0f, 800.0f}; // גודל פיזי ברירת מחדל של החלון
+    Vector2D m_windowSize{800.0f, 800.0f};
 
-    // תרגום קוד מקש גולמי מ-OpenCV למקש לוגי
     static Key translateKey(int rawCode) {
-        switch (rawCode & 0xFF) { // סינון מסכות קוד מקש בסיסי
+        switch (rawCode & 0xFF) {
             case 27: return Key::Escape;
             case 32: return Key::Space;
             case 'w': case 'W': return Key::W;
@@ -90,11 +104,10 @@ private:
 public:
     ImgInputTranslator() = default;
 
-    // רישום ה-Callback לחלון של OpenCV. זו פעולת אתחול חד-פעמית וספציפית
-    // ל-backend, ולכן אינה חלק מ-IInputTranslator - main.cpp קורא לה על
-    // הטיפוס הקונקרטי לפני תחילת הלולאה, בדיוק כמו יצירת החלון עצמו.
-    void registerWindow(const std::string& windowName, Vector2D windowSize) {
+    void registerWindow(const std::string& windowName, Vector2D windowSize, Vector2D contentSize = {1000.0f, 1000.0f}) {
+        m_windowName = windowName;
         m_windowSize = windowSize;
+        m_contentSize = contentSize;
         cv::setMouseCallback(windowName, onMouse, this);
     }
 
@@ -106,20 +119,13 @@ public:
         m_windowSize = size;
     }
 
-    /**
-     * מימוש בפועל של IInputTranslator::pollEvents.
-     * אוסף את כל אירועי הקלט שהצטברו מהפריים האחרון (עכבר ומקלדת), כולל
-     * הפעלת cv::waitKey הפנימית - פרט מימוש שמוסתר לגמרי מהקורא.
-     */
     void pollEvents(std::vector<InputEvent>& outEvents) override {
-        // 1. שליפת אירועי העכבר שהצטברו בצורה בטוחה מהתור המשותף עם ה-Callback
         {
             std::lock_guard<std::mutex> lock(s_eventsMutex);
             outEvents.insert(outEvents.end(), s_pendingMouseEvents.begin(), s_pendingMouseEvents.end());
             s_pendingMouseEvents.clear();
         }
 
-        // 2. דגימת מקלדת - קריאת cv::waitKey הועברה לכאן, פנימה ל-Translator
         int keyResult = cv::waitKey(1);
         if (keyResult != -1) {
             KeyEvent keyEvent;
@@ -134,6 +140,5 @@ public:
     }
 };
 
-// אתחול המשתנים הסטטיים של המחלקה
 inline std::vector<InputEvent> ImgInputTranslator::s_pendingMouseEvents;
 inline std::mutex ImgInputTranslator::s_eventsMutex;

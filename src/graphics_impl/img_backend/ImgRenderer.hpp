@@ -24,17 +24,22 @@ public:
 class ImgRenderer : public IRenderer
 {
 private:
-    Img &m_screenCanvas;                       // קנבס הציור הראשי של המשחק
-    std::string m_windowName;                  // שם החלון הפיזי - נדרש עבור imshow/getWindowProperty
-    Vector2D m_logicalRange{1000.0f, 1000.0f}; // מרחב הקואורדינטות הלוגי
+    Img &m_screenCanvas;
+    std::string m_windowName;
+    Vector2D m_logicalRange{1000.0f, 1000.0f};
     AssetManager m_assetManager;
-
-    // מטמון sprite מוקטן פר assetId, כדי לא לבצע cv::resize מחדש בכל פריים
-    // כשגודל התא לא השתנה. הערך שמור יחד עם הגודל שביקש אותו, כך שאם
-    // הגודל המבוקש משתנה (למשל שינוי גודל חלון) המטמון מתעדכן אוטומטית -
-    // אין צורך בלוגיקת invalidation נפרדת. חל רק על הנתיב הנפוץ (בלי
-    // סיבוב, בלי ROI חיתוך מ-sprite sheet).
     std::unordered_map<std::string, std::pair<Vector2D, Img>> m_spriteScaleCache;
+
+    // ה-letterbox transform הנוכחי — מתעדכן בכל presentFrame.
+    // מאפשר ל-ImgInputTranslator לתרגם קואורדינטות עכבר נכון.
+    struct LetterboxTransform {
+        float padX  = 0.0f;
+        float padY  = 0.0f;
+        float scale = 1.0f;
+        int   winW  = 0;
+        int   winH  = 0;
+    };
+    LetterboxTransform m_letterbox;
 
     // המרת צבע לוגי ל-cv::Scalar של OpenCV (בפורמט BGRA/BGR)
     cv::Scalar toCvScalar(Color color) const
@@ -88,8 +93,40 @@ public:
     {
         if (!m_screenCanvas.is_loaded())
             return;
-        cv::imshow(m_windowName, m_screenCanvas.get_mat());
+
+        const cv::Mat& content = m_screenCanvas.get_mat();
+        int contentW = content.cols;
+        int contentH = content.rows;
+
+        cv::Rect winRect = cv::getWindowImageRect(m_windowName);
+        int winW = winRect.width;
+        int winH = winRect.height;
+
+        if (winW <= 0 || winH <= 0) {
+            cv::imshow(m_windowName, content);
+            return;
+        }
+
+        float scale = std::min(static_cast<float>(winW) / contentW,
+                               static_cast<float>(winH) / contentH);
+        int scaledW = static_cast<int>(contentW * scale);
+        int scaledH = static_cast<int>(contentH * scale);
+        int padX = (winW - scaledW) / 2;
+        int padY = (winH - scaledH) / 2;
+
+        // שמירת ה-transform לשימוש ב-ImgInputTranslator
+        m_letterbox = { static_cast<float>(padX), static_cast<float>(padY), scale, winW, winH };
+
+        cv::Mat scaled;
+        cv::resize(content, scaled, cv::Size(scaledW, scaledH), 0, 0, cv::INTER_LINEAR);
+        cv::Mat frame(winH, winW, content.type(), cv::Scalar(0, 0, 0, 255));
+        scaled.copyTo(frame(cv::Rect(padX, padY, scaledW, scaledH)));
+        cv::imshow(m_windowName, frame);
     }
+
+    // מחזיר את ה-letterbox transform האחרון — ImgInputTranslator צריך את זה
+    // כדי לתרגם קואורדינטות עכבר נכון כשהחלון שונה מגודל ברירת המחדל.
+    const LetterboxTransform& getLetterboxTransform() const { return m_letterbox; }
 
     bool isWindowOpen() const override
     {

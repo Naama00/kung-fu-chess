@@ -126,6 +126,12 @@ namespace kungfu
             {
                 if (path1[idx1] == path2[idx2])
                 {
+                    // ה-from של כל כלי (idx==0) אינו נקודת התנגשות —
+                    // הכלי כבר עוזב אותה. רק מצב בו שני הכלים "בגוף" הנתיב
+                    // (idx>0 לשניהם) הוא התנגשות אמיתית.
+                    if (idx1 == 0 || idx2 == 0) {
+                        continue;
+                    }
 
                     int t1_enter = m1.startTime() + static_cast<int>(idx1 * timePerStep1);
                     int t2_enter = m2.startTime() + static_cast<int>(idx2 * timePerStep2);
@@ -136,6 +142,13 @@ namespace kungfu
                   
                     if (std::max(t1_enter, t2_enter) < std::min(t1_exit, t2_exit))
                     {
+                        // אם נקודת המפגש היא היעד של שני הכלים — זהו "מירוץ ליעד",
+                        // לא התנגשות אמיתית בדרך. resolveArrival יטפל בזה כשמישהו מגיע.
+                        bool isDestinationCollision = (path1[idx1] == m1.to() && path2[idx2] == m2.to());
+                        if (isDestinationCollision) {
+                            continue;
+                        }
+
                         // 1. מי שיצא לדרך מוקדם יותר (startTime נמוך יותר) הוא המנצח
                         if (m1.startTime() < m2.startTime())
                         {
