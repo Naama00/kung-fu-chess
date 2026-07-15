@@ -12,15 +12,21 @@ public:
     virtual void clear(Color color) = 0;
     virtual void endFrame() = 0;
 
+    // הצגת הפריים שצויר על גבי משטח התצוגה הפיזי (למשל cv::imshow).
+    virtual void presentFrame() = 0;
+
+    // בדיקה האם משטח התצוגה (החלון) עדיין פתוח מבחינת המשתמש/מערכת ההפעלה.
+    virtual bool isWindowOpen() const = 0;
+
     // פעולות ציור בסיסיות (פרימיטיביים)
     virtual void drawRectangle(Vector2D position, Vector2D size, Color color, bool fill = true) = 0;
     virtual void drawLine(Vector2D start, Vector2D end, Color color, float thickness = 1.0f) = 0;
     virtual void drawCircle(Vector2D center, float radius, Color color, bool fill = true) = 0;
 
     // ציור תמונה/טקסטורה מבוססת מזהה טקסטואלי
-    virtual void drawSprite(std::string_view assetId, 
-                            Vector2D position, 
-                            Vector2D size, 
+    virtual void drawSprite(std::string_view assetId,
+                            Vector2D position,
+                            Vector2D size,
                             float rotationDegrees = 0.0f,
                             const Vector2D* srcOffset = nullptr,
                             const Vector2D* srcSize = nullptr) = 0;

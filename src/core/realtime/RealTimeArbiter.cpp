@@ -177,6 +177,20 @@ MoveResult RealTimeArbiter::executeMove(PiecePtr piece, const Position& from, co
 
 float RealTimeArbiter::getCooldownProgress(const PiecePtr& piece, int currentTimeMs) const noexcept {
     if (!piece) return 0.0f;
+
+    // תיקון: guard מפורש נגד cooldownDurationMs == 0 (או שלילי בטעות).
+    // כרגע זה "בטוח" רק בזכות הנחה משתמעת שמי שמגדיר cooldown תמיד עושה
+    // זאת ביחס ל-currentTimeMs הנוכחי, כך ש-remaining כבר <=0 עד שמישהו
+    // שואל. אבל אם ההנחה הזו תופר אי-פעם (או שקונפיגורציה עתידית תגדיר
+    // cooldownDurationMs=0 בזמן ש-expiresAt עדיין עתידי מסיבה כלשהי),
+    // החלוקה למטה הייתה מחזירה +inf - וערך כזה זורם עד ל-
+    // ImgRenderer::sizeToPhysical, שם static_cast<int> על +inf הוא
+    // Undefined Behavior. עדיף לחסום את זה כאן, במקור, במקום לסמוך על כך
+    // שאף אחד בהמשך השרשרת לא ייתקל בערך פגום.
+    if (config_.cooldownDurationMs <= 0) {
+        return 0.0f;
+    }
+
     int expiresAt = cooldownTracker_.getExpiration(piece->id());
     int remaining = expiresAt - currentTimeMs;
     if (remaining <= 0) return 0.0f;

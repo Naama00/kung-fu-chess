@@ -4,7 +4,10 @@
 #include "graphics_impl/img.hpp"
 #include <opencv2/opencv.hpp>
 #include <algorithm>
+#include <string>
 #include <string_view>
+#include <unordered_map>
+#include <utility>
 
 // מימוש נכס תמונה עבור ה-AssetManager המבוסס על ה-Img שלכם
 class ImgTextureAsset : public IAsset
@@ -22,8 +25,16 @@ class ImgRenderer : public IRenderer
 {
 private:
     Img &m_screenCanvas;                       // קנבס הציור הראשי של המשחק
+    std::string m_windowName;                  // שם החלון הפיזי - נדרש עבור imshow/getWindowProperty
     Vector2D m_logicalRange{1000.0f, 1000.0f}; // מרחב הקואורדינטות הלוגי
     AssetManager m_assetManager;
+
+    // מטמון sprite מוקטן פר assetId, כדי לא לבצע cv::resize מחדש בכל פריים
+    // כשגודל התא לא השתנה. הערך שמור יחד עם הגודל שביקש אותו, כך שאם
+    // הגודל המבוקש משתנה (למשל שינוי גודל חלון) המטמון מתעדכן אוטומטית -
+    // אין צורך בלוגיקת invalidation נפרדת. חל רק על הנתיב הנפוץ (בלי
+    // סיבוב, בלי ROI חיתוך מ-sprite sheet).
+    std::unordered_map<std::string, std::pair<Vector2D, Img>> m_spriteScaleCache;
 
     // המרת צבע לוגי ל-cv::Scalar של OpenCV (בפורמט BGRA/BGR)
     cv::Scalar toCvScalar(Color color) const
@@ -50,7 +61,8 @@ private:
     }
 
 public:
-    explicit ImgRenderer(Img &screenCanvas) : m_screenCanvas(screenCanvas) {}
+    explicit ImgRenderer(Img &screenCanvas, std::string windowName)
+        : m_screenCanvas(screenCanvas), m_windowName(std::move(windowName)) {}
 
     void beginFrame() override
     {
@@ -69,7 +81,27 @@ public:
 
     void endFrame() override
     {
-        // סיום פריים (למשל רענון חלון או כתיבה לדיסק)
+        // סיום פריים (למשל חישובים סופיים לפני הצגה, אם יידרשו בעתיד)
+    }
+
+    void presentFrame() override
+    {
+        if (!m_screenCanvas.is_loaded())
+            return;
+        cv::imshow(m_windowName, m_screenCanvas.get_mat());
+    }
+
+    bool isWindowOpen() const override
+    {
+        try
+        {
+            double prop = cv::getWindowProperty(m_windowName, cv::WND_PROP_AUTOSIZE);
+            return prop >= 0;
+        }
+        catch (const cv::Exception &)
+        {
+            return false;
+        }
     }
 
     void drawRectangle(Vector2D position, Vector2D size, Color color, bool fill) override
@@ -102,9 +134,6 @@ public:
             return;
 
         cv::Point physCenter = toPhysical(center);
-        // Scale radius the same way a width dimension is scaled, using a
-        // direct ratio rather than routing through sizeToPhysical (which
-        // would zero-out the result when the y-component is 0).
         Vector2D targetSize = getTargetSize();
         int r = static_cast<int>((radius / m_logicalRange.x) * targetSize.x);
 
@@ -131,11 +160,11 @@ public:
             cv::Point physPos = toPhysical(position);
             cv::Size physSize = sizeToPhysical(size);
 
-            // במקרה שנדרשת תת-תמונה (Sprite Sheet / Atlas)
             Img spriteToDraw;
             if (srcOffset && srcSize)
             {
-                // חיתוך האזור הרלוונטי ממטריצת המקור
+                // נתיב ה-Sprite Sheet/Atlas לא נכנס למטמון (פחות נפוץ, וגם
+                // ה-ROI עצמו יכול להשתנות בין קריאות עם אותו assetId).
                 const cv::Mat &srcMat = asset.image.get_mat();
                 cv::Rect roi(
                     static_cast<int>(srcOffset->x),
@@ -143,7 +172,6 @@ public:
                     static_cast<int>(srcSize->x),
                     static_cast<int>(srcSize->y));
 
-                // יצירת אובייקט Img זמני עבור ה-ROI וחשיפת המטריצה שלו
                 cv::Mat cutMat = srcMat(roi).clone();
                 cv::resize(cutMat, cutMat, physSize, 0, 0, cv::INTER_LINEAR);
 
@@ -153,14 +181,34 @@ public:
             }
             else
             {
-                // לקיחת התמונה המלאה ושינוי גודלה לגודל הפיזי הנדרש
-                spriteToDraw = asset.image;
-                cv::Mat scaledMat;
-                cv::resize(spriteToDraw.get_mat(), scaledMat, physSize, 0, 0, cv::INTER_LINEAR);
-                spriteToDraw.mat() = scaledMat;
+                // תיקון: הנתיב הנפוץ (תמונה שלמה, בלי סיבוב) - בדיקת מטמון
+                // לפני ביצוע cv::resize. ברוב הפריימים גודל התא לא משתנה,
+                // כך שברירת המחדל היא cache hit ולא resize חוזר על כל כלי.
+                Vector2D requestedSize{static_cast<float>(physSize.width), static_cast<float>(physSize.height)};
+                std::string cacheKey(assetId);
+
+                auto cacheIt = m_spriteScaleCache.find(cacheKey);
+                bool cacheHit = cacheIt != m_spriteScaleCache.end() &&
+                                 cacheIt->second.first.x == requestedSize.x &&
+                                 cacheIt->second.first.y == requestedSize.y;
+
+                if (cacheHit)
+                {
+                    spriteToDraw = cacheIt->second.second;
+                }
+                else
+                {
+                    cv::Mat scaledMat;
+                    cv::resize(asset.image.get_mat(), scaledMat, physSize, 0, 0, cv::INTER_LINEAR);
+                    Img scaledImg;
+                    scaledImg.mat() = scaledMat;
+                    m_spriteScaleCache[cacheKey] = {requestedSize, scaledImg};
+                    spriteToDraw = scaledImg;
+                }
             }
 
-            // ביצוע סיבוב לתמונה במידה וצוין (rotationDegrees != 0)
+            // ביצוע סיבוב לתמונה במידה וצוין (rotationDegrees != 0) - תמיד
+            // מחושב על עותק, כך שהמטמון עצמו אף פעם לא מכיל תמונה מסובבת.
             if (std::abs(rotationDegrees) > 0.01f)
             {
                 cv::Mat rotated;
@@ -187,7 +235,6 @@ public:
 
         cv::Point physPos = toPhysical(position);
 
-        // תיקון: התאמת גודל הגופן באופן יחסי לקנבס הפיזי כדי למנוע חריגה מהקופסאות
         Vector2D targetSize = getTargetSize();
         double fontScale = (fontSize / 24.0) * (targetSize.x / m_logicalRange.x);
 

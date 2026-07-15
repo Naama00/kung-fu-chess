@@ -94,8 +94,8 @@ core/
   view/
     screens/
       ChessGameScreen.hpp
+      MainMenuScreen.hpp
     GameSnapshot.hpp
-    IRenderer.hpp
     SnapshotBuilder.cpp
     SnapshotBuilder.hpp
 graphics_impl/
@@ -444,6 +444,7 @@ struct GameConfig {
 
     bool allowSimultaneousMovement = true;
     bool enablePremoves = true;
+    bool allowJumping = true; 
 };
 
 }  // namespace kungfu
@@ -596,9 +597,12 @@ MoveResult GameEngine::requestMove(const Position& from, const Position& to) {
     auto piece = sourcePieceOpt.value();
 
     // 2. שאילתת מצב פיזיקלי דרך ה-Arbiter בלבד (עקרון ה-DIP)
-    // הבדיקה הפיזיקלית קודמת לבדיקת התורות - כלי נע/בקירור צריך
-    // לדווח על מצבו ללא קשר למי התור כרגע.
     if (arbiter_.isPieceBusy(piece, currentTimeMs_)) {
+        // האצלת אימות המהלך ההיפותטי ל-RuleEngine (עמידה ב-SRP)
+        auto validation = ruleEngine_->validateHypotheticalMove(piece, from, to);
+        if (!validation.isValid) {
+            return {false, validation.reason};
+        }
         return handlePremoveRegistration(piece, from, to);
     }
 
@@ -612,13 +616,16 @@ MoveResult GameEngine::requestMove(const Position& from, const Position& to) {
         }
     }
 
-    // 4. אימות חוקי תנועה מול ה-RuleEngine הגיאומטרי
+    // 4. אימות חוקי תנועה מול ה-RuleEngine הגיאומטרי (מהלך רגיל)
     if (from != to) {
         auto validation = ruleEngine_->validateMove(from, to);
         if (!validation.isValid) {
             return {false, validation.reason};
         }
     } else {
+        if (!config_.allowJumping) {
+            return {false, "jumping_disabled"};
+        }
         if (piece->state() == PieceState::Captured) {
             return {false, "captured_piece_cannot_jump"};
         }
@@ -671,7 +678,6 @@ void GameEngine::wait(int ms) noexcept {
         auto promoted = promotionRule_->maybePromote(piece, to, *board_);
         if (promoted != piece) {
             premoveQueue_.replacePiece(piece, promoted);
-            // אם הכלי שקודם שמרנו הוא זה שמוכתר — מעדכנים לכלי החדש
             if (pendingTurnPiece_ == piece) {
                 pendingTurnPiece_ = promoted;
             }
@@ -684,16 +690,6 @@ void GameEngine::wait(int ms) noexcept {
             gameOver_ = true;
         }
     }
-
-    // איפוס תור: אם הכלי שהפעיל את החלפת התור כבר אינו עסוק (הגיע ופג צינונו),
-    // מחזירים את התור לצבע שלו כדי לאפשר לו לזוז שוב לפני שהיריב הגיב.
-    if (!config_.allowSimultaneousMovement && pendingTurnPiece_ && !gameOver_) {
-        if (!arbiter_.isPieceBusy(pendingTurnPiece_, currentTimeMs_)) {
-            currentTurn_ = pendingTurnPiece_->color();
-            pendingTurnPiece_ = nullptr;
-        }
-    }
-
     if (config_.enablePremoves && !gameOver_) {
         premoveFailures_.clear();
         premoveQueue_.processReady(
@@ -781,7 +777,7 @@ public:
     std::shared_ptr<const IBoard> getBoard() const noexcept { return board_; }
     const RealTimeArbiter& getArbiter() const noexcept { return arbiter_; }
     const std::vector<MoveResult>& lastPremoveFailures() const noexcept { return premoveFailures_; }
-
+    const PremoveQueue& getPremoveQueue() const noexcept { return premoveQueue_; }
 private:
     void advanceTurn() noexcept;
     MoveResult handlePremoveRegistration(const PiecePtr& piece, const Position& from, const Position& to) noexcept;
@@ -905,18 +901,14 @@ public:
     // רק היעד (to) נשמר - הביצוע תמיד ישתמש במיקום החי של הכלי כ-from,
     // כי הכלי עשוי לזוז בינתיים (למשל אחרי שהמהלך הקודם שלו נחת).
     void registerOrUpdate(const PiecePtr& piece, const Position& to);
-
     // מבטלת premove קיים לכלי נתון (אם קיים).
     // נקראת כאשר השחקן מבצע מהלך לא חוקי – הכוונה לדרוס ולבטל את ה-premove.
     void cancel(const PiecePtr& piece) noexcept;
-
     void replacePiece(const PiecePtr& oldPiece, const PiecePtr& newPiece) noexcept;
-    
     void processReady(const PieceBusyPredicate& isBusy, const MoveExecutor& execute);
-
     bool empty() const noexcept { return entries_.empty(); }
     size_t size() const noexcept { return entries_.size(); }
-
+    const std::vector<std::pair<PiecePtr, Position>>& entries() const noexcept { return entries_; }
 private:
     std::vector<std::pair<PiecePtr, Position>> entries_;
 };
@@ -1002,17 +994,44 @@ ControllerResult Controller::click(int x, int y) {
     // 2. קליק בתוך הלוח כאשר כבר קיים כלי מסומן
     if (selectedPosition_.has_value()) {
         Position from = selectedPosition_.value();
-        
+
+        // תיקון: selectedPosition_ הוא מיקום בלבד, לא זהות כלי. בזמן-אמת,
+        // בין הקליק שבחר את הכלי לבין הקליק הזה, מישהו אחר (כמעט תמיד כלי
+        // יריב שתפס את הכלי שנבחר - "נחת" בדיוק על אותה משבצת) יכול לתפוס
+        // את from. בלי הבדיקה הזו, requestMove(from, targetCell) היה מזהה
+        // מחדש איזה כלי נמצא שם *עכשיו* ומפעיל תנועה עליו - ולא בהכרח על
+        // הכלי שהמשתמש התכוון אליו.
+        //
+        // הבדיקה: הצבע של הכלי שעדיין יושב ב-from חייב להיות תואם לצבע
+        // שנשמר בזמן הבחירה. אם לא (או שאין שם כלי בכלל) - הבחירה מיושנת.
+        auto currentColorAtFrom = engine_->getPieceColorAt(from);
+        bool selectionStillValid = currentColorAtFrom.has_value() &&
+                                    selectedColor_.has_value() &&
+                                    currentColorAtFrom.value() == selectedColor_.value();
+
+        if (!selectionStillValid) {
+            clearSelection();
+
+            // מטפלים בקליק הנוכחי כאילו הוא קליק ראשון - ייתכן שהוא בחירה
+            // חדשה ולגיטימית של כלי אחר, ואין סיבה "לבלוע" אותו.
+            if (engine_->hasPieceAt(targetCell)) {
+                selectedPosition_ = targetCell;
+                selectedColor_ = engine_->getPieceColorAt(targetCell);
+                return {true, "Stale selection cleared; new piece selected"};
+            }
+            return {false, "Stale selection cleared"};
+        }
+
         // מחליפים את הסימון רק אם לחצנו על כלי ידידותי אחר
         if (from != targetCell && engine_->hasPieceAt(targetCell)) {
-            auto fromColor = engine_->getPieceColorAt(from);
             auto targetColor = engine_->getPieceColorAt(targetCell);
-            if (fromColor.has_value() && targetColor.has_value() && fromColor.value() == targetColor.value()) {
+            if (targetColor.has_value() && targetColor.value() == selectedColor_.value()) {
                 selectedPosition_ = targetCell;
+                selectedColor_ = targetColor;
                 return {true, "Piece selection replaced"};
             }
         }
-        
+
         // שליחת בקשת התנועה למנוע המשחק (כעת, לחיצה שנייה על אותו כלי תגיע לכאן ותפעיל קפיצה!)
         auto moveResult = engine_->requestMove(from, targetCell);
         
@@ -1029,6 +1048,7 @@ ControllerResult Controller::click(int x, int y) {
     // 3. קליק בתוך הלוח ללא כלי מסומן כרגע (קליק ראשון)
     if (engine_->hasPieceAt(targetCell)) {
         selectedPosition_ = targetCell;
+        selectedColor_ = engine_->getPieceColorAt(targetCell);
         return {true, "Piece selected"};
     }
 
@@ -1042,6 +1062,7 @@ std::optional<Position> Controller::selectedPosition() const noexcept {
 
 void Controller::clearSelection() noexcept {
     selectedPosition_ = std::nullopt;
+    selectedColor_ = std::nullopt;
 }
 
 }  // namespace kungfu
@@ -1055,6 +1076,7 @@ void Controller::clearSelection() noexcept {
 #include <string>
 #include "core/input/BoardMapper.hpp"
 #include "core/common/Position.hpp"
+#include "core/common/Enums.hpp"
 #include "core/input/InputConfig.hpp" 
 
 namespace kungfu {
@@ -1075,10 +1097,12 @@ public:
     std::optional<Position> selectedPosition() const noexcept;
     void clearSelection() noexcept;
     void setCellSize(int cellSize) noexcept { mapper_.setCellSize(cellSize); }
+
 private:
     std::shared_ptr<IGameEngine> engine_;
     BoardMapper mapper_;
     std::optional<Position> selectedPosition_;
+    std::optional<PlayerColor> selectedColor_;
 };
 
 }  // namespace kungfu
@@ -1531,8 +1555,6 @@ private:
 
 namespace kungfu {
 
-// אחראית בלעדית על מעקב אחר זמני צינון (cooldown) של כלים, לפי מזהה יציב (piece->id()).
-// אינה יודעת דבר על תנועה, לוח, או כללי משחק - רק "מתי כל כלי חופשי לפעול שוב".
 class CooldownTracker {
 public:
     void setCooldown(std::uint64_t pieceId, int expiresAtMs) noexcept {
@@ -1549,6 +1571,15 @@ public:
             return false;
         }
         return currentTimeMs < it->second;
+    }
+
+    // מתודה חדשה לצורך שליפת זמן סיום הצינון
+    int getExpiration(std::uint64_t pieceId) const noexcept {
+        auto it = cooldowns_.find(pieceId);
+        if (it == cooldowns_.end()) {
+            return 0;
+        }
+        return it->second;
     }
 
     size_t entryCount() const noexcept {
@@ -1781,6 +1812,30 @@ MoveResult RealTimeArbiter::executeMove(PiecePtr piece, const Position& from, co
     }
 }
 
+float RealTimeArbiter::getCooldownProgress(const PiecePtr& piece, int currentTimeMs) const noexcept {
+    if (!piece) return 0.0f;
+
+    // תיקון: guard מפורש נגד cooldownDurationMs == 0 (או שלילי בטעות).
+    // כרגע זה "בטוח" רק בזכות הנחה משתמעת שמי שמגדיר cooldown תמיד עושה
+    // זאת ביחס ל-currentTimeMs הנוכחי, כך ש-remaining כבר <=0 עד שמישהו
+    // שואל. אבל אם ההנחה הזו תופר אי-פעם (או שקונפיגורציה עתידית תגדיר
+    // cooldownDurationMs=0 בזמן ש-expiresAt עדיין עתידי מסיבה כלשהי),
+    // החלוקה למטה הייתה מחזירה +inf - וערך כזה זורם עד ל-
+    // ImgRenderer::sizeToPhysical, שם static_cast<int> על +inf הוא
+    // Undefined Behavior. עדיף לחסום את זה כאן, במקור, במקום לסמוך על כך
+    // שאף אחד בהמשך השרשרת לא ייתקל בערך פגום.
+    if (config_.cooldownDurationMs <= 0) {
+        return 0.0f;
+    }
+
+    int expiresAt = cooldownTracker_.getExpiration(piece->id());
+    int remaining = expiresAt - currentTimeMs;
+    if (remaining <= 0) return 0.0f;
+    
+    // החזרת היחס שנותר מתוך משך הצינון המוגדר בקונפיגורציה
+    return static_cast<float>(remaining) / config_.cooldownDurationMs;
+}
+
 }  // namespace kungfu
 </file>
 
@@ -1817,7 +1872,8 @@ public:
     // מתודות הניהול הפיזיקלי של תנועות הכלים
     bool isPieceBusy(const PiecePtr& piece, int currentTimeMs) const noexcept;
     MoveResult executeMove(PiecePtr piece, const Position& from, const Position& to, int currentTimeMs) noexcept;
-
+    float getCooldownProgress(const PiecePtr& piece, int currentTimeMs) const noexcept;
+    const std::vector<Motion>& activeMotions() const noexcept { return activeMotions_; }
 private:
     std::shared_ptr<IBoard> board_;
     std::vector<Motion> activeMotions_;
@@ -1836,7 +1892,6 @@ private:
 namespace kungfu {
 
 // מוצא את המשבצת האחרונה הפנויה בנתיב מ-from לכיוון to (הליכה קדימה).
-// blockedPos הוא יעד של כלי אחר שגם הוא חוסם (למשל winner בהתנגשות ידידותית).
 Position findLastVacantPositionOnPath(
     const Position& from,
     const Position& to,
@@ -1860,16 +1915,14 @@ Position findLastVacantPositionOnPath(
     while (true) {
         Position cur(curR, curC);
 
-        // משבצת חסומה על ידי כלי קיים על הלוח (שאינו airborne)
         auto pieceOpt = board->pieceAt(cur);
         bool occupiedByStationary = pieceOpt.has_value() &&
                                     pieceOpt.value()->state() != PieceState::Airborne;
 
-        // משבצת חסומה על ידי יעד winner
         bool occupiedByBlocked = (blockedPos != nullptr && cur == *blockedPos);
 
         if (occupiedByStationary || occupiedByBlocked) {
-            break; // עצור לפני המשבצת החסומה
+            break; 
         }
 
         last = cur;
@@ -1892,8 +1945,8 @@ CollisionResolver::CollisionResolver(
     , config_(config) {}
 
 void CollisionResolver::resolveMidRouteCollision(
-    const Motion& winner, // הכלי שיצא ראשון - שורד וממשיך במסלולו
-    const Motion& loser,  // הכלי שיצא שני (המאוחר) - מובס ונלכד
+    const Motion& winner, 
+    const Motion& loser,  
     int currentTimeMs,
     std::vector<ArrivalEvent>& events
 ) noexcept {
@@ -1901,13 +1954,10 @@ void CollisionResolver::resolveMidRouteCollision(
         Position collisionPos = loser.piece()->position();
         loser.piece()->setState(PieceState::Captured);
         cooldownTracker_.clear(loser.piece()->id());
-        // מחיקת הכלי לפי הזהות שלו
         board_->removePiece(loser.piece()); 
         events.push_back({loser.from(), collisionPos, loser.piece(), false, true});
     }
-    // מקרה 2: כלים ידידותיים
     else {
-        // הכלי שהגיע מאוחר יותר (loser) נחסם ונעצר במשבצת הפנויה האחרונה
         Position winnerDest = winner.to();
         Position stopPos = findLastVacantPositionOnPath(loser.from(), loser.to(), board_, &winnerDest);
         
@@ -1933,6 +1983,9 @@ bool CollisionResolver::resolveArrival(
     if (from == to && !board_->pieceAt(to).has_value()) {
         piece->setState(PieceState::Idle);
         piece->setPosition(to);
+        
+        board_->placePiece(piece, to); // <--- תיקון באג קפיצה באוויר: החזרת הכלי ללוח
+        
         cooldownTracker_.setCooldown(piece->id(), motion.arrivalTime() + config_.cooldownDurationMs);
         events.push_back({from, to, piece, false, false});
         return true;
@@ -1940,20 +1993,17 @@ bool CollisionResolver::resolveArrival(
 
     auto targetPieceOpt = board_->pieceAt(to);
 
-    // כלי airborne על משבצת היעד — הוא "לא שם" לוגית.
-    // הכלי המגיע יושב על המשבצת, והairborne יאכל אותו כשינחת.
     if (targetPieceOpt.has_value() &&
         targetPieceOpt.value() &&
         targetPieceOpt.value()->state() == PieceState::Airborne) {
         targetPieceOpt = std::nullopt;
     }
 
-    // בדיקת חסימה על ידי כלי ידידותי ביעד
     bool isFriendlyBlock = false;
     if (targetPieceOpt.has_value() && targetPieceOpt.value()) {
         auto targetPiece = targetPieceOpt.value();
         if (targetPiece->color() == piece->color()) {
-            if (piece->type() != PieceType::Knight) { // פרשים מתעלמים מחסימות ידידותיות
+            if (piece->type() != PieceType::Knight) { 
                 isFriendlyBlock = true;
             }
         }
@@ -1963,7 +2013,6 @@ bool CollisionResolver::resolveArrival(
 
     if (isFriendlyBlock) {
         if (from == to) {
-            // תיקון באג 3: קפיצה במקום שנחסמה על ידי כלי ידידותי - מציאת משבצת פנויה סמוכה
             finalDestination = from;
             for (int rOffset = -1; rOffset <= 1; ++rOffset) {
                 for (int cOffset = -1; cOffset <= 1; ++cOffset) {
@@ -1986,14 +2035,15 @@ bool CollisionResolver::resolveArrival(
         piece->setState(PieceState::Idle);
         piece->setPosition(finalDestination);
         
-        // תיקון באג 5: שימוש בזמן הגעה תאורטי מדוייק של הכלי לצורך קביעת הצינון
+        if (from == to) {
+            board_->placePiece(piece, finalDestination); // <--- תיקון באג קפיצה באוויר: החזרת הכלי ללוח במקרה של סטייה
+        }
+
         cooldownTracker_.setCooldown(piece->id(), motion.arrivalTime() + config_.cooldownDurationMs);
-        
         events.push_back({from, finalDestination, piece, false, true});
         return true;
     }
 
-    // נחיתה רגילה ללא חסימות ידידותיות
     bool capturedKing = false;
     if (targetPieceOpt.has_value() && targetPieceOpt.value()) {
         auto targetPiece = targetPieceOpt.value();
@@ -2008,6 +2058,11 @@ bool CollisionResolver::resolveArrival(
     piece->setPosition(finalDestination);
     piece->setState(PieceState::Idle);
     piece->markMoved();
+
+    if (from == to) {
+        // החזרת הכלי ללוח בנחיתה רגילה
+        board_->placePiece(piece, finalDestination); 
+    }
 
     PiecePtr finalPiece = piece;
     if (promoteCallback) {
@@ -2451,12 +2506,10 @@ MoveValidation RuleEngine::validateMove(const Position& from, const Position& to
         return {false, "illegal_piece_move"};
     }
 
-    // 4. מניעת פגיעה בכלי ידידותי ביעד – לא חל על פרש, שיכול לנחות על כל משבצת
-    if (piece->type() != PieceType::Knight) {
-        auto targetPieceOpt = board_->pieceAt(to);
-        if (targetPieceOpt.has_value() && targetPieceOpt.value()->color() == piece->color()) {
-            return {false, "friendly_destination"};
-        }
+    // 4. מניעת פגיעה בכלי ידידותי ביעד.
+    auto targetPieceOpt = board_->pieceAt(to);
+    if (targetPieceOpt.has_value() && targetPieceOpt.value()->color() == piece->color()) {
+        return {false, "friendly_destination"};
     }
 
     // 5. שאילתת חוקיות גיאומטרית מול ה-Strategy המתאים
@@ -2471,6 +2524,57 @@ MoveValidation RuleEngine::validateMove(const Position& from, const Position& to
     return {false, "illegal_piece_move"};
 }
 
+// מימוש האימות ההיפותטי שמבצע את המניפולציה הזמנית בלוח ומנקה אחריו
+MoveValidation RuleEngine::validateHypotheticalMove(const PiecePtr& piece, const Position& from, const Position& to) const {
+    if (!board_ || !piece) {
+        return {false, "internal_error"};
+    }
+
+    int maxRows = board_->rows();
+    int maxCols = board_->cols();
+
+    auto isOutOfBounds = [maxRows, maxCols](const Position& pos) noexcept {
+        return pos.row() < 0 || pos.row() >= maxRows || pos.col() < 0 || pos.col() >= maxCols;
+    };
+
+    if (isOutOfBounds(from) || isOutOfBounds(to)) {
+        return {false, "outside_board"};
+    }
+
+    Position originalPos = piece->position();
+    bool temporaryReposition = (originalPos != from);
+    bool placedTemporarily = false;
+
+    // אם הכלי לא ממוקם פיזית במשבצת שממנה רוצים לבצע את ה-Premove, נציב אותו שם זמנית
+    if (temporaryReposition) {
+        if (board_->pieceAt(from).has_value()) {
+            return {false, "source_occupied"};
+        }
+
+        piece->setPosition(from);
+        placedTemporarily = board_->placePiece(piece, from);
+        if (!placedTemporarily) {
+            // הצבה נכשלה מסיבה בלתי צפויה - משחזרים מיד ולא ממשיכים לאמת
+            // מהלך על מצב לוח שקרי.
+            piece->setPosition(originalPos);
+            return {false, "internal_error"};
+        }
+    }
+
+    // הרצת האימות הסטנדרטי
+    MoveValidation validation = validateMove(from, to);
+
+    // ניקוי והחזרת הלוח והכלי למצבם המקורי המדויק
+    if (temporaryReposition) {
+        if (placedTemporarily) {
+            board_->removePiece(piece);
+        }
+        piece->setPosition(originalPos);
+    }
+
+    return validation;
+}
+
 }  // namespace kungfu
 </file>
 
@@ -2480,6 +2584,7 @@ MoveValidation RuleEngine::validateMove(const Position& from, const Position& to
 #include <memory>
 #include "core/board/IBoard.hpp"
 #include "core/common/Position.hpp"
+#include "core/board/Piece.hpp" // הוספת ייבוא של Piece
 #include <string>
 
 namespace kungfu {
@@ -2496,6 +2601,9 @@ public:
     // בודק חוקיות מלאה של מהלך עבור הלוח הנוכחי ומחזיר שגיאות מובנות
     MoveValidation validateMove(const Position& from, const Position& to) const;
 
+    // מתודה חדשה: סימולציה ואימות של מהלך היפותטי (למשל פרה-מוב)
+    MoveValidation validateHypotheticalMove(const PiecePtr& piece, const Position& from, const Position& to) const;
+
 private:
     std::shared_ptr<IBoard> board_;
 };
@@ -2509,6 +2617,7 @@ private:
 #include "ui/framework/IScreen.hpp"
 #include "ui/framework/ScreenManager.hpp"
 #include "ui/components/CooldownBar.hpp"
+#include "ui/components/Button.hpp" // הוספת ייבוא של Button
 #include "core/engine/GameEngine.hpp"
 #include "core/input/Controller.hpp"
 #include "core/view/SnapshotBuilder.hpp"
@@ -2516,21 +2625,30 @@ private:
 #include "core/common/PieceTokenCodec.hpp"
 #include <memory>
 #include <iostream>
-#include <algorithm>
+#include <unordered_map>
 
 class ChessGameScreen : public IScreen {
 private:
     std::shared_ptr<kungfu::GameEngine> m_gameEngine;
     std::shared_ptr<kungfu::Controller> m_controller;
     CooldownBar m_cooldownBar;
+    kungfu::GameConfig m_config; // שמירת הקונפיגורציה המקורית לצורך Reset
     
-    // מרחב הקואורדינטות הלוגי (1000x1000)
+    // כפתורי ה-Overlay למסך סוף משחק
+    std::unique_ptr<Button> m_rematchButton;
+    std::unique_ptr<Button> m_menuButton;
+    
     float m_logicalRangeX = 1000.0f;
     float m_logicalRangeY = 1000.0f;
 
-public:
-    explicit ChessGameScreen(ScreenManager& manager) : IScreen(manager) {
-        // 1. הגדרת לוח שחמט סטנדרטי התחלתי
+    // מפתח שטוח (row * cols + col) לשימוש במפת hash - נמנע מהצורך בפונקציית
+    // hash מותאמת אישית עבור Position, ומהיר יותר מהשוואת Position מלאה.
+    static int positionKey(const Position& pos, int cols) {
+        return pos.row() * cols + pos.col();
+    }
+
+    // מתודת עזר לאתחול או איפוס מלא של לוח השחמט
+    void resetGame() {
         std::string startBoard = 
             "wR wN wB wQ wK wB wN wR\n"
             "wP wP wP wP wP wP wP wP\n"
@@ -2544,14 +2662,34 @@ public:
         auto board = kungfu::BoardParser::parse(startBoard);
         auto ruleEngine = std::make_shared<kungfu::RuleEngine>(board);
         
-        // 2. אתחול מנוע המשחק והבקר (Controller)
-        m_gameEngine = std::make_shared<kungfu::GameEngine>(board, ruleEngine);
+        m_gameEngine = std::make_shared<kungfu::GameEngine>(board, ruleEngine, m_config);
         m_controller = std::make_shared<kungfu::Controller>(m_gameEngine);
         
-        // 3. סנכרון גודל התא של הבקר עם מערכת הצירים הלוגית (1000 / 8 עמודות = 125)
         int cols = board->cols();
         int logicalCellSize = static_cast<int>(m_logicalRangeX / cols);
         m_controller->setCellSize(logicalCellSize);
+    }
+
+public:
+    explicit ChessGameScreen(ScreenManager& manager, kungfu::GameConfig config = kungfu::GameConfig{}) 
+        : IScreen(manager), m_config(config) 
+    {
+        // 1. טעינת לוח ואתחול המשחק
+        resetGame();
+
+        // 2. אתחול כפתורי פאנל סוף המשחק
+        m_rematchButton = std::make_unique<Button>(
+            Vector2D{260.0f, 520.0f}, Vector2D{220.0f, 60.0f}, "Rematch", 
+            [this]() { resetGame(); }
+        );
+        m_menuButton = std::make_unique<Button>(
+            Vector2D{520.0f, 520.0f}, Vector2D{220.0f, 60.0f}, "Main Menu", 
+            [this]() { m_screenManager.popScreen(); } // חוזר למסך הפתיחה
+        );
+
+        // הגדרת עיצוב ייחודי לכפתורי סוף המשחק
+        m_rematchButton->setColors({40, 110, 75, 255}, {55, 140, 95, 255}, {255, 255, 255, 255}); // ירוק
+        m_menuButton->setColors({50, 50, 60, 255}, {70, 70, 85, 255}, {255, 255, 255, 255});      // אפור כהה
     }
 
     void onEnter() override {
@@ -2563,13 +2701,17 @@ public:
     }
 
     void update(float deltaTime) override {
-        // המרת deltaTime (בשניות) למילישניות ועדכון מנוע המשחק בזמן אמת
         int ms = static_cast<int>(deltaTime * 1000.0f);
         m_gameEngine->wait(ms);
+
+        // עדכון מצב הכפתורים של מסך סוף המשחק
+        if (m_gameEngine->isGameOver()) {
+            m_rematchButton->update(deltaTime);
+            m_menuButton->update(deltaTime);
+        }
     }
 
     void draw(IRenderer& renderer) override {
-        // 1. ניקוי המסך לרקע כהה נעים
         renderer.clear({30, 30, 40, 255});
 
         auto board = m_gameEngine->getBoard();
@@ -2579,29 +2721,29 @@ public:
         float cellWidth = m_logicalRangeX / cols;
         float cellHeight = m_logicalRangeY / rows;
 
-        // 2. ציור לוח השחמט (משבצות בהירות וכהות)
+        // ציור הלוח
         for (int r = 0; r < rows; ++r) {
             for (int c = 0; c < cols; ++c) {
                 Vector2D pos{c * cellWidth, r * cellHeight};
                 Vector2D size{cellWidth, cellHeight};
                 
                 Color cellColor = ((r + c) % 2 == 0) 
-                    ? Color{240, 217, 181, 255}   // קרם בהיר
-                    : Color{181, 136, 99, 255};    // חום עץ
+                    ? Color{240, 217, 181, 255}
+                    : Color{181, 136, 99, 255};
                 
                 renderer.drawRectangle(pos, size, cellColor, true);
             }
         }
 
-        // 3. סימון והדגשת המשבצת שנבחרה כרגע על ידי השחקן
+        // סימון משבצת נבחרת
         auto selectedOpt = m_controller->selectedPosition();
         if (selectedOpt.has_value()) {
             Vector2D pos{selectedOpt->col() * cellWidth, selectedOpt->row() * cellHeight};
             Vector2D size{cellWidth, cellHeight};
-            renderer.drawRectangle(pos, size, {255, 255, 0, 80}, true); // צהוב חצי שקוף
+            renderer.drawRectangle(pos, size, {255, 255, 0, 80}, true);
         }
 
-        // 4. בניית תמונת המצב (Snapshot) הכוללת את מיקומי הכלים (כולל תנועה חלקה)
+        // בניית Snapshot וציור כל הכלים
         auto snapshot = kungfu::view::SnapshotBuilder::build(
             *board,
             m_gameEngine->getArbiter(),
@@ -2611,43 +2753,81 @@ public:
             cellWidth
         );
 
+        // מיפוי חד-פעמי בין מיקום לוגי למיקום הפיקסלי המונפש שלו, כדי שלולאת
+        // הפרימוב למטה תוכל לחפש התאמה ב-O(1) במקום O(n) לכל פריט.
+        std::unordered_map<int, Vector2D> positionToAnimatedPixel;
+        positionToAnimatedPixel.reserve(snapshot.pieces.size());
+
         // 5. ציור הכלים ומדי הצינון (Cooldowns)
         for (const auto& pieceSnap : snapshot.pieces) {
-            // חישוב מרכז ורדיוס הציור של הכלי
-            Vector2D center{pieceSnap.pixelX + cellWidth / 2.0f, pieceSnap.pixelY + cellHeight / 2.0f};
-            float radius = std::min(cellWidth, cellHeight) * 0.35f;
+            // א. זיהוי ה-AssetId של הכלי (למשל "wP" עבור רגלי לבן, "bK" עבור מלך שחור)
+            std::string assetId = (pieceSnap.color == kungfu::PlayerColor::White) ? "w" : "b";
+            assetId += kungfu::PieceTokenCodec::toChar(pieceSnap.type);
 
-            // התאמת צבעים לפי צבע השחקן
-            Color pieceBg = (pieceSnap.color == kungfu::PlayerColor::White) ? Color{255, 255, 255, 255} : Color{45, 45, 45, 255};
-            Color pieceBorder = (pieceSnap.color == kungfu::PlayerColor::White) ? Color{0, 0, 0, 255} : Color{220, 220, 220, 255};
-            Color textCol = (pieceSnap.color == kungfu::PlayerColor::White) ? Color{0, 0, 0, 255} : Color{255, 255, 255, 255};
+            // ב. חישוב מיקום וגודל ה-Sprite של הכלי
+            Vector2D spritePos{pieceSnap.pixelX, pieceSnap.pixelY};
+            Vector2D spriteSize{cellWidth, cellHeight};
 
-            // א. ציור גוף הכלי (עיגול עם מסגרת)
-            renderer.drawCircle(center, radius, pieceBg, true);
-            renderer.drawCircle(center, radius, pieceBorder, false);
+            // ג. ציור ה-Sprite של הכלי באמצעות ה-Renderer האבסטרקטי
+            renderer.drawSprite(assetId, spritePos, spriteSize);
 
-            // ב. כתיבת תו הטוקן המייצג את סוג הכלי
-            char tokenChar = kungfu::PieceTokenCodec::toChar(pieceSnap.type);
-            std::string tokenStr(1, tokenChar);
-            renderer.drawText(tokenStr, {center.x - 10.0f, center.y + 10.0f}, 24, textCol);
-
-            // ג. זיהוי וציור מד הצינון (Cooldown) במידה והכלי בטעינה
-            auto boardPieces = board->pieces();
-            for (const auto& p : boardPieces) {
-                if (p && p->position() == pieceSnap.logicalPosition) {
-                    int currentMs = m_gameEngine->getCurrentTimeMs();
-                    if (m_gameEngine->getArbiter().isOnCooldown(std::const_pointer_cast<kungfu::Piece>(p), currentMs)) {
-                        // מדגם פשוט המראה חיווי ויזואלי של טעינה
-                        m_cooldownBar.draw(renderer, center, 0.6f); 
-                    }
-                }
+            // ד. ציור מד הצינון (Cooldown) - הערך כבר מחושב מראש בתוך ה-Snapshot
+            //    (ראו SnapshotBuilder), כך שאין יותר צורך בחיפוש נוסף אחר הכלי
+            //    בלוח - וגם לא ב-const_pointer_cast כאן.
+            if (pieceSnap.cooldownProgress > 0.0f) {
+                Vector2D center{pieceSnap.pixelX + cellWidth / 2.0f, pieceSnap.pixelY + cellHeight / 2.0f};
+                m_cooldownBar.draw(renderer, center, pieceSnap.cooldownProgress);
             }
-        }
 
-        // 6. חיווי מסך סוף משחק (Game Over)
+            // ה. אגב אורחא, מזינים את מפת החיפוש לטובת ציור הפרימוב הבא
+            positionToAnimatedPixel[positionKey(pieceSnap.logicalPosition, cols)] =
+                Vector2D{pieceSnap.pixelX, pieceSnap.pixelY};
+        }
+        // 5.5. ציור חיווי ויזואלי של מהלכים מתוכננים מראש (Premoves)
+        const auto& premoveQueue = m_gameEngine->getPremoveQueue();
+        for (const auto& entry : premoveQueue.entries()) {
+            auto piece = entry.first;
+            auto to = entry.second; 
+            if (!piece) continue;
+
+            // א. חישוב מיקום פיזיקלי של משבצת היעד המתוכננת
+            float destX = to.col() * cellWidth;
+            float destY = to.row() * cellHeight;
+
+            // ב. ציור ריבוע הדגשה כחול שקוף על משבצת היעד
+            renderer.drawRectangle({destX, destY}, {cellWidth, cellHeight}, {0, 120, 255, 45}, true);   // מילוי כחול שקוף
+            renderer.drawRectangle({destX, destY}, {cellWidth, cellHeight}, {0, 120, 255, 180}, false);  // מסגרת כחולה ברורה
+
+            // ג. חישוב נקודת ההתחלה של הקו המקשר (מתוך המרכז הפיזי החלק של הכלי)
+            //    - חיפוש O(1) במקום סריקה לינארית על snapshot.pieces
+            Vector2D startPt{0.0f, 0.0f};
+            auto it = positionToAnimatedPixel.find(positionKey(piece->position(), cols));
+            if (it != positionToAnimatedPixel.end()) {
+                startPt.x = it->second.x + cellWidth / 2.0f;
+                startPt.y = it->second.y + cellHeight / 2.0f;
+            } else {
+                // מקרה גיבוי (Fallback) אם הכלי לא ב-Snapshot - נשתמש במיקום הלוגי הסטטי
+                startPt.x = piece->position().col() * cellWidth + cellWidth / 2.0f;
+                startPt.y = piece->position().row() * cellHeight + cellHeight / 2.0f;
+            }
+
+            // ד. חישוב נקודת הסוף של הקו (מרכז משבצת היעד)
+            Vector2D endPt{destX + cellWidth / 2.0f, destY + cellHeight / 2.0f};
+
+            // ה. מתיחת קו מקשר כחול ומרשים בעובי 3 פיקסלים
+            renderer.drawLine(startPt, endPt, {0, 120, 255, 180}, 3.0f);
+        }
+        // 6. חיווי ופאנל סוף משחק (Game Over Modal overlay)
         if (snapshot.isGameOver) {
-            renderer.drawRectangle({0.0f, 400.0f}, {1000.0f, 200.0f}, {0, 0, 0, 200}, true);
-            renderer.drawText("GAME OVER", {330.0f, 515.0f}, 48, {255, 60, 60, 255});
+            // ציור פאנל רקע מרובע כהה וחצי שקוף במרכז המסך
+            renderer.drawRectangle({0.0f, 320.0f}, {1000.0f, 320.0f}, {15, 15, 20, 220}, true);
+            renderer.drawRectangle({0.0f, 320.0f}, {1000.0f, 320.0f}, {120, 40, 40, 255}, false); // מסגרת אדומה דקה
+            
+            renderer.drawText("GAME OVER", {330.0f, 420.0f}, 54, {255, 60, 60, 255});
+            
+            // ציור כפתורי ה-Overlay האינטראקטיביים
+            m_rematchButton->draw(renderer);
+            m_menuButton->draw(renderer);
         }
     }
 
@@ -2655,10 +2835,111 @@ public:
         for (const auto& event : events) {
             if (event.type == InputEvent::Type::Mouse) {
                 const auto& mouse = event.mouse;
-                if (mouse.action == MouseEvent::Action::Press && mouse.button == MouseButton::Left) {
-                    // שליחת קואורדינטות לוגיות (0..1000) ישירות ל-Controller
-                    m_controller->click(static_cast<int>(mouse.logicalX), static_cast<int>(mouse.logicalY));
+                
+                // ניתוב קלט לפי מצב המשחק
+                if (m_gameEngine->isGameOver()) {
+                    // בסיום משחק, העכבר שולט אך ורק על כפתורי ה-Overlay
+                    m_rematchButton->handleInput(mouse);
+                    m_menuButton->handleInput(mouse);
+                } else {
+                    if (mouse.action == MouseEvent::Action::Press && mouse.button == MouseButton::Left) {
+                        m_controller->click(static_cast<int>(mouse.logicalX), static_cast<int>(mouse.logicalY));
+                    }
                 }
+            }
+            else if (event.type == InputEvent::Type::Keyboard) {
+                if (event.key.key == Key::Escape) {
+                    m_screenManager.popScreen(); // חזרה לתפריט
+                }
+            }
+        }
+    }
+};
+</file>
+
+<file path="core/view/screens/MainMenuScreen.hpp">
+#pragma once
+
+#include "ui/framework/IScreen.hpp"
+#include "ui/framework/ScreenManager.hpp"
+#include "ui/components/Button.hpp"
+#include "core/view/screens/ChessGameScreen.hpp"
+#include "core/common/GameConfig.hpp"
+#include <memory>
+#include <iostream>
+
+class MainMenuScreen : public IScreen {
+private:
+    Button m_playRealtimeButton;
+    Button m_playTurnButton;
+    Button m_exitButton;
+
+public:
+    explicit MainMenuScreen(ScreenManager& manager) 
+        : IScreen(manager)
+        , m_playRealtimeButton({300.0f, 430.0f}, {400.0f, 65.0f}, "Play Kung-Fu Chess (Real-Time)", [this]() {
+            // פתיחת משחק קונג-פו בזמן אמת (צינון ופרה-מובס פעילים)
+            kungfu::GameConfig config;
+            config.allowSimultaneousMovement = true;
+            config.enablePremoves = true;
+            m_screenManager.pushScreen(std::make_unique<ChessGameScreen>(m_screenManager, config));
+          })
+        , m_playTurnButton({300.0f, 520.0f}, {400.0f, 65.0f}, "Play Classic Chess (Turn-Based)", [this]() {
+            // פתיחת משחק קלאסי מבוסס תורות (צינון, תנועה איטית וקפיצות כבויים לחלוטין)
+            kungfu::GameConfig config;
+            config.allowSimultaneousMovement = false;
+            config.enablePremoves = false;
+            config.cooldownDurationMs = 0;   // ללא זמני צינון
+            config.msPerCellSpeed = 0;       // תנועת החלקה מיידית על הלוח
+            config.jumpDurationMs = 0;       
+            config.allowJumping = false;     // ביטול מוחלט של מנגנון הקפיצות
+            m_screenManager.pushScreen(std::make_unique<ChessGameScreen>(m_screenManager, config));
+          })
+        , m_exitButton({300.0f, 610.0f}, {400.0f, 65.0f}, "Exit Game", [this]() {
+            // הסרת מסך הפתיחה תרוקן את המחסנית ותסגור את המשחק בצורה נקייה
+            m_screenManager.popScreen();
+          })
+    {
+        // התאמת סכמת צבעים איכותית לכל כפתור (נורמלי, ריחוף, טקסט)
+        m_playRealtimeButton.setColors({40, 110, 75, 255}, {55, 140, 95, 255}, {255, 255, 255, 255}); // ירוק
+        m_playTurnButton.setColors({45, 85, 130, 255}, {60, 110, 165, 255}, {255, 255, 255, 255});    // כחול
+        m_exitButton.setColors({140, 50, 50, 255}, {175, 65, 65, 255}, {255, 255, 255, 255});          // אדום
+    }
+
+    void onEnter() override {
+        std::cout << "Main Menu Entered!" << std::endl;
+    }
+
+    void onExit() override {
+        std::cout << "Main Menu Exited!" << std::endl;
+    }
+
+    void update(float deltaTime) override {
+        m_playRealtimeButton.update(deltaTime);
+        m_playTurnButton.update(deltaTime);
+        m_exitButton.update(deltaTime);
+    }
+
+    void draw(IRenderer& renderer) override {
+        // צביעת הרקע בצבע כהה נעים המותאם למשחקים
+        renderer.clear({20, 20, 25, 255});
+
+        // כיוונון קואורדינטות המירכוז של הטקסטים
+        renderer.drawText("KUNG-FU CHESS", {210.0f, 220.0f}, 64, {240, 200, 80, 255});
+        renderer.drawText("Real-Time Battle Engine", {315.0f, 300.0f}, 22, {180, 180, 190, 255});
+
+        // רינדור הכפתורים
+        m_playRealtimeButton.draw(renderer);
+        m_playTurnButton.draw(renderer);
+        m_exitButton.draw(renderer);
+    }
+
+    void handleInput(const std::vector<InputEvent>& events) override {
+        for (const auto& event : events) {
+            if (event.type == InputEvent::Type::Mouse) {
+                m_playRealtimeButton.handleInput(event.mouse);
+                m_playTurnButton.handleInput(event.mouse);
+                m_exitButton.handleInput(event.mouse);
             }
             else if (event.type == InputEvent::Type::Keyboard) {
                 if (event.key.key == Key::Escape) {
@@ -2690,6 +2971,11 @@ struct PieceSnapshot {
     // מיקומי ציור בפיקסלים לטובת ה-Renderer
     float pixelX;
     float pixelY;
+
+    // אחוז התקדמות הצינון (0.0f = מוכן, >0.0f = בטעינה). מחושב מראש כאן,
+    // בזמן בניית ה-Snapshot, כדי שכל צרכן (View) לא יצטרך לבצע חיפוש נוסף
+    // אחר הכלי בלוח כדי לשאול את ה-Arbiter בעצמו.
+    float cooldownProgress = 0.0f;
 };
 
 struct GameSnapshot {
@@ -2704,34 +2990,65 @@ struct GameSnapshot {
 }  // namespace kungfu
 </file>
 
-<file path="core/view/IRenderer.hpp">
-#pragma once
-
-#include "core/view/GameSnapshot.hpp"
-
-namespace kungfu {
-namespace view {
-
-class IRenderer {
-public:
-    virtual ~IRenderer() = default;
-
-    // מקבל תמונת מצב ויזואלית ומצייר אותה למסך
-    virtual void render(const GameSnapshot& snapshot) = 0;
-};
-
-}  // namespace view
-}  // namespace kungfu
-</file>
-
 <file path="core/view/SnapshotBuilder.cpp">
 #include "core/view/SnapshotBuilder.hpp"
 #include <algorithm>
+#include <cmath>
+#include <memory>
+#include <unordered_set>
+#include <vector>
 
 namespace kungfu
 {
     namespace view
     {
+        namespace
+        {
+            struct PixelPos { float x; float y; };
+
+            // תיקון: לוגיקת האינטרפולציה (פרבולה עבור Airborne, smoothstep עבור
+            // Moving) הייתה משוכפלת כמעט מילה במילה בין שתי הלולאות למטה.
+            // ריכזתי אותה כאן כדי שכל שינוי עתידי בעקומת האנימציה יתבצע במקום אחד.
+            PixelPos computeAnimatedPixel(PieceState state,
+                                           const Position &from,
+                                           const Position &to,
+                                           int startTime,
+                                           int arrivalTime,
+                                           int currentTimeMs,
+                                           float cellSize)
+            {
+                float startX = from.col() * cellSize;
+                float startY = from.row() * cellSize;
+                float endX = to.col() * cellSize;
+                float endY = to.row() * cellSize;
+
+                int duration = arrivalTime - startTime;
+                float t = 1.0f;
+                if (duration > 0)
+                {
+                    int elapsed = currentTimeMs - startTime;
+                    t = static_cast<float>(elapsed) / static_cast<float>(duration);
+                    t = std::max(0.0f, std::min(t, 1.0f));
+                }
+
+                PixelPos result{};
+                if (state == PieceState::Airborne)
+                {
+                    result.x = startX + t * (endX - startX);
+                    result.y = startY + t * (endY - startY);
+
+                    float maxHeight = cellSize * 1.5f;
+                    result.y -= maxHeight * 4.0f * t * (1.0f - t);
+                }
+                else
+                {
+                    float smoothed_t = t * t * (3.0f - 2.0f * t);
+                    result.x = startX + smoothed_t * (endX - startX);
+                    result.y = startY + smoothed_t * (endY - startY);
+                }
+                return result;
+            }
+        } // anonymous namespace
 
         GameSnapshot SnapshotBuilder::build(
             const IBoard &board,
@@ -2747,7 +3064,19 @@ namespace kungfu
             snap.isGameOver = gameOver;
             snap.selectedCell = selectedCell;
 
-            for (const auto &piece : board.pieces())
+            // תיקון: קריאה יחידה ל-board.pieces() (ולא הסתמכות מרומזת על
+            // ה-range-for לקרוא לה שוב בהמשך), ו-reserve כדי למנוע reallocations
+            // חוזרות של snap.pieces תוך כדי מילוי.
+            const auto &boardPieces = board.pieces();
+            snap.pieces.reserve(boardPieces.size());
+
+            // תיקון: unordered_set במקום vector+std::find - חיפוש O(1) במקום
+            // O(n) על כל כלי (משפיע בעיקר כשיש הרבה כלים/אנימציות במקביל).
+            std::unordered_set<std::uint64_t> drawnPieceIds;
+            drawnPieceIds.reserve(boardPieces.size());
+
+            // 1. ציור כלים שנמצאים פיזית על הלוח (כולל כלים מחליקים רגילים)
+            for (const auto &piece : boardPieces)
             {
                 if (!piece || piece->state() == PieceState::Captured)
                 {
@@ -2760,11 +3089,13 @@ namespace kungfu
                 pSnap.logicalPosition = piece->position();
                 pSnap.state = piece->state();
 
-                float currentX = piece->position().col() * cellSize;
-                float currentY = piece->position().row() * cellSize;
+                // תיקון: cooldownProgress מחושב פעם אחת כאן, כדי שה-View (למשל
+                // ChessGameScreen) לא יצטרך לחפש שוב את הכלי בלוח בשביל זה.
+                pSnap.cooldownProgress = arbiter.getCooldownProgress(
+                    std::const_pointer_cast<Piece>(piece), currentTimeMs);
 
-                pSnap.pixelX = currentX;
-                pSnap.pixelY = currentY;
+                pSnap.pixelX = piece->position().col() * cellSize;
+                pSnap.pixelY = piece->position().row() * cellSize;
 
                 if (piece->state() == PieceState::Moving || piece->state() == PieceState::Airborne)
                 {
@@ -2772,25 +3103,55 @@ namespace kungfu
                     if (motionOpt.has_value())
                     {
                         const auto &motion = motionOpt.value();
-                        float startX = motion.from().col() * cellSize;
-                        float startY = motion.from().row() * cellSize;
-                        float endX = motion.to().col() * cellSize;
-                        float endY = motion.to().row() * cellSize;
-
                         int duration = motion.arrivalTime() - motion.startTime();
                         if (duration > 0)
                         {
-                            int elapsed = currentTimeMs - motion.startTime();
-                            float t = static_cast<float>(elapsed) / static_cast<float>(duration);
-                            t = std::max(0.0f, std::min(t, 1.0f));
-
-                            pSnap.pixelX = startX + t * (endX - startX);
-                            pSnap.pixelY = startY + t * (endY - startY);
+                            auto px = computeAnimatedPixel(
+                                piece->state(), motion.from(), motion.to(),
+                                motion.startTime(), motion.arrivalTime(),
+                                currentTimeMs, cellSize);
+                            pSnap.pixelX = px.x;
+                            pSnap.pixelY = px.y;
                         }
                     }
                 }
 
                 snap.pieces.push_back(pSnap);
+                drawnPieceIds.insert(piece->id());
+            }
+
+            // 2. זיהוי וציור כלים שנמצאים במצב מעוף (Airborne) והוסרו זמנית מהלוח
+            for (const auto &motion : arbiter.activeMotions())
+            {
+                auto piece = motion.piece();
+                if (!piece || piece->state() == PieceState::Captured)
+                {
+                    continue;
+                }
+
+                // אם הכלי כבר צוייר בלולאה הראשונה, נדלג עליו
+                if (drawnPieceIds.find(piece->id()) != drawnPieceIds.end())
+                {
+                    continue;
+                }
+
+                PieceSnapshot pSnap;
+                pSnap.type = piece->type();
+                pSnap.color = piece->color();
+                pSnap.logicalPosition = piece->position();
+                pSnap.state = piece->state();
+                pSnap.cooldownProgress = arbiter.getCooldownProgress(
+                    std::const_pointer_cast<Piece>(piece), currentTimeMs);
+
+                auto px = computeAnimatedPixel(
+                    piece->state(), motion.from(), motion.to(),
+                    motion.startTime(), motion.arrivalTime(),
+                    currentTimeMs, cellSize);
+                pSnap.pixelX = px.x;
+                pSnap.pixelY = px.y;
+
+                snap.pieces.push_back(pSnap);
+                drawnPieceIds.insert(piece->id());
             }
 
             return snap;
@@ -2829,15 +3190,16 @@ public:
 
 <file path="graphics_impl/img_backend/ImgInputTranslator.hpp">
 #pragma once
+#include "ui/framework/IInputTranslator.hpp"
 #include "ui/framework/InputEvents.hpp"
 #include <opencv2/opencv.hpp>
 #include <vector>
 #include <mutex>
 
-class ImgInputTranslator {
+class ImgInputTranslator : public IInputTranslator {
 private:
     Vector2D m_logicalRange{1000.0f, 1000.0f};
-    
+
     // מפתח לאחסון זמני של אירועי עכבר שמגיעים מה-Callback של OpenCV (המשתמש ב-Thread נפרד)
     static std::vector<InputEvent> s_pendingMouseEvents;
     static std::mutex s_eventsMutex;
@@ -2851,7 +3213,7 @@ private:
         MouseEvent mouseEvent;
         // תרגום קואורדינטות פיזיות לקואורדינטות לוגיות
         Vector2D physicalSize = translator->getPhysicalWindowSize();
-        
+
         mouseEvent.logicalX = (static_cast<float>(x) / physicalSize.x) * translator->m_logicalRange.x;
         mouseEvent.logicalY = (static_cast<float>(y) / physicalSize.y) * translator->m_logicalRange.y;
 
@@ -2903,10 +3265,25 @@ private:
 
     Vector2D m_windowSize{800.0f, 800.0f}; // גודל פיזי ברירת מחדל של החלון
 
+    // תרגום קוד מקש גולמי מ-OpenCV למקש לוגי
+    static Key translateKey(int rawCode) {
+        switch (rawCode & 0xFF) { // סינון מסכות קוד מקש בסיסי
+            case 27: return Key::Escape;
+            case 32: return Key::Space;
+            case 'w': case 'W': return Key::W;
+            case 's': case 'S': return Key::S;
+            case 'a': case 'A': return Key::A;
+            case 'd': case 'D': return Key::D;
+            default: return Key::Unknown;
+        }
+    }
+
 public:
     ImgInputTranslator() = default;
 
-    // רישום ה-Callback לחלון של OpenCV
+    // רישום ה-Callback לחלון של OpenCV. זו פעולת אתחול חד-פעמית וספציפית
+    // ל-backend, ולכן אינה חלק מ-IInputTranslator - main.cpp קורא לה על
+    // הטיפוס הקונקרטי לפני תחילת הלולאה, בדיוק כמו יצירת החלון עצמו.
     void registerWindow(const std::string& windowName, Vector2D windowSize) {
         m_windowSize = windowSize;
         cv::setMouseCallback(windowName, onMouse, this);
@@ -2921,57 +3298,30 @@ public:
     }
 
     /**
-     * אוסף את כל אירועי הקלט שהצטברו מהפריים האחרון (עכבר ומקלדת).
-     * @param keyResult תוצאת הקריאה ל-cv::waitKey בפריים הנוכחי (או -1 אם לא נלחץ מקש).
-     * @return וקטור המכיל את כל אירועי הקלט המתורגמים.
+     * מימוש בפועל של IInputTranslator::pollEvents.
+     * אוסף את כל אירועי הקלט שהצטברו מהפריים האחרון (עכבר ומקלדת), כולל
+     * הפעלת cv::waitKey הפנימית - פרט מימוש שמוסתר לגמרי מהקורא.
      */
-    std::vector<InputEvent> pollEvents(int keyResult) {
-        std::vector<InputEvent> processedEvents;
-
-        // 1. שליפת אירועי העכבר שהצטברו בצורה בטוחה מרובוטיקת ה-Thread של ה-Callback
+    void pollEvents(std::vector<InputEvent>& outEvents) override {
+        // 1. שליפת אירועי העכבר שהצטברו בצורה בטוחה מהתור המשותף עם ה-Callback
         {
             std::lock_guard<std::mutex> lock(s_eventsMutex);
-            processedEvents = std::move(s_pendingMouseEvents);
+            outEvents.insert(outEvents.end(), s_pendingMouseEvents.begin(), s_pendingMouseEvents.end());
             s_pendingMouseEvents.clear();
         }
 
-        // 2. תרגום אירוע מקלדת (במידה ונלחץ מקש ב-OpenCV)
+        // 2. דגימת מקלדת - קריאת cv::waitKey הועברה לכאן, פנימה ל-Translator
+        int keyResult = cv::waitKey(1);
         if (keyResult != -1) {
             KeyEvent keyEvent;
             keyEvent.rawCode = keyResult;
-            
-            // מיפוי בסיסי של מקשים שימושיים מתוך קודי ה-ASCII ש-OpenCV מחזיר
-            switch (keyResult & 0xFF) { // סינון מסכות קוד מקש בסיסי
-                case 27: // Escape key
-                    keyEvent.key = Key::Escape;
-                    break;
-                case 32: // Space
-                    keyEvent.key = Key::Space;
-                    break;
-                case 'w': case 'W':
-                    keyEvent.key = Key::W;
-                    break;
-                case 's': case 'S':
-                    keyEvent.key = Key::S;
-                    break;
-                case 'a': case 'A':
-                    keyEvent.key = Key::A;
-                    break;
-                case 'd': case 'D':
-                    keyEvent.key = Key::D;
-                    break;
-                default:
-                    keyEvent.key = Key::Unknown;
-                    break;
-            }
+            keyEvent.key = translateKey(keyResult);
 
             InputEvent ie;
             ie.type = InputEvent::Type::Keyboard;
             ie.key = keyEvent;
-            processedEvents.push_back(ie);
+            outEvents.push_back(ie);
         }
-
-        return processedEvents;
     }
 };
 
@@ -2984,71 +3334,113 @@ inline std::mutex ImgInputTranslator::s_eventsMutex;
 #pragma once
 #include "ui/framework/IRenderer.hpp"
 #include "ui/framework/AssetManager.hpp"
-#include "graphics_impl/img.hpp" 
+#include "graphics_impl/img.hpp"
 #include <opencv2/opencv.hpp>
 #include <algorithm>
+#include <string>
 #include <string_view>
+#include <unordered_map>
+#include <utility>
 
 // מימוש נכס תמונה עבור ה-AssetManager המבוסס על ה-Img שלכם
-class ImgTextureAsset : public IAsset {
+class ImgTextureAsset : public IAsset
+{
 public:
     Img image;
-    
-    explicit ImgTextureAsset(const std::string& filePath) {
+
+    explicit ImgTextureAsset(const std::string &filePath)
+    {
         image.read(filePath);
     }
 };
 
-class ImgRenderer : public IRenderer {
+class ImgRenderer : public IRenderer
+{
 private:
-    Img& m_screenCanvas;                       // קנבס הציור הראשי של המשחק
+    Img &m_screenCanvas;                       // קנבס הציור הראשי של המשחק
+    std::string m_windowName;                  // שם החלון הפיזי - נדרש עבור imshow/getWindowProperty
     Vector2D m_logicalRange{1000.0f, 1000.0f}; // מרחב הקואורדינטות הלוגי
     AssetManager m_assetManager;
 
+    // מטמון sprite מוקטן פר assetId, כדי לא לבצע cv::resize מחדש בכל פריים
+    // כשגודל התא לא השתנה. הערך שמור יחד עם הגודל שביקש אותו, כך שאם
+    // הגודל המבוקש משתנה (למשל שינוי גודל חלון) המטמון מתעדכן אוטומטית -
+    // אין צורך בלוגיקת invalidation נפרדת. חל רק על הנתיב הנפוץ (בלי
+    // סיבוב, בלי ROI חיתוך מ-sprite sheet).
+    std::unordered_map<std::string, std::pair<Vector2D, Img>> m_spriteScaleCache;
+
     // המרת צבע לוגי ל-cv::Scalar של OpenCV (בפורמט BGRA/BGR)
-    cv::Scalar toCvScalar(Color color) const {
+    cv::Scalar toCvScalar(Color color) const
+    {
         return cv::Scalar(color.b, color.g, color.r, color.a);
     }
 
     // תרגום קואורדינטה לוגית לנקודה פיזית על ה-cv::Mat
-    cv::Point toPhysical(Vector2D logicalPos) const {
+    cv::Point toPhysical(Vector2D logicalPos) const
+    {
         Vector2D targetSize = getTargetSize();
         return cv::Point(
             static_cast<int>((logicalPos.x / m_logicalRange.x) * targetSize.x),
-            static_cast<int>((logicalPos.y / m_logicalRange.y) * targetSize.y)
-        );
+            static_cast<int>((logicalPos.y / m_logicalRange.y) * targetSize.y));
     }
 
     // תרגום מימדים לוגיים למימדים פיזיים
-    cv::Size sizeToPhysical(Vector2D logicalSize) const {
+    cv::Size sizeToPhysical(Vector2D logicalSize) const
+    {
         Vector2D targetSize = getTargetSize();
         return cv::Size(
             static_cast<int>((logicalSize.x / m_logicalRange.x) * targetSize.x),
-            static_cast<int>((logicalSize.y / m_logicalRange.y) * targetSize.y)
-        );
+            static_cast<int>((logicalSize.y / m_logicalRange.y) * targetSize.y));
     }
 
 public:
-    explicit ImgRenderer(Img& screenCanvas) : m_screenCanvas(screenCanvas) {}
+    explicit ImgRenderer(Img &screenCanvas, std::string windowName)
+        : m_screenCanvas(screenCanvas), m_windowName(std::move(windowName)) {}
 
-    void beginFrame() override {
+    void beginFrame() override
+    {
         // הכנה לתחילת פריים (ניתן להוסיף לוגיקה במידת הצורך)
     }
 
-    void clear(Color color) override {
-        if (!m_screenCanvas.is_loaded()) {
+    void clear(Color color) override
+    {
+        if (!m_screenCanvas.is_loaded())
+        {
             return;
         }
         // צביעת המטריצה כולה בצבע הרקע שנבחר
         m_screenCanvas.mat().setTo(toCvScalar(color));
     }
 
-    void endFrame() override {
-        // סיום פריים (למשל רענון חלון או כתיבה לדיסק)
+    void endFrame() override
+    {
+        // סיום פריים (למשל חישובים סופיים לפני הצגה, אם יידרשו בעתיד)
     }
 
-    void drawRectangle(Vector2D position, Vector2D size, Color color, bool fill) override {
-        if (!m_screenCanvas.is_loaded()) return;
+    void presentFrame() override
+    {
+        if (!m_screenCanvas.is_loaded())
+            return;
+        cv::imshow(m_windowName, m_screenCanvas.get_mat());
+    }
+
+    bool isWindowOpen() const override
+    {
+        try
+        {
+            double prop = cv::getWindowProperty(m_windowName, cv::WND_PROP_AUTOSIZE);
+            return prop >= 0;
+        }
+        catch (const cv::Exception &)
+        {
+            return false;
+        }
+    }
+
+    void drawRectangle(Vector2D position, Vector2D size, Color color, bool fill) override
+    {
+        if (!m_screenCanvas.is_loaded())
+            return;
 
         cv::Point topLeft = toPhysical(position);
         cv::Size physSize = sizeToPhysical(size);
@@ -3058,8 +3450,10 @@ public:
         cv::rectangle(m_screenCanvas.mat(), topLeft, bottomRight, toCvScalar(color), thickness, cv::LINE_AA);
     }
 
-    void drawLine(Vector2D start, Vector2D end, Color color, float thickness) override {
-        if (!m_screenCanvas.is_loaded()) return;
+    void drawLine(Vector2D start, Vector2D end, Color color, float thickness) override
+    {
+        if (!m_screenCanvas.is_loaded())
+            return;
 
         cv::Point p1 = toPhysical(start);
         cv::Point p2 = toPhysical(end);
@@ -3067,13 +3461,12 @@ public:
         cv::line(m_screenCanvas.mat(), p1, p2, toCvScalar(color), static_cast<int>(thickness), cv::LINE_AA);
     }
 
-    void drawCircle(Vector2D center, float radius, Color color, bool fill) override {
-        if (!m_screenCanvas.is_loaded()) return;
+    void drawCircle(Vector2D center, float radius, Color color, bool fill) override
+    {
+        if (!m_screenCanvas.is_loaded())
+            return;
 
         cv::Point physCenter = toPhysical(center);
-        // Scale radius the same way a width dimension is scaled, using a
-        // direct ratio rather than routing through sizeToPhysical (which
-        // would zero-out the result when the y-component is 0).
         Vector2D targetSize = getTargetSize();
         int r = static_cast<int>((radius / m_logicalRange.x) * targetSize.x);
 
@@ -3081,93 +3474,124 @@ public:
         cv::circle(m_screenCanvas.mat(), physCenter, r, toCvScalar(color), thickness, cv::LINE_AA);
     }
 
-    void drawSprite(std::string_view assetId, 
-                    Vector2D position, 
-                    Vector2D size, 
+    void drawSprite(std::string_view assetId,
+                    Vector2D position,
+                    Vector2D size,
                     float rotationDegrees,
-                    const Vector2D* srcOffset,
-                    const Vector2D* srcSize) override {
-        if (!m_screenCanvas.is_loaded()) return;
+                    const Vector2D *srcOffset,
+                    const Vector2D *srcSize) override
+    {
+        if (!m_screenCanvas.is_loaded())
+            return;
 
-        try {
-            auto& asset = m_assetManager.getAsset<ImgTextureAsset>(assetId);
-            if (!asset.image.is_loaded()) return;
+        try
+        {
+            auto &asset = m_assetManager.getAsset<ImgTextureAsset>(assetId);
+            if (!asset.image.is_loaded())
+                return;
 
             cv::Point physPos = toPhysical(position);
             cv::Size physSize = sizeToPhysical(size);
 
-            // במקרה שנדרשת תת-תמונה (Sprite Sheet / Atlas)
             Img spriteToDraw;
-            if (srcOffset && srcSize) {
-                // חיתוך האזור הרלוונטי ממטריצת המקור
-                const cv::Mat& srcMat = asset.image.get_mat();
+            if (srcOffset && srcSize)
+            {
+                // נתיב ה-Sprite Sheet/Atlas לא נכנס למטמון (פחות נפוץ, וגם
+                // ה-ROI עצמו יכול להשתנות בין קריאות עם אותו assetId).
+                const cv::Mat &srcMat = asset.image.get_mat();
                 cv::Rect roi(
-                    static_cast<int>(srcOffset->x), 
-                    static_cast<int>(srcOffset->y), 
-                    static_cast<int>(srcSize->x), 
-                    static_cast<int>(srcSize->y)
-                );
-                
-                // יצירת אובייקט Img זמני עבור ה-ROI וחשיפת המטריצה שלו
+                    static_cast<int>(srcOffset->x),
+                    static_cast<int>(srcOffset->y),
+                    static_cast<int>(srcSize->x),
+                    static_cast<int>(srcSize->y));
+
                 cv::Mat cutMat = srcMat(roi).clone();
                 cv::resize(cutMat, cutMat, physSize, 0, 0, cv::INTER_LINEAR);
 
                 Img croppedImg;
                 croppedImg.mat() = cutMat;
                 spriteToDraw = croppedImg;
-            } else {
-                // לקיחת התמונה המלאה ושינוי גודלה לגודל הפיזי הנדרש
-                spriteToDraw = asset.image;
-                cv::Mat scaledMat;
-                cv::resize(spriteToDraw.get_mat(), scaledMat, physSize, 0, 0, cv::INTER_LINEAR);
-                spriteToDraw.mat() = scaledMat;
+            }
+            else
+            {
+                // תיקון: הנתיב הנפוץ (תמונה שלמה, בלי סיבוב) - בדיקת מטמון
+                // לפני ביצוע cv::resize. ברוב הפריימים גודל התא לא משתנה,
+                // כך שברירת המחדל היא cache hit ולא resize חוזר על כל כלי.
+                Vector2D requestedSize{static_cast<float>(physSize.width), static_cast<float>(physSize.height)};
+                std::string cacheKey(assetId);
+
+                auto cacheIt = m_spriteScaleCache.find(cacheKey);
+                bool cacheHit = cacheIt != m_spriteScaleCache.end() &&
+                                 cacheIt->second.first.x == requestedSize.x &&
+                                 cacheIt->second.first.y == requestedSize.y;
+
+                if (cacheHit)
+                {
+                    spriteToDraw = cacheIt->second.second;
+                }
+                else
+                {
+                    cv::Mat scaledMat;
+                    cv::resize(asset.image.get_mat(), scaledMat, physSize, 0, 0, cv::INTER_LINEAR);
+                    Img scaledImg;
+                    scaledImg.mat() = scaledMat;
+                    m_spriteScaleCache[cacheKey] = {requestedSize, scaledImg};
+                    spriteToDraw = scaledImg;
+                }
             }
 
-            // ביצוע סיבוב לתמונה במידה וצוין (rotationDegrees != 0)
-            if (std::abs(rotationDegrees) > 0.01f) {
+            // ביצוע סיבוב לתמונה במידה וצוין (rotationDegrees != 0) - תמיד
+            // מחושב על עותק, כך שהמטמון עצמו אף פעם לא מכיל תמונה מסובבת.
+            if (std::abs(rotationDegrees) > 0.01f)
+            {
                 cv::Mat rotated;
                 cv::Point2f center(spriteToDraw.get_mat().cols / 2.0f, spriteToDraw.get_mat().rows / 2.0f);
                 cv::Mat rotationMatrix = cv::getRotationMatrix2D(center, -rotationDegrees, 1.0);
-                cv::warpAffine(spriteToDraw.get_mat(), rotated, rotationMatrix, spriteToDraw.get_mat().size(), cv::INTER_LINEAR, cv::BORDER_CONSTANT, cv::Scalar(0,0,0,0));
+                cv::warpAffine(spriteToDraw.get_mat(), rotated, rotationMatrix, spriteToDraw.get_mat().size(), cv::INTER_LINEAR, cv::BORDER_CONSTANT, cv::Scalar(0, 0, 0, 0));
                 spriteToDraw.mat() = rotated;
             }
 
             // ציור ה-Sprite על גבי קנבס המסך הראשי
             spriteToDraw.draw_on(m_screenCanvas, physPos.x, physPos.y);
-
-        } catch (...) {
+        }
+        catch (...)
+        {
             // ציור מלבן ורוד חלופי (Fallback במקרה של שגיאה בטעינת הנכס)
             drawRectangle(position, size, {255, 0, 255, 255}, true);
         }
     }
 
-    void drawText(std::string_view text, Vector2D position, int fontSize, Color color) override {
-        if (!m_screenCanvas.is_loaded()) return;
+    void drawText(std::string_view text, Vector2D position, int fontSize, Color color) override
+    {
+        if (!m_screenCanvas.is_loaded())
+            return;
 
         cv::Point physPos = toPhysical(position);
-        
-        // התאמת גודל הגופן של OpenCV (Scale) ביחס לגודל הלוגי המבוקש
-        double fontScale = fontSize / 24.0; 
-        
+
+        Vector2D targetSize = getTargetSize();
+        double fontScale = (fontSize / 24.0) * (targetSize.x / m_logicalRange.x);
+
         m_screenCanvas.put_text(
-            std::string(text), 
-            physPos.x, 
-            physPos.y, 
-            fontScale, 
-            toCvScalar(color), 
-            1
-        );
+            std::string(text),
+            physPos.x,
+            physPos.y,
+            fontScale,
+            toCvScalar(color),
+            1);
     }
 
-    Vector2D getTargetSize() const override {
-        if (!m_screenCanvas.is_loaded()) {
-            return { 800.0f, 800.0f }; // ברירת מחדל בטוחה
+    Vector2D getTargetSize() const override
+    {
+        if (!m_screenCanvas.is_loaded())
+        {
+            return {800.0f, 800.0f}; // ברירת מחדל בטוחה
         }
-        const cv::Mat& mat = m_screenCanvas.get_mat();
-        return { static_cast<float>(mat.cols), static_cast<float>(mat.rows) };
+        const cv::Mat &mat = m_screenCanvas.get_mat();
+        return {static_cast<float>(mat.cols), static_cast<float>(mat.rows)};
     }
 
-    AssetManager& getAssetManager() {
+    AssetManager &getAssetManager()
+    {
         return m_assetManager;
     }
 };
@@ -3214,6 +3638,14 @@ Img& Img::read(const std::string& path,
 void Img::draw_on(Img& other_img, int x, int y) {
     if (img.empty() || other_img.img.empty()) {
         throw std::runtime_error("Both images must be loaded before drawing.");
+    }
+
+    // תיקון: הבדיקה הקודמת תפסה רק חריגה מהגבול הימני/תחתון (x+w>W, y+h>H),
+    // אבל לא x/y שליליים. cv::Rect עם קואורדינטה שלילית הוא לא חוקי ומייצר
+    // חריגת OpenCV עמומה במקום שגיאה ברורה כאן.
+    if (x < 0 || y < 0) {
+        throw std::runtime_error("Draw position cannot be negative (x=" +
+                                  std::to_string(x) + ", y=" + std::to_string(y) + ").");
     }
 
     // Handle different channel counts
@@ -3547,7 +3979,14 @@ public:
             return; // המשאב כבר קיים בזיכרון, אין צורך לטעון שוב
         }
 
-        m_assets[assetId] = std::make_unique<T>(std::forward<Args>(args)...);
+        // תיקון: בונים את האובייקט לפני ההכנסה למפה, במקום
+        // m_assets[assetId] = std::make_unique<T>(...).
+        // אם הבנייה זורקת חריגה (למשל קובץ תמונה חסר), חשוב שהמפה לא תכיל
+        // entry ריק עבור assetId זה - אחרת הבדיקה למעלה תחשוב שהנכס "כבר
+        // נטען" בכל קריאה עתידית, והנכס לא ייטען לעולם שוב באותה ריצה,
+        // אפילו אם התיקון בפועל (למשל הוספת הקובץ החסר) כבר בוצע.
+        auto asset = std::make_unique<T>(std::forward<Args>(args)...);
+        m_assets.emplace(assetId, std::move(asset));
     }
 
     /**
@@ -3683,15 +4122,21 @@ public:
     virtual void clear(Color color) = 0;
     virtual void endFrame() = 0;
 
+    // הצגת הפריים שצויר על גבי משטח התצוגה הפיזי (למשל cv::imshow).
+    virtual void presentFrame() = 0;
+
+    // בדיקה האם משטח התצוגה (החלון) עדיין פתוח מבחינת המשתמש/מערכת ההפעלה.
+    virtual bool isWindowOpen() const = 0;
+
     // פעולות ציור בסיסיות (פרימיטיביים)
     virtual void drawRectangle(Vector2D position, Vector2D size, Color color, bool fill = true) = 0;
     virtual void drawLine(Vector2D start, Vector2D end, Color color, float thickness = 1.0f) = 0;
     virtual void drawCircle(Vector2D center, float radius, Color color, bool fill = true) = 0;
 
     // ציור תמונה/טקסטורה מבוססת מזהה טקסטואלי
-    virtual void drawSprite(std::string_view assetId, 
-                            Vector2D position, 
-                            Vector2D size, 
+    virtual void drawSprite(std::string_view assetId,
+                            Vector2D position,
+                            Vector2D size,
                             float rotationDegrees = 0.0f,
                             const Vector2D* srcOffset = nullptr,
                             const Vector2D* srcSize = nullptr) = 0;
@@ -3761,31 +4206,43 @@ private:
     std::vector<PendingAction> m_pendingActions;
 
     void applyPendingActions() {
-        for (auto& action : m_pendingActions) {
-            switch (action.type) {
-                case PendingActionType::Push:
-                    m_screens.push_back(std::move(action.screen));
-                    m_screens.back()->onEnter();
-                    break;
+        // תיקון: לא מבצעים range-for ישירות על m_pendingActions, כי onEnter()/
+        // onExit() עלולים לקרוא בעצמם ל-pushScreen/popScreen/changeScreen (למשל
+        // מסך שפותח אוטומטית מסך משנה בכניסה) - מה שידחוף פעולות חדשות לתוך
+        // m_pendingActions בזמן שאנחנו עדיין מאזרים אותו, ויגרום ל-invalidation
+        // של האיטרטורים (Undefined Behavior).
+        //
+        // הפתרון: מושכים (move) את כל הפעולות החוצה למשתנה מקומי, מבצעים אותן,
+        // וחוזרים על התהליך כל עוד נוספו פעולות חדשות תוך כדי הביצוע.
+        while (!m_pendingActions.empty()) {
+            std::vector<PendingAction> actionsToApply = std::move(m_pendingActions);
+            m_pendingActions.clear();
 
-                case PendingActionType::Pop:
-                    if (!m_screens.empty()) {
-                        m_screens.back()->onExit();
-                        m_screens.pop_back();
-                    }
-                    break;
+            for (auto& action : actionsToApply) {
+                switch (action.type) {
+                    case PendingActionType::Push:
+                        m_screens.push_back(std::move(action.screen));
+                        m_screens.back()->onEnter();
+                        break;
 
-                case PendingActionType::Change:
-                    while (!m_screens.empty()) {
-                        m_screens.back()->onExit();
-                        m_screens.pop_back();
-                    }
-                    m_screens.push_back(std::move(action.screen));
-                    m_screens.back()->onEnter();
-                    break;
+                    case PendingActionType::Pop:
+                        if (!m_screens.empty()) {
+                            m_screens.back()->onExit();
+                            m_screens.pop_back();
+                        }
+                        break;
+
+                    case PendingActionType::Change:
+                        while (!m_screens.empty()) {
+                            m_screens.back()->onExit();
+                            m_screens.pop_back();
+                        }
+                        m_screens.push_back(std::move(action.screen));
+                        m_screens.back()->onEnter();
+                        break;
+                }
             }
         }
-        m_pendingActions.clear();
     }
 
 public:
@@ -3849,7 +4306,9 @@ public:
 #include "graphics_impl/img_backend/ImgRenderer.hpp"
 #include "graphics_impl/img_backend/ImgInputTranslator.hpp"
 #include "ui/framework/ScreenManager.hpp"
-#include "core/view/screens/ChessGameScreen.hpp" 
+#include "ui/framework/IRenderer.hpp"
+#include "ui/framework/IInputTranslator.hpp"
+#include "core/view/screens/MainMenuScreen.hpp"
 #include "graphics_impl/img.hpp"
 #include <chrono>
 #include <memory>
@@ -3858,31 +4317,57 @@ public:
 int main() {
     try {
         const std::string windowName = "Kung-Fu Chess Game";
-        const int windowWidth = 800;
-        const int windowHeight = 800;
+        const int windowWidth = 650;  // גודל מותאם אישית יציב למניעת חריגות
+        const int windowHeight = 650;
 
         // 1. אתחול קנבס הציור הראשי של חלון ה-OpenCV
         Img screenCanvas;
         screenCanvas.mat() = cv::Mat::zeros(windowHeight, windowWidth, CV_8UC4);
 
-        // 2. אתחול מנהלי התשתית
-        ImgRenderer renderer(screenCanvas);
-        ImgInputTranslator inputTranslator;
+        // 2. אתחול מנהלי התשתית - הטיפוסים הקונקרטיים חיים אך ורק כאן,
+        //    ב-composition root. מרגע ההתחלה של הלולאה, כל שאר הקוד מדבר
+        //    רק דרך IRenderer / IInputTranslator.
+        ImgRenderer imgRenderer(screenCanvas, windowName);
+        ImgInputTranslator imgInputTranslator;
         ScreenManager screenManager;
 
-        // 3. רישום החלון לקבלת אירועי עכבר ומקלדת מ-OpenCV
-        cv::namedWindow(windowName, cv::WINDOW_AUTOSIZE);
-        inputTranslator.registerWindow(windowName, {static_cast<float>(windowWidth), static_cast<float>(windowHeight)});
+        IRenderer& renderer = imgRenderer;
+        IInputTranslator& inputTranslator = imgInputTranslator;
 
-        // 4. טעינת מסך השחמט האינטראקטיבי כמסך הראשי
-        screenManager.changeScreen(std::make_unique<ChessGameScreen>(screenManager));
+        // 3. רישום החלון לקבלת אירועי עכבר ומקלדת מ-OpenCV (פעולת אתחול
+        //    חד-פעמית וספציפית ל-backend - נשארת מול הטיפוס הקונקרטי)
+        cv::namedWindow(windowName, cv::WINDOW_AUTOSIZE);
+        imgInputTranslator.registerWindow(windowName, {static_cast<float>(windowWidth), static_cast<float>(windowHeight)});
+
+        // 4. טעינת מסך הפתיחה כמסך הראשי
+        screenManager.changeScreen(std::make_unique<MainMenuScreen>(screenManager));
+
+        // טעינת תמונות הכלים לתוך ה-AssetManager של ה-Renderer.
+        // הערה: השורות האלה עדיין תלויות ב-ImgTextureAsset הקונקרטי - זה
+        // סביר לחלוטין ב-composition root (טעינת נכסים היא תמיד ספציפית
+        // ל-backend), אך אם רוצים גם את זה אגנוסטי, אפשר לעטוף בפונקציה
+        // כמו loadPieceAssets(AssetManager&) שמוגדרת לכל backend בנפרד.
+        renderer.getAssetManager().loadAsset<ImgTextureAsset>("wK", "assets/wK.png");
+        renderer.getAssetManager().loadAsset<ImgTextureAsset>("wQ", "assets/wQ.png");
+        renderer.getAssetManager().loadAsset<ImgTextureAsset>("wR", "assets/wR.png");
+        renderer.getAssetManager().loadAsset<ImgTextureAsset>("wB", "assets/wB.png");
+        renderer.getAssetManager().loadAsset<ImgTextureAsset>("wN", "assets/wN.png");
+        renderer.getAssetManager().loadAsset<ImgTextureAsset>("wP", "assets/wP.png");
+
+        renderer.getAssetManager().loadAsset<ImgTextureAsset>("bK", "assets/bK.png");
+        renderer.getAssetManager().loadAsset<ImgTextureAsset>("bQ", "assets/bQ.png");
+        renderer.getAssetManager().loadAsset<ImgTextureAsset>("bR", "assets/bR.png");
+        renderer.getAssetManager().loadAsset<ImgTextureAsset>("bB", "assets/bB.png");
+        renderer.getAssetManager().loadAsset<ImgTextureAsset>("bN", "assets/bN.png");
+        renderer.getAssetManager().loadAsset<ImgTextureAsset>("bP", "assets/bP.png");
 
         // הצגת פריים ריק ראשוני כדי שהחלון יהיה גלוי לפני הכניסה ללולאה.
-        // בלי זה, WND_PROP_VISIBLE מחזיר 0 בפריים הראשון ויוצא מיד.
-        cv::imshow(windowName, screenCanvas.get_mat());
-        cv::waitKey(1); // נותן ל-OS להציג את החלון לפני שנבדוק visibility
+        renderer.presentFrame();
+        cv::waitKey(1); // עדיין נחוץ פעם אחת - "מעוררת" את חלון OpenCV כדי שיצויר
 
-        // 5. לולאת המשחק הראשית (Main Game Loop) בזמן אמת
+        // 5. לולאת המשחק הראשית (Main Game Loop) בזמן אמת.
+        //    שימו לב: מנקודה זו והלאה, שום קריאה ל-cv:: לא מופיעה יותר -
+        //    כל התקשורת עם ה-backend הגרפי עוברת דרך renderer/inputTranslator.
         auto previousTime = std::chrono::high_resolution_clock::now();
         bool running = true;
 
@@ -3896,26 +4381,25 @@ int main() {
             float deltaTime = elapsed.count();
             if (deltaTime > 0.1f) deltaTime = 0.1f;
 
-            // א. איסוף וניתוב אירועי קלט
-            int keyResult = cv::waitKey(1);
-            std::vector<InputEvent> events = inputTranslator.pollEvents(keyResult);
+            // א. איסוף וניתוב אירועי קלט - דרך הממשק בלבד
+            std::vector<InputEvent> events;
+            inputTranslator.pollEvents(events);
             screenManager.handleInput(events);
 
-            // ב. עדכון לוגיקה פיזיקלית וצינון של מנוע המשחק
+            // ב. בדיקת סגירת החלון - דרך הממשק בלבד
+            if (!renderer.isWindowOpen()) {
+                running = false;
+                break;
+            }
+
+            // ג. עדכון לוגיקה פיזיקלית וצינון של מנוע המשחק
             screenManager.update(deltaTime);
 
-            // ג. רינדור הפריים הנוכחי אל ה-Canvas
+            // ד. רינדור והצגת הפריים הנוכחי - דרך הממשק בלבד
             renderer.beginFrame();
             screenManager.draw(renderer);
             renderer.endFrame();
-
-            // ד. הצגת התמונה הסופית על גבי החלון בעזרת OpenCV
-            cv::imshow(windowName, screenCanvas.get_mat());
-
-            // ה. בדיקת סגירת החלון על ידי מערכת ההפעלה
-            if (cv::getWindowProperty(windowName, cv::WND_PROP_VISIBLE) < 1.0) {
-                running = false;
-            }
+            renderer.presentFrame();
         }
         std::cout << "Loop exited. running=" << running << " isEmpty=" << screenManager.isEmpty() << std::endl;
 

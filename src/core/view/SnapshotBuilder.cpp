@@ -1,12 +1,61 @@
 #include "core/view/SnapshotBuilder.hpp"
 #include <algorithm>
 #include <cmath>
+#include <memory>
+#include <unordered_set>
 #include <vector>
 
 namespace kungfu
 {
     namespace view
     {
+        namespace
+        {
+            struct PixelPos { float x; float y; };
+
+            // תיקון: לוגיקת האינטרפולציה (פרבולה עבור Airborne, smoothstep עבור
+            // Moving) הייתה משוכפלת כמעט מילה במילה בין שתי הלולאות למטה.
+            // ריכזתי אותה כאן כדי שכל שינוי עתידי בעקומת האנימציה יתבצע במקום אחד.
+            PixelPos computeAnimatedPixel(PieceState state,
+                                           const Position &from,
+                                           const Position &to,
+                                           int startTime,
+                                           int arrivalTime,
+                                           int currentTimeMs,
+                                           float cellSize)
+            {
+                float startX = from.col() * cellSize;
+                float startY = from.row() * cellSize;
+                float endX = to.col() * cellSize;
+                float endY = to.row() * cellSize;
+
+                int duration = arrivalTime - startTime;
+                float t = 1.0f;
+                if (duration > 0)
+                {
+                    int elapsed = currentTimeMs - startTime;
+                    t = static_cast<float>(elapsed) / static_cast<float>(duration);
+                    t = std::max(0.0f, std::min(t, 1.0f));
+                }
+
+                PixelPos result{};
+                if (state == PieceState::Airborne)
+                {
+                    result.x = startX + t * (endX - startX);
+                    result.y = startY + t * (endY - startY);
+
+                    float maxHeight = cellSize * 1.5f;
+                    result.y -= maxHeight * 4.0f * t * (1.0f - t);
+                }
+                else
+                {
+                    float smoothed_t = t * t * (3.0f - 2.0f * t);
+                    result.x = startX + smoothed_t * (endX - startX);
+                    result.y = startY + smoothed_t * (endY - startY);
+                }
+                return result;
+            }
+        } // anonymous namespace
 
         GameSnapshot SnapshotBuilder::build(
             const IBoard &board,
@@ -22,11 +71,19 @@ namespace kungfu
             snap.isGameOver = gameOver;
             snap.selectedCell = selectedCell;
 
-            // שמירת ה-IDs של הכלים שצויירו כדי למנוע כפילויות
-            std::vector<std::uint64_t> drawnPieceIds;
+            // תיקון: קריאה יחידה ל-board.pieces() (ולא הסתמכות מרומזת על
+            // ה-range-for לקרוא לה שוב בהמשך), ו-reserve כדי למנוע reallocations
+            // חוזרות של snap.pieces תוך כדי מילוי.
+            const auto &boardPieces = board.pieces();
+            snap.pieces.reserve(boardPieces.size());
+
+            // תיקון: unordered_set במקום vector+std::find - חיפוש O(1) במקום
+            // O(n) על כל כלי (משפיע בעיקר כשיש הרבה כלים/אנימציות במקביל).
+            std::unordered_set<std::uint64_t> drawnPieceIds;
+            drawnPieceIds.reserve(boardPieces.size());
 
             // 1. ציור כלים שנמצאים פיזית על הלוח (כולל כלים מחליקים רגילים)
-            for (const auto &piece : board.pieces())
+            for (const auto &piece : boardPieces)
             {
                 if (!piece || piece->state() == PieceState::Captured)
                 {
@@ -39,11 +96,13 @@ namespace kungfu
                 pSnap.logicalPosition = piece->position();
                 pSnap.state = piece->state();
 
-                float currentX = piece->position().col() * cellSize;
-                float currentY = piece->position().row() * cellSize;
+                // תיקון: cooldownProgress מחושב פעם אחת כאן, כדי שה-View (למשל
+                // ChessGameScreen) לא יצטרך לחפש שוב את הכלי בלוח בשביל זה.
+                pSnap.cooldownProgress = arbiter.getCooldownProgress(
+                    std::const_pointer_cast<Piece>(piece), currentTimeMs);
 
-                pSnap.pixelX = currentX;
-                pSnap.pixelY = currentY;
+                pSnap.pixelX = piece->position().col() * cellSize;
+                pSnap.pixelY = piece->position().row() * cellSize;
 
                 if (piece->state() == PieceState::Moving || piece->state() == PieceState::Airborne)
                 {
@@ -51,39 +110,21 @@ namespace kungfu
                     if (motionOpt.has_value())
                     {
                         const auto &motion = motionOpt.value();
-                        float startX = motion.from().col() * cellSize;
-                        float startY = motion.from().row() * cellSize;
-                        float endX = motion.to().col() * cellSize;
-                        float endY = motion.to().row() * cellSize;
-
                         int duration = motion.arrivalTime() - motion.startTime();
                         if (duration > 0)
                         {
-                            int elapsed = currentTimeMs - motion.startTime();
-                            float t = static_cast<float>(elapsed) / static_cast<float>(duration);
-                            t = std::max(0.0f, std::min(t, 1.0f));
-
-                            if (piece->state() == PieceState::Airborne)
-                            {
-                                pSnap.pixelX = startX + t * (endX - startX);
-                                pSnap.pixelY = startY + t * (endY - startY);
-
-                                float maxHeight = cellSize * 1.5f;
-                                float heightOffset = maxHeight * 4.0f * t * (1.0f - t);
-                                pSnap.pixelY -= heightOffset;
-                            }
-                            else
-                            {
-                                float smoothed_t = t * t * (3.0f - 2.0f * t);
-                                pSnap.pixelX = startX + smoothed_t * (endX - startX);
-                                pSnap.pixelY = startY + smoothed_t * (endY - startY);
-                            }
+                            auto px = computeAnimatedPixel(
+                                piece->state(), motion.from(), motion.to(),
+                                motion.startTime(), motion.arrivalTime(),
+                                currentTimeMs, cellSize);
+                            pSnap.pixelX = px.x;
+                            pSnap.pixelY = px.y;
                         }
                     }
                 }
 
                 snap.pieces.push_back(pSnap);
-                drawnPieceIds.push_back(piece->id());
+                drawnPieceIds.insert(piece->id());
             }
 
             // 2. זיהוי וציור כלים שנמצאים במצב מעוף (Airborne) והוסרו זמנית מהלוח
@@ -96,7 +137,7 @@ namespace kungfu
                 }
 
                 // אם הכלי כבר צוייר בלולאה הראשונה, נדלג עליו
-                if (std::find(drawnPieceIds.begin(), drawnPieceIds.end(), piece->id()) != drawnPieceIds.end())
+                if (drawnPieceIds.find(piece->id()) != drawnPieceIds.end())
                 {
                     continue;
                 }
@@ -106,40 +147,18 @@ namespace kungfu
                 pSnap.color = piece->color();
                 pSnap.logicalPosition = piece->position();
                 pSnap.state = piece->state();
+                pSnap.cooldownProgress = arbiter.getCooldownProgress(
+                    std::const_pointer_cast<Piece>(piece), currentTimeMs);
 
-                float startX = motion.from().col() * cellSize;
-                float startY = motion.from().row() * cellSize;
-                float endX = motion.to().col() * cellSize;
-                float endY = motion.to().row() * cellSize;
-
-                int duration = motion.arrivalTime() - motion.startTime();
-                float t = 1.0f;
-                if (duration > 0)
-                {
-                    int elapsed = currentTimeMs - motion.startTime();
-                    t = static_cast<float>(elapsed) / static_cast<float>(duration);
-                    t = std::max(0.0f, std::min(t, 1.0f));
-                }
-
-                if (piece->state() == PieceState::Airborne)
-                {
-                    pSnap.pixelX = startX + t * (endX - startX);
-                    pSnap.pixelY = startY + t * (endY - startY);
-
-                    // הוספת היסט אנכי מבוסס פרבולה
-                    float maxHeight = cellSize * 1.5f;
-                    float heightOffset = maxHeight * 4.0f * t * (1.0f - t);
-                    pSnap.pixelY -= heightOffset;
-                }
-                else
-                {
-                    float smoothed_t = t * t * (3.0f - 2.0f * t);
-                    pSnap.pixelX = startX + smoothed_t * (endX - startX);
-                    pSnap.pixelY = startY + smoothed_t * (endY - startY);
-                }
+                auto px = computeAnimatedPixel(
+                    piece->state(), motion.from(), motion.to(),
+                    motion.startTime(), motion.arrivalTime(),
+                    currentTimeMs, cellSize);
+                pSnap.pixelX = px.x;
+                pSnap.pixelY = px.y;
 
                 snap.pieces.push_back(pSnap);
-                drawnPieceIds.push_back(piece->id());
+                drawnPieceIds.insert(piece->id());
             }
 
             return snap;

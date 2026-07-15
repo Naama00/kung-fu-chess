@@ -17,6 +17,11 @@ struct PieceSnapshot {
     // מיקומי ציור בפיקסלים לטובת ה-Renderer
     float pixelX;
     float pixelY;
+
+    // אחוז התקדמות הצינון (0.0f = מוכן, >0.0f = בטעינה). מחושב מראש כאן,
+    // בזמן בניית ה-Snapshot, כדי שכל צרכן (View) לא יצטרך לבצע חיפוש נוסף
+    // אחר הכלי בלוח כדי לשאול את ה-Arbiter בעצמו.
+    float cooldownProgress = 0.0f;
 };
 
 struct GameSnapshot {

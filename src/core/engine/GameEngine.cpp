@@ -1,9 +1,10 @@
-// src/engine/GameEngine.cpp
+// core/engine/GameEngine.cpp
 #include "core/engine/GameEngine.hpp"
+#include "core/engine/IGameObserver.hpp"
+#include "core/rules/MaterialEvaluator.hpp" 
 #include "core/common/GameConfig.hpp"
 #include <algorithm>
 #include <cmath>
-
 namespace kungfu {
 
 GameEngine::GameEngine(std::shared_ptr<IBoard> board,
@@ -129,6 +130,11 @@ void GameEngine::wait(int ms) noexcept {
         if (event.capturedKing) {
             gameOver_ = true;
         }
+        
+        // הפצת האירועים לכל המשקיפים הרשומים
+        for (auto& observer : observers_) {
+            observer->onMoveCompleted(event, currentTimeMs_);
+        }
     }
     if (config_.enablePremoves && !gameOver_) {
         premoveFailures_.clear();
@@ -144,6 +150,18 @@ void GameEngine::wait(int ms) noexcept {
         );
     }
 }
+
+void GameEngine::addObserver(std::shared_ptr<IGameObserver> observer) noexcept {
+    if (observer) {
+        observers_.push_back(observer);
+    }
+}
+
+int GameEngine::getScore() const noexcept {
+    if (!board_) return 0;
+    return MaterialEvaluator::evaluateBalance(*board_, arbiter_);
+}
+
 
 std::optional<PlayerColor> GameEngine::getPieceColorAt(const Position& pos) const {
     if (!board_) {

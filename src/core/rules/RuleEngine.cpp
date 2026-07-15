@@ -36,12 +36,10 @@ MoveValidation RuleEngine::validateMove(const Position& from, const Position& to
         return {false, "illegal_piece_move"};
     }
 
-    // 4. מניעת פגיעה בכלי ידידותי ביעד – לא חל על פרש, שיכול לנחות על כל משבצת
-    if (piece->type() != PieceType::Knight) {
-        auto targetPieceOpt = board_->pieceAt(to);
-        if (targetPieceOpt.has_value() && targetPieceOpt.value()->color() == piece->color()) {
-            return {false, "friendly_destination"};
-        }
+    // 4. מניעת פגיעה בכלי ידידותי ביעד.
+    auto targetPieceOpt = board_->pieceAt(to);
+    if (targetPieceOpt.has_value() && targetPieceOpt.value()->color() == piece->color()) {
+        return {false, "friendly_destination"};
     }
 
     // 5. שאילתת חוקיות גיאומטרית מול ה-Strategy המתאים
@@ -79,10 +77,17 @@ MoveValidation RuleEngine::validateHypotheticalMove(const PiecePtr& piece, const
 
     // אם הכלי לא ממוקם פיזית במשבצת שממנה רוצים לבצע את ה-Premove, נציב אותו שם זמנית
     if (temporaryReposition) {
+        if (board_->pieceAt(from).has_value()) {
+            return {false, "source_occupied"};
+        }
+
         piece->setPosition(from);
-        if (!board_->pieceAt(from).has_value()) {
-            board_->placePiece(piece, from);
-            placedTemporarily = true;
+        placedTemporarily = board_->placePiece(piece, from);
+        if (!placedTemporarily) {
+            // הצבה נכשלה מסיבה בלתי צפויה - משחזרים מיד ולא ממשיכים לאמת
+            // מהלך על מצב לוח שקרי.
+            piece->setPosition(originalPos);
+            return {false, "internal_error"};
         }
     }
 

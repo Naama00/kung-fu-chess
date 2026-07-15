@@ -2,7 +2,9 @@
 #include "graphics_impl/img_backend/ImgRenderer.hpp"
 #include "graphics_impl/img_backend/ImgInputTranslator.hpp"
 #include "ui/framework/ScreenManager.hpp"
-#include "core/view/screens/MainMenuScreen.hpp" // ייבוא מסך הפתיחה החדש במקום מסך המשחק הישיר
+#include "ui/framework/IRenderer.hpp"
+#include "ui/framework/IInputTranslator.hpp"
+#include "core/view/screens/MainMenuScreen.hpp"
 #include "graphics_impl/img.hpp"
 #include <chrono>
 #include <memory>
@@ -11,45 +13,57 @@
 int main() {
     try {
         const std::string windowName = "Kung-Fu Chess Game";
-        const int windowWidth = 650;  // גודל מותאם אישית יציב למניעת חריגות
-        const int windowHeight = 650;
+        const int windowWidth = 800;  
+        const int windowHeight = 800;
 
         // 1. אתחול קנבס הציור הראשי של חלון ה-OpenCV
         Img screenCanvas;
         screenCanvas.mat() = cv::Mat::zeros(windowHeight, windowWidth, CV_8UC4);
 
-        // 2. אתחול מנהלי התשתית
-        ImgRenderer renderer(screenCanvas);
-        ImgInputTranslator inputTranslator;
+        // 2. אתחול מנהלי התשתית - הטיפוסים הקונקרטיים חיים אך ורק כאן,
+        //    ב-composition root. מרגע ההתחלה של הלולאה, כל שאר הקוד מדבר
+        //    רק דרך IRenderer / IInputTranslator.
+        ImgRenderer imgRenderer(screenCanvas, windowName);
+        ImgInputTranslator imgInputTranslator;
         ScreenManager screenManager;
 
-        // 3. רישום החלון לקבלת אירועי עכבר ומקלדת מ-OpenCV
-        cv::namedWindow(windowName, cv::WINDOW_AUTOSIZE);
-        inputTranslator.registerWindow(windowName, {static_cast<float>(windowWidth), static_cast<float>(windowHeight)});
+        IRenderer& renderer = imgRenderer;
+        IInputTranslator& inputTranslator = imgInputTranslator;
 
-       // 4. טעינת מסך הפתיחה כמסך הראשי
+        // 3. רישום החלון לקבלת אירועי עכבר ומקלדת מ-OpenCV (פעולת אתחול
+        //    חד-פעמית וספציפית ל-backend - נשארת מול הטיפוס הקונקרטי)
+        cv::namedWindow(windowName, cv::WINDOW_AUTOSIZE);
+        imgInputTranslator.registerWindow(windowName, {static_cast<float>(windowWidth), static_cast<float>(windowHeight)});
+
+        // 4. טעינת מסך הפתיחה כמסך הראשי
         screenManager.changeScreen(std::make_unique<MainMenuScreen>(screenManager));
 
-        // טעינת תמונות הכלים לתוך ה-AssetManager של ה-Renderer
-        renderer.getAssetManager().loadAsset<ImgTextureAsset>("wK", "assets/wK.png");
-        renderer.getAssetManager().loadAsset<ImgTextureAsset>("wQ", "assets/wQ.png");
-        renderer.getAssetManager().loadAsset<ImgTextureAsset>("wR", "assets/wR.png");
-        renderer.getAssetManager().loadAsset<ImgTextureAsset>("wB", "assets/wB.png");
-        renderer.getAssetManager().loadAsset<ImgTextureAsset>("wN", "assets/wN.png");
-        renderer.getAssetManager().loadAsset<ImgTextureAsset>("wP", "assets/wP.png");
+        // טעינת תמונות הכלים לתוך ה-AssetManager של ה-Renderer.
+        // הערה: השורות האלה עדיין תלויות ב-ImgTextureAsset הקונקרטי - זה
+        // סביר לחלוטין ב-composition root (טעינת נכסים היא תמיד ספציפית
+        // ל-backend), אך אם רוצים גם את זה אגנוסטי, אפשר לעטוף בפונקציה
+        // כמו loadPieceAssets(AssetManager&) שמוגדרת לכל backend בנפרד.
+        imgRenderer.getAssetManager().loadAsset<ImgTextureAsset>("wK", "assets/wK.png");
+        imgRenderer.getAssetManager().loadAsset<ImgTextureAsset>("wQ", "assets/wQ.png");
+        imgRenderer.getAssetManager().loadAsset<ImgTextureAsset>("wR", "assets/wR.png");
+        imgRenderer.getAssetManager().loadAsset<ImgTextureAsset>("wB", "assets/wB.png");
+        imgRenderer.getAssetManager().loadAsset<ImgTextureAsset>("wN", "assets/wN.png");
+        imgRenderer.getAssetManager().loadAsset<ImgTextureAsset>("wP", "assets/wP.png");
 
-        renderer.getAssetManager().loadAsset<ImgTextureAsset>("bK", "assets/bK.png");
-        renderer.getAssetManager().loadAsset<ImgTextureAsset>("bQ", "assets/bQ.png");
-        renderer.getAssetManager().loadAsset<ImgTextureAsset>("bR", "assets/bR.png");
-        renderer.getAssetManager().loadAsset<ImgTextureAsset>("bB", "assets/bB.png");
-        renderer.getAssetManager().loadAsset<ImgTextureAsset>("bN", "assets/bN.png");
-        renderer.getAssetManager().loadAsset<ImgTextureAsset>("bP", "assets/bP.png");
+        imgRenderer.getAssetManager().loadAsset<ImgTextureAsset>("bK", "assets/bK.png");
+        imgRenderer.getAssetManager().loadAsset<ImgTextureAsset>("bQ", "assets/bQ.png");
+        imgRenderer.getAssetManager().loadAsset<ImgTextureAsset>("bR", "assets/bR.png");
+        imgRenderer.getAssetManager().loadAsset<ImgTextureAsset>("bB", "assets/bB.png");
+        imgRenderer.getAssetManager().loadAsset<ImgTextureAsset>("bN", "assets/bN.png");
+        imgRenderer.getAssetManager().loadAsset<ImgTextureAsset>("bP", "assets/bP.png");
 
         // הצגת פריים ריק ראשוני כדי שהחלון יהיה גלוי לפני הכניסה ללולאה.
-        cv::imshow(windowName, screenCanvas.get_mat());
-        cv::waitKey(1); // מעבד אירועים ראשוניים ומציג את החלון
+        renderer.presentFrame();
+        cv::waitKey(1); // עדיין נחוץ פעם אחת - "מעוררת" את חלון OpenCV כדי שיצויר
 
-        // 5. לולאת המשחק הראשית (Main Game Loop) בזמן אמת
+        // 5. לולאת המשחק הראשית (Main Game Loop) בזמן אמת.
+        //    שימו לב: מנקודה זו והלאה, שום קריאה ל-cv:: לא מופיעה יותר -
+        //    כל התקשורת עם ה-backend הגרפי עוברת דרך renderer/inputTranslator.
         auto previousTime = std::chrono::high_resolution_clock::now();
         bool running = true;
 
@@ -63,23 +77,13 @@ int main() {
             float deltaTime = elapsed.count();
             if (deltaTime > 0.1f) deltaTime = 0.1f;
 
-            // א. איסוף וניתוב אירועי קלט
-            int keyResult = cv::waitKey(1);
-            std::vector<InputEvent> events = inputTranslator.pollEvents(keyResult);
+            // א. איסוף וניתוב אירועי קלט - דרך הממשק בלבד
+            std::vector<InputEvent> events;
+            inputTranslator.pollEvents(events);
             screenManager.handleInput(events);
 
-            // ב. בדיקת סגירת החלון על ידי מערכת ההפעלה (מנגנון הגנה try-catch)
-            bool windowExists = true;
-            try {
-                double prop = cv::getWindowProperty(windowName, cv::WND_PROP_AUTOSIZE);
-                if (prop < 0) {
-                    windowExists = false;
-                }
-            } catch (const cv::Exception&) {
-                windowExists = false;
-            }
-
-            if (!windowExists) {
+            // ב. בדיקת סגירת החלון - דרך הממשק בלבד
+            if (!renderer.isWindowOpen()) {
                 running = false;
                 break;
             }
@@ -87,13 +91,11 @@ int main() {
             // ג. עדכון לוגיקה פיזיקלית וצינון של מנוע המשחק
             screenManager.update(deltaTime);
 
-            // ד. רינדור הפריים הנוכחי אל ה-Canvas
+            // ד. רינדור והצגת הפריים הנוכחי - דרך הממשק בלבד
             renderer.beginFrame();
             screenManager.draw(renderer);
             renderer.endFrame();
-
-            // ה. הצגת התמונה הסופית על גבי החלון בעזרת OpenCV
-            cv::imshow(windowName, screenCanvas.get_mat());
+            renderer.presentFrame();
         }
         std::cout << "Loop exited. running=" << running << " isEmpty=" << screenManager.isEmpty() << std::endl;
 

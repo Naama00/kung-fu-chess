@@ -46,7 +46,14 @@ public:
             return; // המשאב כבר קיים בזיכרון, אין צורך לטעון שוב
         }
 
-        m_assets[assetId] = std::make_unique<T>(std::forward<Args>(args)...);
+        // תיקון: בונים את האובייקט לפני ההכנסה למפה, במקום
+        // m_assets[assetId] = std::make_unique<T>(...).
+        // אם הבנייה זורקת חריגה (למשל קובץ תמונה חסר), חשוב שהמפה לא תכיל
+        // entry ריק עבור assetId זה - אחרת הבדיקה למעלה תחשוב שהנכס "כבר
+        // נטען" בכל קריאה עתידית, והנכס לא ייטען לעולם שוב באותה ריצה,
+        // אפילו אם התיקון בפועל (למשל הוספת הקובץ החסר) כבר בוצע.
+        auto asset = std::make_unique<T>(std::forward<Args>(args)...);
+        m_assets.emplace(assetId, std::move(asset));
     }
 
     /**

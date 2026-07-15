@@ -13,9 +13,6 @@ private:
     Button m_playRealtimeButton;
     Button m_playTurnButton;
     Button m_exitButton;
-    
-    float m_logicalRangeX = 1000.0f;
-    float m_logicalRangeY = 1000.0f;
 
 public:
     explicit MainMenuScreen(ScreenManager& manager) 

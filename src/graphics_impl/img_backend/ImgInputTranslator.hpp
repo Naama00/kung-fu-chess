@@ -1,13 +1,14 @@
 #pragma once
+#include "ui/framework/IInputTranslator.hpp"
 #include "ui/framework/InputEvents.hpp"
 #include <opencv2/opencv.hpp>
 #include <vector>
 #include <mutex>
 
-class ImgInputTranslator {
+class ImgInputTranslator : public IInputTranslator {
 private:
     Vector2D m_logicalRange{1000.0f, 1000.0f};
-    
+
     // מפתח לאחסון זמני של אירועי עכבר שמגיעים מה-Callback של OpenCV (המשתמש ב-Thread נפרד)
     static std::vector<InputEvent> s_pendingMouseEvents;
     static std::mutex s_eventsMutex;
@@ -21,7 +22,7 @@ private:
         MouseEvent mouseEvent;
         // תרגום קואורדינטות פיזיות לקואורדינטות לוגיות
         Vector2D physicalSize = translator->getPhysicalWindowSize();
-        
+
         mouseEvent.logicalX = (static_cast<float>(x) / physicalSize.x) * translator->m_logicalRange.x;
         mouseEvent.logicalY = (static_cast<float>(y) / physicalSize.y) * translator->m_logicalRange.y;
 
@@ -73,10 +74,25 @@ private:
 
     Vector2D m_windowSize{800.0f, 800.0f}; // גודל פיזי ברירת מחדל של החלון
 
+    // תרגום קוד מקש גולמי מ-OpenCV למקש לוגי
+    static Key translateKey(int rawCode) {
+        switch (rawCode & 0xFF) { // סינון מסכות קוד מקש בסיסי
+            case 27: return Key::Escape;
+            case 32: return Key::Space;
+            case 'w': case 'W': return Key::W;
+            case 's': case 'S': return Key::S;
+            case 'a': case 'A': return Key::A;
+            case 'd': case 'D': return Key::D;
+            default: return Key::Unknown;
+        }
+    }
+
 public:
     ImgInputTranslator() = default;
 
-    // רישום ה-Callback לחלון של OpenCV
+    // רישום ה-Callback לחלון של OpenCV. זו פעולת אתחול חד-פעמית וספציפית
+    // ל-backend, ולכן אינה חלק מ-IInputTranslator - main.cpp קורא לה על
+    // הטיפוס הקונקרטי לפני תחילת הלולאה, בדיוק כמו יצירת החלון עצמו.
     void registerWindow(const std::string& windowName, Vector2D windowSize) {
         m_windowSize = windowSize;
         cv::setMouseCallback(windowName, onMouse, this);
@@ -91,57 +107,30 @@ public:
     }
 
     /**
-     * אוסף את כל אירועי הקלט שהצטברו מהפריים האחרון (עכבר ומקלדת).
-     * @param keyResult תוצאת הקריאה ל-cv::waitKey בפריים הנוכחי (או -1 אם לא נלחץ מקש).
-     * @return וקטור המכיל את כל אירועי הקלט המתורגמים.
+     * מימוש בפועל של IInputTranslator::pollEvents.
+     * אוסף את כל אירועי הקלט שהצטברו מהפריים האחרון (עכבר ומקלדת), כולל
+     * הפעלת cv::waitKey הפנימית - פרט מימוש שמוסתר לגמרי מהקורא.
      */
-    std::vector<InputEvent> pollEvents(int keyResult) {
-        std::vector<InputEvent> processedEvents;
-
-        // 1. שליפת אירועי העכבר שהצטברו בצורה בטוחה מרובוטיקת ה-Thread של ה-Callback
+    void pollEvents(std::vector<InputEvent>& outEvents) override {
+        // 1. שליפת אירועי העכבר שהצטברו בצורה בטוחה מהתור המשותף עם ה-Callback
         {
             std::lock_guard<std::mutex> lock(s_eventsMutex);
-            processedEvents = std::move(s_pendingMouseEvents);
+            outEvents.insert(outEvents.end(), s_pendingMouseEvents.begin(), s_pendingMouseEvents.end());
             s_pendingMouseEvents.clear();
         }
 
-        // 2. תרגום אירוע מקלדת (במידה ונלחץ מקש ב-OpenCV)
+        // 2. דגימת מקלדת - קריאת cv::waitKey הועברה לכאן, פנימה ל-Translator
+        int keyResult = cv::waitKey(1);
         if (keyResult != -1) {
             KeyEvent keyEvent;
             keyEvent.rawCode = keyResult;
-            
-            // מיפוי בסיסי של מקשים שימושיים מתוך קודי ה-ASCII ש-OpenCV מחזיר
-            switch (keyResult & 0xFF) { // סינון מסכות קוד מקש בסיסי
-                case 27: // Escape key
-                    keyEvent.key = Key::Escape;
-                    break;
-                case 32: // Space
-                    keyEvent.key = Key::Space;
-                    break;
-                case 'w': case 'W':
-                    keyEvent.key = Key::W;
-                    break;
-                case 's': case 'S':
-                    keyEvent.key = Key::S;
-                    break;
-                case 'a': case 'A':
-                    keyEvent.key = Key::A;
-                    break;
-                case 'd': case 'D':
-                    keyEvent.key = Key::D;
-                    break;
-                default:
-                    keyEvent.key = Key::Unknown;
-                    break;
-            }
+            keyEvent.key = translateKey(keyResult);
 
             InputEvent ie;
             ie.type = InputEvent::Type::Keyboard;
             ie.key = keyEvent;
-            processedEvents.push_back(ie);
+            outEvents.push_back(ie);
         }
-
-        return processedEvents;
     }
 };
 

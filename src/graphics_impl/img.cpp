@@ -40,6 +40,14 @@ void Img::draw_on(Img& other_img, int x, int y) {
         throw std::runtime_error("Both images must be loaded before drawing.");
     }
 
+    // תיקון: הבדיקה הקודמת תפסה רק חריגה מהגבול הימני/תחתון (x+w>W, y+h>H),
+    // אבל לא x/y שליליים. cv::Rect עם קואורדינטה שלילית הוא לא חוקי ומייצר
+    // חריגת OpenCV עמומה במקום שגיאה ברורה כאן.
+    if (x < 0 || y < 0) {
+        throw std::runtime_error("Draw position cannot be negative (x=" +
+                                  std::to_string(x) + ", y=" + std::to_string(y) + ").");
+    }
+
     // Handle different channel counts
     cv::Mat source_img = img;
     cv::Mat target_img = other_img.img;
@@ -118,4 +126,4 @@ void Img::show() {
     cv::imshow("Image", img);
     cv::waitKey(0);
     cv::destroyAllWindows();
-} 
+}

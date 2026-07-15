@@ -5,6 +5,7 @@
 #include <string>
 #include "core/input/BoardMapper.hpp"
 #include "core/common/Position.hpp"
+#include "core/common/Enums.hpp"
 #include "core/input/InputConfig.hpp" 
 
 namespace kungfu {
@@ -25,10 +26,12 @@ public:
     std::optional<Position> selectedPosition() const noexcept;
     void clearSelection() noexcept;
     void setCellSize(int cellSize) noexcept { mapper_.setCellSize(cellSize); }
+
 private:
     std::shared_ptr<IGameEngine> engine_;
     BoardMapper mapper_;
     std::optional<Position> selectedPosition_;
+    std::optional<PlayerColor> selectedColor_;
 };
 
 }  // namespace kungfu
