@@ -1,7 +1,7 @@
 #pragma once
 #include "ui/framework/IRenderer.hpp"
 #include "ui/framework/AssetManager.hpp"
-#include "graphics_impl/img.hpp"
+#include "img.hpp"
 #include <opencv2/opencv.hpp>
 #include <algorithm>
 #include <string>
@@ -161,6 +161,22 @@ public:
 
         int thickness = fill ? cv::FILLED : 1;
         cv::circle(m_screenCanvas.mat(), physCenter, r, toCvScalar(color), thickness, cv::LINE_AA);
+    }
+
+     void drawSector(Vector2D center, float radius, float startAngle, float endAngle, Color color, bool fill) override
+    {
+        if (!m_screenCanvas.is_loaded()) return;
+
+        cv::Point physCenter = toPhysical(center);
+        Vector2D targetSize = getTargetSize();
+        int r = static_cast<int>((radius / m_logicalRange.x) * targetSize.x);
+
+        int thickness = fill ? cv::FILLED : 1;
+
+        // cv::ellipse ב-OpenCV מקבלת זוויות במעלות ומציירת סקטור/קשת בצורה חלקה
+        cv::ellipse(m_screenCanvas.mat(), physCenter, cv::Size(r, r), 0.0,
+                    static_cast<double>(startAngle), static_cast<double>(endAngle),
+                    toCvScalar(color), thickness, cv::LINE_AA);
     }
 
     void drawSprite(std::string_view assetId,

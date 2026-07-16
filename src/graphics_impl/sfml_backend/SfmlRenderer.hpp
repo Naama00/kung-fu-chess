@@ -131,6 +131,46 @@ public:
         m_window.draw(circle);
     }
 
+     void drawSector(Vector2D center, float radius, float startAngle, float endAngle, Color color, bool fill) override {
+        unsigned int points = 30; // רזולוציית העיגול
+        sf::Color sfCol = toSfColor(color);
+
+        float startRad = startAngle * 3.14159265f / 180.0f;
+        float endRad = endAngle * 3.14159265f / 180.0f;
+        float angleDiff = endRad - startRad;
+
+        if (fill) {
+            sf::VertexArray fan(sf::PrimitiveType::TriangleFan, points + 2);
+            // קודקוד המרכז של המאוורר
+            fan[0].position = toSfVec(center);
+            fan[0].color = sfCol;
+
+            for (unsigned int i = 0; i <= points; ++i) {
+                float angle = startRad + angleDiff * (static_cast<float>(i) / points);
+                fan[i + 1].position = {
+                    center.x + radius * std::cos(angle),
+                    center.y + radius * std::sin(angle)
+                };
+                fan[i + 1].color = sfCol;
+            }
+            m_window.draw(fan);
+        } else {
+            sf::VertexArray lines(sf::PrimitiveType::LineStrip, points + 2);
+            lines[0].position = toSfVec(center);
+            lines[0].color = sfCol;
+
+            for (unsigned int i = 0; i <= points; ++i) {
+                float angle = startRad + angleDiff * (static_cast<float>(i) / points);
+                lines[i + 1].position = {
+                    center.x + radius * std::cos(angle),
+                    center.y + radius * std::sin(angle)
+                };
+                lines[i + 1].color = sfCol;
+            }
+            m_window.draw(lines);
+        }
+    }
+
     void drawSprite(std::string_view assetId,
                     Vector2D position,
                     Vector2D size,

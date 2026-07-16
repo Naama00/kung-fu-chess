@@ -22,7 +22,12 @@ public:
     virtual void drawRectangle(Vector2D position, Vector2D size, Color color, bool fill = true) = 0;
     virtual void drawLine(Vector2D start, Vector2D end, Color color, float thickness = 1.0f) = 0;
     virtual void drawCircle(Vector2D center, float radius, Color color, bool fill = true) = 0;
-
+        /**
+     * ציור גזרה מעגלית (סקטור) לטובת אפקטים של שעון חול, צינון מעגלי וכו'.
+     * @param startAngle זווית התחלה במעלות (למשל, 90- מייצג את החלק העליון).
+     * @param endAngle זווית סיום במעלות.
+     */
+    virtual void drawSector(Vector2D center, float radius, float startAngle, float endAngle, Color color, bool fill = true) = 0;
     // ציור תמונה/טקסטורה מבוססת מזהה טקסטואלי
     virtual void drawSprite(std::string_view assetId,
                             Vector2D position,

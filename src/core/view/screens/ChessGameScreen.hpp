@@ -18,10 +18,20 @@
 #include <vector>
 #include <cmath>
 #include <algorithm>
+#include <cstdlib> // לטובת rand()
 
 class ChessGameScreen : public BaseScreen
 {
 private:
+    struct Particle {
+        Vector2D position;
+        Vector2D velocity;
+        Color color;
+        float life = 0.0f;
+        float maxLife = 0.0f;
+        float size = 0.0f;
+    };
+
     std::shared_ptr<kungfu::GameEngine> m_gameEngine;
     std::shared_ptr<kungfu::Controller> m_controller;
     CooldownBar m_cooldownBar;
@@ -29,7 +39,7 @@ private:
     std::shared_ptr<ISoundPlayer> m_soundPlayer;
     bool m_isPaused = false;
 
-    // היסטוריית מהלכים
+    // היסטוריית מהלכים של כל שחקן
     std::vector<std::string> m_whiteHistory;
     std::vector<std::string> m_blackHistory;
 
@@ -71,6 +81,10 @@ private:
 
     BoardPos m_hoveredTile{-1, -1};
     Vector2D m_mousePos{0.0f, 0.0f};
+
+    // משתני אנימציה
+    std::vector<Particle> m_particles;
+    float m_pauseTransitionProgress = 0.0f;
 
     int getPieceValue(kungfu::PieceType type) const
     {
@@ -122,6 +136,25 @@ private:
         return pos.row() * cols + pos.col();
     }
 
+    // פונקציית עזר ליצירת מחרוזת ייצוג מהלך תקין
+    std::string getMoveNotationString(kungfu::PieceType type, const BoardPos& from, const BoardPos& to) const
+    {
+        char pieceChar = kungfu::PieceTokenCodec::toChar(type);
+        char fileChar = 'a' + to.col;
+        char rankChar = '1' + to.row;
+
+        std::string notation = "";
+        notation += pieceChar;
+        notation += ": ";
+        notation += fileChar;
+        notation += rankChar;
+
+        if (from == to) {
+            notation += " (Jump)";
+        }
+        return notation;
+    }
+
     void resetGame()
     {
         std::string startBoard =
@@ -142,33 +175,41 @@ private:
 
         m_controller->setCellSize(100);
 
-        // רישום משקיף שמע המתרגם אירועים לסאונדים
-        struct AudioObserver : public kungfu::IGameObserver
+        struct GameEventObserver : public kungfu::IGameObserver
         {
             std::shared_ptr<ISoundPlayer> player;
-            AudioObserver(std::shared_ptr<ISoundPlayer> p) : player(std::move(p)) {}
+            ChessGameScreen* screen;
+            
+            GameEventObserver(std::shared_ptr<ISoundPlayer> p, ChessGameScreen* s) 
+                : player(std::move(p)), screen(s) {}
 
-           void onMoveCompleted(const kungfu::ArrivalEvent& event, int /*currentTimeMs*/) override {
-               if (event.cancelled || !event.piece) {
-                   return;
-               }
-               if (event.capturedKing) {
-                   player->playSound("game_over");
-               } else if (event.isCapture) {
-                   player->playSound("capture");
-               }
-           }
+            void onMoveCompleted(const kungfu::ArrivalEvent& event, int /*currentTimeMs*/) override {
+                if (event.cancelled || !event.piece) {
+                    return;
+                }
+                if (event.capturedKing) {
+                    player->playSound("game_over");
+                } else if (event.isCapture) {
+                    player->playSound("capture");
+                }
+
+                if (event.isCapture && screen) {
+                    screen->spawnCaptureExplosion(event.to, event.piece->color());
+                }
+            }
         };
 
         if (m_soundPlayer)
         {
-            m_gameEngine->addObserver(std::make_shared<AudioObserver>(m_soundPlayer));
+            m_gameEngine->addObserver(std::make_shared<GameEventObserver>(m_soundPlayer, this));
         }
 
         m_isPaused = false;
         m_isHovering = false;
         m_selectedPieceAnim.isJumping = false;
         m_selectedPieceAnim.jumpTimer = 0.0f;
+        m_pauseTransitionProgress = 0.0f;
+        m_particles.clear();
 
         m_whiteHistory.clear();
         m_blackHistory.clear();
@@ -180,6 +221,46 @@ private:
             [this]()
             { togglePause(); });
         m_pauseButton->setColors(m_theme.buttonNormal, m_theme.buttonHover, {255, 255, 255, 255});
+    }
+
+    void spawnCaptureExplosion(const kungfu::Position& boardPos, kungfu::PlayerColor attackerColor)
+    {
+        float cellWidth = m_boardRangeX / 8.0f;
+        float cellHeight = m_boardRangeY / 8.0f;
+        
+        float px = m_boardStartX + boardPos.col() * cellWidth + cellWidth / 2.0f;
+        float py = m_boardStartY + boardPos.row() * cellHeight + cellHeight / 2.0f;
+
+        Color targetColor = (attackerColor == kungfu::PlayerColor::White) 
+            ? Color{55, 55, 60, 255}
+            : Color{245, 245, 240, 255};
+
+        for (int i = 0; i < 35; ++i) {
+            Particle p;
+            p.position = { px, py };
+            
+            float angle = (static_cast<float>(std::rand()) / RAND_MAX) * 2.0f * 3.14159f;
+            float speed = 70.0f + (static_cast<float>(std::rand()) / RAND_MAX) * 190.0f;
+
+            p.velocity = {
+                std::cos(angle) * speed,
+                std::sin(angle) * speed - 60.0f
+            };
+
+            if (std::rand() % 4 == 0) {
+                p.color = Color{240, 190, 70, 255};
+            } else if (std::rand() % 5 == 0) {
+                p.color = Color{215, 60, 60, 255};
+            } else {
+                p.color = targetColor;
+            }
+
+            p.maxLife = 0.4f + (static_cast<float>(std::rand()) / RAND_MAX) * 0.5f;
+            p.life = p.maxLife;
+            p.size = 2.5f + (static_cast<float>(std::rand()) / RAND_MAX) * 5.0f;
+
+            m_particles.push_back(p);
+        }
     }
 
     void togglePause()
@@ -239,8 +320,6 @@ private:
         m_rematchButton->setColors({40, 110, 75, 255}, {55, 140, 95, 255}, {255, 255, 255, 255});
         m_menuButton->setColors({50, 50, 60, 255}, {70, 70, 85, 255}, {255, 255, 255, 255});
     }
-
-    // --- מתודות עזר פרטיות לציור שנוספו בשלב ב' ---
 
     void drawBoardBackground(IRenderer &renderer)
     {
@@ -307,7 +386,6 @@ private:
                 pieceSnap.logicalPosition.row() == selectedOpt->row() &&
                 pieceSnap.logicalPosition.col() == selectedOpt->col())
             {
-
                 if (m_isHovering)
                 {
                     float floatOffset = 25.0f + std::sin(m_selectedPieceAnim.jumpTimer * 5.0f) * 6.0f;
@@ -331,9 +409,20 @@ private:
             float padding = cellWidth * 0.10f;
             renderer.drawSprite(assetId, {spritePos.x + padding, spritePos.y + padding}, {spriteSize.x - (padding * 2), spriteSize.y - (padding * 2)});
 
-            if (pieceSnap.cooldownProgress > 0.0f)
+            // הצגת הצינון רק אם תנועה סימולטנית (זמן אמת) מאופשרת
+            if (m_config.allowSimultaneousMovement && pieceSnap.cooldownProgress > 0.0f)
             {
                 Vector2D center{animatedX + cellWidth / 2.0f, animatedY + cellHeight / 2.0f};
+                float radius = cellWidth * 0.42f;
+
+                float startAngle = -90.0f;
+                float endAngle = -90.0f + (360.0f * pieceSnap.cooldownProgress);
+
+                Color radialColor{180, 35, 35, 110};
+                renderer.drawSector(center, radius, startAngle, endAngle, radialColor, true);
+
+                renderer.drawCircle(center, radius, {220, 50, 50, 90}, false);
+
                 m_cooldownBar.draw(renderer, center, pieceSnap.cooldownProgress);
             }
 
@@ -414,7 +503,7 @@ private:
             {
                 textColor = {240, 100, 100, 255};
             }
-            else if (logEntry.find("ok") != std::string::npos || logEntry.find("Connected") != std::string::npos)
+            else if (logEntry.find("ok") != std::string::npos || logEntry.find("Connected") != std::string::npos || logEntry.find(":") != std::string::npos)
             {
                 textColor = {100, 210, 130, 255};
             }
@@ -435,7 +524,7 @@ private:
             {
                 textColor = {240, 100, 100, 255};
             }
-            else if (logEntry.find("ok") != std::string::npos || logEntry.find("Connected") != std::string::npos)
+            else if (logEntry.find("ok") != std::string::npos || logEntry.find("Connected") != std::string::npos || logEntry.find(":") != std::string::npos)
             {
                 textColor = {100, 210, 130, 255};
             }
@@ -485,13 +574,27 @@ private:
 
     void drawOverlays(IRenderer &renderer, const kungfu::view::GameSnapshot &snapshot)
     {
-        if (m_isPaused && !snapshot.isGameOver)
+        if (m_pauseTransitionProgress > 0.0f && !snapshot.isGameOver)
         {
-            renderer.drawRectangle({m_boardStartX, m_boardStartY}, {m_boardRangeX, m_boardRangeY}, {15, 15, 20, 180}, true);
-            renderer.drawRectangle({350.0f, 300.0f}, {300.0f, 150.0f}, {25, 25, 35, 240}, true);
-            renderer.drawRectangle({350.0f, 300.0f}, {300.0f, 150.0f}, {80, 80, 100, 255}, false);
-            renderer.drawText("PAUSED", {445.0f, 370.0f}, 38, {240, 200, 80, 255});
-            renderer.drawText("Press SPACE or Resume", {390.0f, 415.0f}, 14, {180, 180, 190, 255});
+            Color dimColor{15, 15, 20, static_cast<std::uint8_t>(m_pauseTransitionProgress * 180)};
+            renderer.drawRectangle({m_boardStartX, m_boardStartY}, {m_boardRangeX, m_boardRangeY}, dimColor, true);
+
+            float t = m_pauseTransitionProgress;
+            float smoothT = t * t * (3.0f - 2.0f * t);
+
+            float startY = -200.0f;
+            float endY = 300.0f;
+            float panelY = startY + (endY - startY) * smoothT;
+
+            Color panelBg{25, 25, 35, static_cast<std::uint8_t>(m_pauseTransitionProgress * 240)};
+            Color panelBorder{80, 80, 100, static_cast<std::uint8_t>(m_pauseTransitionProgress * 255)};
+            Color textColor{240, 200, 80, static_cast<std::uint8_t>(m_pauseTransitionProgress * 255)};
+            Color subTextColor{180, 180, 190, static_cast<std::uint8_t>(m_pauseTransitionProgress * 255)};
+
+            renderer.drawRectangle({350.0f, panelY}, {300.0f, 150.0f}, panelBg, true);
+            renderer.drawRectangle({350.0f, panelY}, {300.0f, 150.0f}, panelBorder, false);
+            renderer.drawText("PAUSED", {445.0f, panelY + 50.0f}, 38, textColor);
+            renderer.drawText("Press SPACE or Resume", {390.0f, panelY + 110.0f}, 14, subTextColor);
         }
 
         if (snapshot.isGameOver)
@@ -526,11 +629,17 @@ protected:
 
         std::unordered_map<int, Vector2D> piecePositions;
 
-        // קריאה מסודרת למחלקות/מתודות העזר של שלב ב'
         drawBoardBackground(renderer);
         drawBoardGrid(renderer, rows, cols, cellWidth, cellHeight, selectedOpt);
         drawPiecesAndCooldowns(renderer, snapshot, cellWidth, cellHeight, selectedOpt, cols, piecePositions);
         drawPremoves(renderer, cellWidth, cellHeight, cols, piecePositions);
+        
+        for (const auto& p : m_particles) {
+            Color fadeColor = p.color;
+            fadeColor.a = static_cast<std::uint8_t>((p.life / p.maxLife) * 255);
+            renderer.drawCircle(p.position, p.size, fadeColor, true);
+        }
+
         drawHeader(renderer);
         drawSidebar(renderer);
         drawFooter(renderer);
@@ -538,12 +647,16 @@ protected:
     }
 
 public:
-public:
     explicit ChessGameScreen(ScreenManager &manager,
                              kungfu::GameConfig config = kungfu::GameConfig{},
                              std::shared_ptr<ISoundPlayer> soundPlayer = std::make_shared<NullSoundPlayer>())
         : BaseScreen(manager, "Chess Match"), m_config(config), m_soundPlayer(std::move(soundPlayer))
     {
+        if (!m_config.allowSimultaneousMovement) {
+            m_config.cooldownDurationMs = 0;
+            m_config.allowJumping = false;
+            m_config.enablePremoves = false;
+        }
         initializeScreen();
     }
 
@@ -553,6 +666,11 @@ public:
         : BaseScreen(manager, "Chess Match"), m_soundPlayer(std::move(soundPlayer))
     {
         m_config.allowSimultaneousMovement = isSimultaneousMode;
+        if (!m_config.allowSimultaneousMovement) {
+            m_config.cooldownDurationMs = 0;
+            m_config.allowJumping = false;
+            m_config.enablePremoves = false;
+        }
         initializeScreen();
     }
 
@@ -576,7 +694,27 @@ public:
 
         if (m_isPaused)
         {
-            // אם המשחק מושהה, נעצור את סאונד ההליכה הרציף
+            m_pauseTransitionProgress = std::min(1.0f, m_pauseTransitionProgress + deltaTime * 5.0f);
+        }
+        else
+        {
+            m_pauseTransitionProgress = std::max(0.0f, m_pauseTransitionProgress - deltaTime * 5.0f);
+        }
+
+        for (auto it = m_particles.begin(); it != m_particles.end(); ) {
+            it->life -= deltaTime;
+            if (it->life <= 0.0f) {
+                it = m_particles.erase(it);
+            } else {
+                it->position.x += it->velocity.x * deltaTime;
+                it->position.y += it->velocity.y * deltaTime;
+                it->velocity.y += 120.0f * deltaTime;
+                ++it;
+            }
+        }
+
+        if (m_isPaused)
+        {
             if (m_soundPlayer)
             {
                 m_soundPlayer->stopSound("walk");
@@ -587,16 +725,15 @@ public:
         int ms = static_cast<int>(deltaTime * 1000.0f);
         m_gameEngine->wait(ms);
 
-        // --- ניהול סאונד הליכה רציף בזמן אמת ---
         if (m_soundPlayer && !m_gameEngine->isGameOver())
         {
             if (m_gameEngine->getArbiter().hasActiveMotion())
             {
-                m_soundPlayer->playLoop("walk"); // התחלת/המשך הלופ
+                m_soundPlayer->playLoop("walk");
             }
             else
             {
-                m_soundPlayer->stopSound("walk"); // עצירה כשאין תנועה
+                m_soundPlayer->stopSound("walk");
             }
         }
         else if (m_soundPlayer && m_gameEngine->isGameOver())
@@ -644,7 +781,6 @@ public:
                     if (mouse.logicalX >= m_boardStartX && mouse.logicalX < m_boardStartX + m_boardRangeX &&
                         mouse.logicalY >= m_boardStartY && mouse.logicalY < m_boardStartY + m_boardRangeY)
                     {
-
                         float boardClickX = mouse.logicalX;
                         float boardClickY = mouse.logicalY - m_boardStartY;
 
@@ -689,17 +825,20 @@ public:
                                     auto activeColor = m_gameEngine->currentTurn();
                                     auto selectedBefore = m_controller->selectedPosition();
 
-                                    if (selectedBefore.has_value())
-                                    {
+                                    // איתור סוג הכלי שנבחר לפני הקליק
+                                    kungfu::PieceType movingPieceType = kungfu::PieceType::Pawn;
+                                    if (selectedBefore.has_value()) {
                                         auto board = m_gameEngine->getBoard();
-                                        if (board)
-                                        {
-                                            for (const auto &piece : board->pieces())
-                                            {
-                                                if (piece && piece->position() == selectedBefore.value())
-                                                {
-                                                    activeColor = piece->color();
-                                                    break;
+                                        if (board) {
+                                            auto pieceOpt = board->pieceAt(selectedBefore.value());
+                                            if (pieceOpt.has_value() && pieceOpt.value()) {
+                                                movingPieceType = pieceOpt.value()->type();
+                                                activeColor = pieceOpt.value()->color();
+                                            } else {
+                                                auto transitOpt = m_gameEngine->getArbiter().getPieceInTransitAt(selectedBefore.value());
+                                                if (transitOpt.has_value() && transitOpt.value()) {
+                                                    movingPieceType = transitOpt.value()->type();
+                                                    activeColor = transitOpt.value()->color();
                                                 }
                                             }
                                         }
@@ -723,26 +862,30 @@ public:
 
                                     if (result.actionTaken && !result.description.empty())
                                     {
-                                        std::string logText = result.description;
-                                        if (logText.rfind("Move requested: ", 0) == 0)
-                                        {
-                                            logText = logText.substr(16);
-                                        }
+                                        // רישום המהלך בטבלה רק אם הוא אושר ובוצע בהצלחה
+                                        bool isMoveAccepted = (result.description.rfind("Move requested: ok", 0) == 0 || 
+                                                               result.description.rfind("Move requested: jump_started", 0) == 0);
 
-                                        if (activeColor == kungfu::PlayerColor::White)
-                                        {
-                                            m_whiteHistory.push_back(logText);
-                                            if (m_whiteHistory.size() > 8)
+                                        if (isMoveAccepted && selectedBefore.has_value()) {
+                                            BoardPos fromPos{selectedBefore->row(), selectedBefore->col()};
+                                            BoardPos toPos{row, col};
+                                            std::string logText = getMoveNotationString(movingPieceType, fromPos, toPos);
+
+                                            if (activeColor == kungfu::PlayerColor::White)
                                             {
-                                                m_whiteHistory.erase(m_whiteHistory.begin());
+                                                m_whiteHistory.push_back(logText);
+                                                if (m_whiteHistory.size() > 8)
+                                                {
+                                                    m_whiteHistory.erase(m_whiteHistory.begin());
+                                                }
                                             }
-                                        }
-                                        else
-                                        {
-                                            m_blackHistory.push_back(logText);
-                                            if (m_blackHistory.size() > 8)
+                                            else
                                             {
-                                                m_blackHistory.erase(m_blackHistory.begin());
+                                                m_blackHistory.push_back(logText);
+                                                if (m_blackHistory.size() > 8)
+                                                {
+                                                    m_blackHistory.erase(m_blackHistory.begin());
+                                                }
                                             }
                                         }
                                     }
