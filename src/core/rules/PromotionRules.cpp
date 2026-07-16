@@ -7,8 +7,8 @@ PiecePtr ChessPromotionRule::maybePromote(const PiecePtr& piece, const Position&
         return piece;
     }
 
-    bool reachedLastRow = (piece->color() == PlayerColor::White && to.row() == board.rows() - 1) ||
-                          (piece->color() == PlayerColor::Black && to.row() == 0);
+    bool reachedLastRow = (piece->color() == PlayerColor::White && to.row() == 0) ||
+                          (piece->color() == PlayerColor::Black && to.row() == board.rows() - 1);
 
     if (!reachedLastRow) {
         return piece;

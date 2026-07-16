@@ -12,8 +12,6 @@ private:
     std::unordered_map<std::string, sf::SoundBuffer> m_buffers;
     std::list<sf::Sound> m_sounds;
     
-    // SFML 3 מחק את הבנאי הדיפולטיבי של sf::Sound. 
-    // שימוש ב-unique_ptr פותר זאת ומאפשר עבודה חלקה עם מפות ושימוש בזיכרון בטוח
     std::unordered_map<std::string, std::unique_ptr<sf::Sound>> m_loops;
 
 public:

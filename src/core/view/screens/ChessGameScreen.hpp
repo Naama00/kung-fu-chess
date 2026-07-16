@@ -149,14 +149,14 @@ private:
     void resetGame()
     {
         std::string startBoard =
-            "wR wN wB wQ wK wB wN wR\n"
-            "wP wP wP wP wP wP wP wP\n"
-            ". . . . . . . .\n"
-            ". . . . . . . .\n"
-            ". . . . . . . .\n"
-            ". . . . . . . .\n"
+            "bR bN bB bQ bK bB bN bR\n"
             "bP bP bP bP bP bP bP bP\n"
-            "bR bN bB bQ bK bB bN bR\n";
+            ". . . . . . . .\n"
+            ". . . . . . . .\n"
+            ". . . . . . . .\n"
+            ". . . . . . . .\n"
+            "wP wP wP wP wP wP wP wP\n"
+            "wR wN wB wQ wK wB wN wR\n";
 
         auto board = kungfu::BoardParser::parse(startBoard);
         auto ruleEngine = std::make_shared<kungfu::RuleEngine>(board);

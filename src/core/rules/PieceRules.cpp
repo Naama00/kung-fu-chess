@@ -136,7 +136,7 @@ std::vector<Position> PawnRule::getLegalDestinations(const IBoard& board, const 
     int maxRows = board.rows();
     int maxCols = board.cols();
 
-    int direction = (piece.color() == PlayerColor::White) ? 1 : -1;
+    int direction = (piece.color() == PlayerColor::White) ? -1 : 1;
 
     // עוזר: האם יש כלי סטטי (לא Moving/Airborne) בעמדה נתונה
     auto hasStaticPiece = [&](const Position& pos) -> bool {
