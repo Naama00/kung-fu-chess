@@ -1,7 +1,7 @@
 // מחלקה זו מייצגת כפתור לוגי. היא מנהלת את המצב הוויזואלי שלו 
 // (רגיל, ריחופית - Hover, או לחוץ) ומזהה לחיצות במערכת הצירים הלוגית
 #pragma once
-#include "../framework/InputEvents.hpp"
+#include "ui/framework/InputEvents.hpp"
 #include <string>
 #include <string_view>
 #include <functional>

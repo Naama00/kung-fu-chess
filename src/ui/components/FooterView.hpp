@@ -2,7 +2,7 @@
 
 #include "ui/framework/IRenderer.hpp"
 #include "ui/framework/InputEvents.hpp"
-#include "core/common/Enums.hpp"
+#include "engine/common/Enums.hpp"
 #include <string>
 
 class FooterView {

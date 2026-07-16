@@ -1,6 +1,6 @@
 // ממשק זה מגדיר כיצד קלט פיזי מתורגם לאירועים הגנריים של ה-UI במערכת הצירים הלוגית
 #pragma once
-#include "InputEvents.hpp"
+#include "ui/framework/InputEvents.hpp"
 #include <vector>
 
 class IInputTranslator {

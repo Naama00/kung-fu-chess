@@ -2,9 +2,9 @@
 
 #include "ui/framework/IRenderer.hpp"
 #include "ui/framework/InputEvents.hpp"
-#include "core/view/GameSnapshot.hpp"
-#include "core/engine/PremoveQueue.hpp"
-#include "core/common/PieceTokenCodec.hpp"
+#include "engine/snapshot/GameSnapshot.hpp"
+#include "engine/core/PremoveQueue.hpp"
+#include "engine/common/PieceTokenCodec.hpp"
 #include "ui/components/CooldownBar.hpp"
 #include <unordered_map>
 #include <optional>

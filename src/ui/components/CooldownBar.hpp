@@ -1,7 +1,7 @@
 // מד צינון ויזואלי המיועד להצגה מעל או מתחת לכלי השחמט הפעילים. 
 // הוא מקבל את אחוז ההתקדמות ומצייר מלבן שמתמלא או מתרוקן בהתאם
 #pragma once
-#include "../framework/InputEvents.hpp"
+#include "ui/framework/InputEvents.hpp"
 #include "ui/framework/IRenderer.hpp"
 
 class CooldownBar {

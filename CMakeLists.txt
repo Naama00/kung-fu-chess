@@ -28,15 +28,21 @@ FetchContent_MakeAvailable(Catch2)
 # ------------------------------------------------------------------------------
 
 file(GLOB_RECURSE ENGINE_SOURCES CONFIGURE_DEPENDS
-    src/core/*.cpp
+    src/engine/*.cpp
+    src/players/*.cpp
+    # engine/actions/ and players/IPlayer.hpp are headers-only — no .cpp needed
 )
 
 file(GLOB_RECURSE TEST_SOURCES CONFIGURE_DEPENDS
     tests/*.cpp
 )
 
-file(GLOB_RECURSE IMG_BACKEND_SOURCES CONFIGURE_DEPENDS
-    src/graphics_impl/img_backend/*.cpp
+file(GLOB_RECURSE OPENCV_BACKEND_SOURCES CONFIGURE_DEPENDS
+    src/graphics/opencv/*.cpp
+)
+
+file(GLOB_RECURSE SFML_BACKEND_SOURCES CONFIGURE_DEPENDS
+    src/graphics/sfml/*.cpp
 )
 
 # ------------------------------------------------------------------------------
@@ -68,8 +74,8 @@ add_test(NAME unit_tests COMMAND kungfu_tests)
 # ------------------------------------------------------------------------------
 
 add_executable(kungfu_game_opencv
-    src/main_opencv.cpp
-    ${IMG_BACKEND_SOURCES}
+    src/app/main_opencv.cpp
+    ${OPENCV_BACKEND_SOURCES}
 )
 
 target_include_directories(kungfu_game_opencv PRIVATE
@@ -87,7 +93,8 @@ target_link_libraries(kungfu_game_opencv PRIVATE
 # ------------------------------------------------------------------------------
 
 add_executable(kungfu_game_sfml
-    src/main_sfml.cpp
+    src/app/main_sfml.cpp
+    ${SFML_BACKEND_SOURCES}
 )
 
 target_include_directories(kungfu_game_sfml PRIVATE src)

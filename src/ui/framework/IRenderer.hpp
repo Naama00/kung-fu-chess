@@ -1,6 +1,6 @@
 // זהו הממשק הטהור המגדיר את פקודות הציור הלוגיות של המערכת
 #pragma once
-#include "InputEvents.hpp"
+#include "ui/framework/InputEvents.hpp"
 #include <string_view>
 
 class IRenderer {

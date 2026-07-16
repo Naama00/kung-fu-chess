@@ -4,7 +4,7 @@
 
 #pragma once
 
-#include "IScreen.hpp"
+#include "ui/framework/IScreen.hpp"
 #include <memory>
 #include <vector>
 
