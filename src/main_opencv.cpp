@@ -56,8 +56,7 @@ int main() {
         int windowY = (screenHeight - windowHeight) / 2;
         cv::moveWindow(windowName, windowX, windowY);
 
-        // 4. טעינת מסך הפתיחה החדש כמסך הראשי של האפליקציה (במקום MainMenuScreen)
-        // הערה: StartScreen משתמש כעת בממשק הבנאי המעודכן המעביר את ה-ScreenManager
+        // 4. טעינת מסך הפתיחה כמסך הראשי של האפליקציה 
         screenManager.changeScreen(std::make_unique<StartScreen>(screenManager));
 
         // טעינת תמונות הכלים לתוך ה-AssetManager של ה-Renderer.

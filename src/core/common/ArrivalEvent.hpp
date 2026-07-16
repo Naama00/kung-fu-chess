@@ -11,6 +11,7 @@ struct ArrivalEvent {
     PiecePtr piece;
     bool capturedKing;
     bool cancelled; 
+    bool isCapture = false;
 };
 
 } // namespace kungfu

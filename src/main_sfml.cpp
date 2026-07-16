@@ -3,6 +3,7 @@
 #include "ui/framework/ScreenManager.hpp"
 #include "ui/framework/IRenderer.hpp"
 #include "ui/framework/IInputTranslator.hpp"
+#include "graphics_impl/sfml_backend/SfmlSoundPlayer.hpp"
 #include "core/view/screens/StartScreen.hpp"
 #include <chrono>
 #include <memory>
@@ -27,7 +28,7 @@ int main()
             sf::State::Windowed,
             settings);
 
-        std::string defaultFontId = "default_font";
+         std::string defaultFontId = "default_font";
         SfmlRenderer sfmlRenderer(window, defaultFontId);
         SfmlInputTranslator sfmlInputTranslator(window);
         ScreenManager screenManager;
@@ -35,6 +36,13 @@ int main()
         IRenderer &renderer = sfmlRenderer;
         IInputTranslator &inputTranslator = sfmlInputTranslator;
 
+        // --- יצירה וטעינה של נגן הסאונד של SFML ---
+        auto soundPlayer = std::make_shared<SfmlSoundPlayer>();
+        soundPlayer->loadSound("move", "assets/sounds/move.wav");
+        soundPlayer->loadSound("capture", "assets/sounds/capture.wav");
+        soundPlayer->loadSound("game_over", "assets/sounds/game_over.wav");
+        soundPlayer->loadSound("walk", "assets/sounds/walk.wav");
+        
         try
         {
             sfmlRenderer.getAssetManager().loadAsset<SfmlFontAsset>(defaultFontId, "assets/arial.ttf");
@@ -58,7 +66,7 @@ int main()
         sfmlRenderer.getAssetManager().loadAsset<SfmlTextureAsset>("bN", "assets/bN.png");
         sfmlRenderer.getAssetManager().loadAsset<SfmlTextureAsset>("bP", "assets/bP.png");
 
-        screenManager.changeScreen(std::make_unique<StartScreen>(screenManager));
+        screenManager.changeScreen(std::make_unique<StartScreen>(screenManager, soundPlayer));
 
         auto previousTime = std::chrono::high_resolution_clock::now();
         bool running = true;

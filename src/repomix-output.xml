@@ -106,6 +106,10 @@ graphics_impl/
   img_backend/
     ImgInputTranslator.hpp
     ImgRenderer.hpp
+  sfml_backend/
+    SfmlAssets.hpp
+    SfmlInputTranslator.hpp
+    SfmlRenderer.hpp
   img.cpp
   img.hpp
 ui/
@@ -119,7 +123,8 @@ ui/
     IRenderer.hpp
     IScreen.hpp
     ScreenManager.hpp
-main.cpp
+main_opencv.cpp
+main_sfml.cpp
 </directory_structure>
 
 <files>
@@ -3722,18 +3727,20 @@ namespace kungfu
     {
         namespace
         {
-            struct PixelPos { float x; float y; };
-
-            // תיקון: לוגיקת האינטרפולציה (פרבולה עבור Airborne, smoothstep עבור
-            // Moving) הייתה משוכפלת כמעט מילה במילה בין שתי הלולאות למטה.
-            // ריכזתי אותה כאן כדי שכל שינוי עתידי בעקומת האנימציה יתבצע במקום אחד.
+            constexpr float kJumpHeightFactor = 1.5f;
+            constexpr float kParabolaScale = 4.0f;
+            struct PixelPos
+            {
+                float x;
+                float y;
+            };
             PixelPos computeAnimatedPixel(PieceState state,
-                                           const Position &from,
-                                           const Position &to,
-                                           int startTime,
-                                           int arrivalTime,
-                                           int currentTimeMs,
-                                           float cellSize)
+                                          const Position &from,
+                                          const Position &to,
+                                          int startTime,
+                                          int arrivalTime,
+                                          int currentTimeMs,
+                                          float cellSize)
             {
                 float startX = from.col() * cellSize;
                 float startY = from.row() * cellSize;
@@ -3746,7 +3753,7 @@ namespace kungfu
                 {
                     int elapsed = currentTimeMs - startTime;
                     t = static_cast<float>(elapsed) / static_cast<float>(duration);
-                    t = std::max(0.0f, std::min(t, 1.0f));
+                    t = std::clamp(t, 0.0f, 1.0f);
                 }
 
                 PixelPos result{};
@@ -3755,8 +3762,8 @@ namespace kungfu
                     result.x = startX + t * (endX - startX);
                     result.y = startY + t * (endY - startY);
 
-                    float maxHeight = cellSize * 1.5f;
-                    result.y -= maxHeight * 4.0f * t * (1.0f - t);
+                    float maxHeight = cellSize * kJumpHeightFactor;
+                    result.y -= maxHeight * kParabolaScale * t * (1.0f - t);
                 }
                 else
                 {
@@ -3765,6 +3772,25 @@ namespace kungfu
                     result.y = startY + smoothed_t * (endY - startY);
                 }
                 return result;
+            }
+            PieceSnapshot createPieceSnapshot(
+                const std::shared_ptr<const Piece> &piece,
+                const RealTimeArbiter &arbiter,
+                int currentTimeMs)
+            {
+                PieceSnapshot snapshot;
+
+                snapshot.type = piece->type();
+                snapshot.color = piece->color();
+                snapshot.logicalPosition = piece->position();
+                snapshot.state = piece->state();
+
+                snapshot.cooldownProgress =
+                    arbiter.getCooldownProgress(
+                        std::const_pointer_cast<Piece>(piece),
+                        currentTimeMs);
+
+                return snapshot;
             }
         } // anonymous namespace
 
@@ -3782,14 +3808,9 @@ namespace kungfu
             snap.isGameOver = gameOver;
             snap.selectedCell = selectedCell;
 
-            // תיקון: קריאה יחידה ל-board.pieces() (ולא הסתמכות מרומזת על
-            // ה-range-for לקרוא לה שוב בהמשך), ו-reserve כדי למנוע reallocations
-            // חוזרות של snap.pieces תוך כדי מילוי.
             const auto &boardPieces = board.pieces();
             snap.pieces.reserve(boardPieces.size());
 
-            // תיקון: unordered_set במקום vector+std::find - חיפוש O(1) במקום
-            // O(n) על כל כלי (משפיע בעיקר כשיש הרבה כלים/אנימציות במקביל).
             std::unordered_set<std::uint64_t> drawnPieceIds;
             drawnPieceIds.reserve(boardPieces.size());
 
@@ -3801,17 +3822,7 @@ namespace kungfu
                     continue;
                 }
 
-                PieceSnapshot pSnap;
-                pSnap.type = piece->type();
-                pSnap.color = piece->color();
-                pSnap.logicalPosition = piece->position();
-                pSnap.state = piece->state();
-
-                // תיקון: cooldownProgress מחושב פעם אחת כאן, כדי שה-View (למשל
-                // ChessGameScreen) לא יצטרך לחפש שוב את הכלי בלוח בשביל זה.
-                pSnap.cooldownProgress = arbiter.getCooldownProgress(
-                    std::const_pointer_cast<Piece>(piece), currentTimeMs);
-
+                PieceSnapshot pSnap =createPieceSnapshot(piece, arbiter, currentTimeMs);
                 pSnap.pixelX = piece->position().col() * cellSize;
                 pSnap.pixelY = piece->position().row() * cellSize;
 
@@ -3853,14 +3864,8 @@ namespace kungfu
                     continue;
                 }
 
-                PieceSnapshot pSnap;
-                pSnap.type = piece->type();
-                pSnap.color = piece->color();
-                pSnap.logicalPosition = piece->position();
-                pSnap.state = piece->state();
-                pSnap.cooldownProgress = arbiter.getCooldownProgress(
-                    std::const_pointer_cast<Piece>(piece), currentTimeMs);
-
+                PieceSnapshot pSnap =createPieceSnapshot(piece, arbiter, currentTimeMs);
+                
                 auto px = computeAnimatedPixel(
                     piece->state(), motion.from(), motion.to(),
                     motion.startTime(), motion.arrivalTime(),
@@ -4325,6 +4330,345 @@ public:
 };
 </file>
 
+<file path="graphics_impl/sfml_backend/SfmlAssets.hpp">
+#pragma once
+#include "ui/framework/AssetManager.hpp"
+#include <SFML/Graphics.hpp>
+#include <string>
+#include <stdexcept>
+
+// נכס תמונה/טקסטורה עבור ספריטים
+class SfmlTextureAsset : public IAsset {
+public:
+    sf::Texture texture;
+
+    explicit SfmlTextureAsset(const std::string& filePath) {
+        if (!texture.loadFromFile(filePath)) {
+            throw std::runtime_error("Failed to load SFML texture: " + filePath);
+        }
+        texture.setSmooth(true);
+    }
+};
+
+// נכס פונט עבור כתיבת טקסט
+class SfmlFontAsset : public IAsset {
+public:
+    sf::Font font;
+
+    explicit SfmlFontAsset(const std::string& filePath) {
+        // שינוי כאן: loadFromFile הוחלף ב-openFromFile ב-SFML 3
+        if (!font.openFromFile(filePath)) {
+            throw std::runtime_error("Failed to load SFML font: " + filePath);
+        }
+    }
+};
+</file>
+
+<file path="graphics_impl/sfml_backend/SfmlInputTranslator.hpp">
+#pragma once
+#include "ui/framework/IInputTranslator.hpp"
+#include "ui/framework/InputEvents.hpp"
+#include <SFML/Window.hpp>
+#include <SFML/Graphics.hpp>
+#include <vector>
+#include <optional>
+
+class SfmlInputTranslator : public IInputTranslator {
+private:
+    sf::RenderWindow& m_window;
+
+    static Key translateKey(sf::Keyboard::Key sfKey) {
+        switch (sfKey) {
+            case sf::Keyboard::Key::Escape: return Key::Escape;
+            case sf::Keyboard::Key::Space:  return Key::Space;
+            case sf::Keyboard::Key::W:      return Key::W;
+            case sf::Keyboard::Key::S:      return Key::S;
+            case sf::Keyboard::Key::A:      return Key::A;
+            case sf::Keyboard::Key::D:      return Key::D;
+            case sf::Keyboard::Key::Left:   return Key::Left;
+            case sf::Keyboard::Key::Right:  return Key::Right;
+            default:                        return Key::Unknown;
+        }
+    }
+
+    static MouseButton translateMouseButton(sf::Mouse::Button sfButton) {
+        switch (sfButton) {
+            case sf::Mouse::Button::Left:   return MouseButton::Left;
+            case sf::Mouse::Button::Right:  return MouseButton::Right;
+            case sf::Mouse::Button::Middle: return MouseButton::Middle;
+            default:                return MouseButton::None;
+        }
+    }
+
+public:
+    explicit SfmlInputTranslator(sf::RenderWindow& window) : m_window(window) {}
+
+    void pollEvents(std::vector<InputEvent>& outEvents) override {
+        // ב-SFML 3 פונקציית pollEvent מחזירה std::optional<sf::Event>
+        while (const std::optional<sf::Event> event = m_window.pollEvent()) {
+            
+            // 1. טיפול בסגירת חלון
+            if (event->is<sf::Event::Closed>()) {
+                m_window.close();
+                continue;
+            }
+
+            // 2. טיפול בשינוי גודל חלון (ה-Viewport מנוהל אוטומטית ובאופן דינמי ב-Renderer)
+            if (const auto* resized = event->getIf<sf::Event::Resized>()) {
+                continue;
+            }
+
+            // 3. אירועי עכבר - לחיצה ושחרור כפתור
+            if (const auto* mouseButtonPressed = event->getIf<sf::Event::MouseButtonPressed>()) {
+                InputEvent ie;
+                ie.type = InputEvent::Type::Mouse;
+                ie.mouse.action = MouseEvent::Action::Press;
+                ie.mouse.button = translateMouseButton(mouseButtonPressed->button);
+
+                sf::Vector2i pixelPos(mouseButtonPressed->position.x, mouseButtonPressed->position.y);
+                sf::Vector2f logicalPos = m_window.mapPixelToCoords(pixelPos);
+                ie.mouse.logicalX = logicalPos.x;
+                ie.mouse.logicalY = logicalPos.y;
+
+                outEvents.push_back(ie);
+            }
+            else if (const auto* mouseButtonReleased = event->getIf<sf::Event::MouseButtonReleased>()) {
+                InputEvent ie;
+                ie.type = InputEvent::Type::Mouse;
+                ie.mouse.action = MouseEvent::Action::Release;
+                ie.mouse.button = translateMouseButton(mouseButtonReleased->button);
+
+                sf::Vector2i pixelPos(mouseButtonReleased->position.x, mouseButtonReleased->position.y);
+                sf::Vector2f logicalPos = m_window.mapPixelToCoords(pixelPos);
+                ie.mouse.logicalX = logicalPos.x;
+                ie.mouse.logicalY = logicalPos.y;
+
+                outEvents.push_back(ie);
+            }
+            // אירוע תנועת עכבר
+            else if (const auto* mouseMoved = event->getIf<sf::Event::MouseMoved>()) {
+                InputEvent ie;
+                ie.type = InputEvent::Type::Mouse;
+                ie.mouse.action = MouseEvent::Action::Move;
+                ie.mouse.button = MouseButton::None;
+
+                sf::Vector2i pixelPos(mouseMoved->position.x, mouseMoved->position.y);
+                sf::Vector2f logicalPos = m_window.mapPixelToCoords(pixelPos);
+                ie.mouse.logicalX = logicalPos.x;
+                ie.mouse.logicalY = logicalPos.y;
+
+                outEvents.push_back(ie);
+            }
+
+            // 4. אירועי מקלדת
+            if (const auto* keyPressed = event->getIf<sf::Event::KeyPressed>()) {
+                InputEvent ie;
+                ie.type = InputEvent::Type::Keyboard;
+                ie.key.rawCode = static_cast<int>(keyPressed->code);
+                ie.key.key = translateKey(keyPressed->code);
+                
+                outEvents.push_back(ie);
+            }
+        }
+    }
+};
+</file>
+
+<file path="graphics_impl/sfml_backend/SfmlRenderer.hpp">
+#pragma once
+#include "ui/framework/IRenderer.hpp"
+#include "ui/framework/AssetManager.hpp"
+#include "SfmlAssets.hpp"
+#include <SFML/Graphics.hpp>
+#include <string_view>
+#include <memory>
+#include <cmath>
+
+class SfmlRenderer : public IRenderer {
+private:
+    sf::RenderWindow& m_window;
+    Vector2D m_logicalRange{1000.0f, 1000.0f};
+    sf::View m_view;
+    AssetManager m_assetManager;
+    std::string m_defaultFontId;
+
+    sf::Color toSfColor(Color color) const {
+        return sf::Color(color.r, color.g, color.b, color.a);
+    }
+
+    sf::Vector2f toSfVec(Vector2D vec) const {
+        return sf::Vector2f(vec.x, vec.y);
+    }
+
+public:
+    SfmlRenderer(sf::RenderWindow& window, std::string defaultFontId = "default_font")
+        : m_window(window), m_defaultFontId(std::move(defaultFontId)) {
+        
+        // הגדרות View מעודכנות לשימוש בוקטורים ב-SFML 3
+        m_view.setSize({m_logicalRange.x, m_logicalRange.y});
+        m_view.setCenter({m_logicalRange.x / 2.0f, m_logicalRange.y / 2.0f});
+    }
+
+    void beginFrame() override {
+        // 1. שליפת הגודל הפיזי הנוכחי של החלון
+        sf::Vector2u windowSize = m_window.getSize();
+        float windowWidth = static_cast<float>(windowSize.x);
+        float windowHeight = static_cast<float>(windowSize.y);
+
+        // 2. חישוב יחס הגובה-רוחב המושלם (1:1) עבור הלוח הריבועי
+        float targetAspectRatio = 1.0f; 
+        float windowAspectRatio = windowWidth / windowHeight;
+
+        float viewportX = 0.0f;
+        float viewportY = 0.0f;
+        float viewportWidth = 1.0f;
+        float viewportHeight = 1.0f;
+
+        if (windowAspectRatio > targetAspectRatio) {
+            // החלון רחב מדי -> נוסיף שוליים שחורים בצדדים
+            viewportWidth = targetAspectRatio / windowAspectRatio;
+            viewportX = (1.0f - viewportWidth) / 2.0f;
+        } else {
+            // החלון גבוה מדי -> נוסיף שוליים שחורים למעלה ולמטה
+            viewportHeight = windowAspectRatio / targetAspectRatio;
+            viewportY = (1.0f - viewportHeight) / 2.0f;
+        }
+
+        // 3. עדכון ה-Viewport של מופע ה-View הנוכחי ב-Renderer (תואם SFML 3)
+        m_view.setViewport(sf::FloatRect({viewportX, viewportY}, {viewportWidth, viewportHeight}));
+
+        // 4. הגדרת ה-View המעודכן בחלון
+        m_window.setView(m_view);
+    }
+
+    void clear(Color color) override {
+        m_window.clear(toSfColor(color));
+    }
+
+    void endFrame() override {
+    }
+
+    void presentFrame() override {
+        m_window.display();
+    }
+
+    bool isWindowOpen() const override {
+        return m_window.isOpen();
+    }
+
+    void drawRectangle(Vector2D position, Vector2D size, Color color, bool fill) override {
+        sf::RectangleShape rect(toSfVec(size));
+        rect.setPosition(toSfVec(position));
+        
+        if (fill) {
+            rect.setFillColor(toSfColor(color));
+            rect.setOutlineThickness(0.0f);
+        } else {
+            rect.setFillColor(sf::Color::Transparent);
+            rect.setOutlineColor(toSfColor(color));
+            rect.setOutlineThickness(1.5f);
+        }
+        m_window.draw(rect);
+    }
+
+    void drawLine(Vector2D start, Vector2D end, Color color, float thickness) override {
+        sf::Vector2f p1 = toSfVec(start);
+        sf::Vector2f p2 = toSfVec(end);
+        sf::Vector2f direction = p2 - p1;
+        float length = std::sqrt(direction.x * direction.x + direction.y * direction.y);
+
+        if (length < 0.01f) return;
+
+        sf::RectangleShape line({length, thickness});
+        line.setPosition(p1);
+        line.setFillColor(toSfColor(color));
+        
+        float angle = std::atan2(direction.y, direction.x) * 180.0f / 3.14159265f;
+        // SFML 3 דורשת סוג זווית sf::Angle שנוצר באמצעות sf::degrees
+        line.setRotation(sf::degrees(angle));
+
+        m_window.draw(line);
+    }
+
+    void drawCircle(Vector2D center, float radius, Color color, bool fill) override {
+        sf::CircleShape circle(radius);
+        circle.setOrigin({radius, radius});
+        circle.setPosition(toSfVec(center));
+
+        if (fill) {
+            circle.setFillColor(toSfColor(color));
+            circle.setOutlineThickness(0.0f);
+        } else {
+            circle.setFillColor(sf::Color::Transparent);
+            circle.setOutlineColor(toSfColor(color));
+            circle.setOutlineThickness(1.5f);
+        }
+        
+        circle.setPointCount(30);
+        m_window.draw(circle);
+    }
+
+    void drawSprite(std::string_view assetId,
+                    Vector2D position,
+                    Vector2D size,
+                    float rotationDegrees,
+                    const Vector2D* srcOffset,
+                    const Vector2D* srcSize) override {
+        try {
+            auto& asset = m_assetManager.getAsset<SfmlTextureAsset>(assetId);
+            sf::Sprite sprite(asset.texture);
+
+            if (srcOffset && srcSize) {
+                sprite.setTextureRect(sf::IntRect(
+                    {static_cast<int>(srcOffset->x), static_cast<int>(srcOffset->y)},
+                    {static_cast<int>(srcSize->x), static_cast<int>(srcSize->y)}
+                ));
+            }
+
+            sf::FloatRect bounds = sprite.getLocalBounds();
+            if (bounds.size.x > 0.0f && bounds.size.y > 0.0f) {
+                sprite.setScale({size.x / bounds.size.x, size.y / bounds.size.y});
+            }
+
+            sprite.setPosition(toSfVec(position));
+            if (std::abs(rotationDegrees) > 0.01f) {
+                sprite.setOrigin({bounds.size.x / 2.0f, bounds.size.y / 2.0f});
+                sprite.move({size.x / 2.0f, size.y / 2.0f});
+                sprite.setRotation(sf::degrees(rotationDegrees));
+            }
+
+            m_window.draw(sprite);
+        } catch (...) {
+            drawRectangle(position, size, {255, 0, 255, 255}, true);
+        }
+    }
+
+    void drawText(std::string_view text, Vector2D position, int fontSize, Color color) override {
+        try {
+            auto& fontAsset = m_assetManager.getAsset<SfmlFontAsset>(m_defaultFontId);
+            // ב-SFML 3 יש חובה לקשר פונט ישירות בבנאי של sf::Text
+            sf::Text sfText(fontAsset.font);
+            sfText.setString(std::string(text));
+            sfText.setCharacterSize(static_cast<unsigned int>(fontSize));
+            sfText.setFillColor(toSfColor(color));
+            sfText.setPosition(toSfVec(position));
+
+            m_window.draw(sfText);
+        } catch (...) {
+        }
+    }
+
+    Vector2D getTargetSize() const override {
+        sf::Vector2u size = m_window.getSize();
+        return { static_cast<float>(size.x), static_cast<float>(size.y) };
+    }
+
+    AssetManager& getAssetManager() {
+        return m_assetManager;
+    }
+};
+</file>
+
 <file path="graphics_impl/img.cpp">
 #include "graphics_impl/img.hpp"
 #include <iostream>
@@ -4672,7 +5016,7 @@ public:
             return; // המשאב כבר קיים בזיכרון, אין צורך לטעון שוב
         }
 
-        // תיקון: בונים את האובייקט לפני ההכנסה למפה, במקום
+        // בונים את האובייקט לפני ההכנסה למפה, במקום
         // m_assets[assetId] = std::make_unique<T>(...).
         // אם הבנייה זורקת חריגה (למשל קובץ תמונה חסר), חשוב שהמפה לא תכיל
         // entry ריק עבור assetId זה - אחרת הבדיקה למעלה תחשוב שהנכס "כבר
@@ -4744,6 +5088,7 @@ public:
 <file path="ui/framework/InputEvents.hpp">
 // קובץ זה מגדיר את אירועי המקלדת והעכבר הלוגיים בצורה מנותקת לחלוטין מהספרייה הגרפית
 #pragma once
+#include <cstdint>
 
 // קואורדינטות דו-מימדיות גנריות
 struct Vector2D {
@@ -4753,10 +5098,10 @@ struct Vector2D {
 
 // צבע גנרי בפורמט RGBA
 struct Color {
-    unsigned char r = 255;
-    unsigned char g = 255;
-    unsigned char b = 255;
-    unsigned char a = 255;
+    std::uint8_t r = 255;
+    std::uint8_t g = 255;
+    std::uint8_t b = 255;
+    std::uint8_t a = 255;
 };
 
 // הגדרת מקשים גנריים התואמת את השימוש ב-Translator וב-main
@@ -4778,8 +5123,8 @@ enum class MouseButton {
 
 // נתונים עבור אירועי מקלדת
 struct KeyEvent {
-    Key key;
-    int rawCode;
+    Key key = Key::Unknown;
+    int rawCode = 0; 
 };
 
 // נתונים עבור אירועי עכבר - משתמשים בקואורדינטות לוגיות בלבד
@@ -4821,7 +5166,7 @@ public:
     // בדיקה האם משטח התצוגה (החלון) עדיין פתוח מבחינת המשתמש/מערכת ההפעלה.
     virtual bool isWindowOpen() const = 0;
 
-    // פעולות ציור בסיסיות (פרימיטיביים)
+    // פעולות ציור בסיסיות
     virtual void drawRectangle(Vector2D position, Vector2D size, Color color, bool fill = true) = 0;
     virtual void drawLine(Vector2D start, Vector2D end, Color color, float thickness = 1.0f) = 0;
     virtual void drawCircle(Vector2D center, float radius, Color color, bool fill = true) = 0;
@@ -4877,12 +5222,15 @@ public:
 </file>
 
 <file path="ui/framework/ScreenManager.hpp">
-// מנהל המסכים המחזיק את המחסנית ומבצע את פעולות המעבר בצורה בטוחה בסוף מחזור העדכון
-// (באמצעות מנגנון Pending Actions) כדי למנוע קריסות זיכרון
+// מנהל המסכים המחזיק את מחסנית המסכים ומבצע את פעולות המעבר בצורה בטוחה
+// בסוף מחזור העדכון באמצעות מנגנון Pending Actions.
+// כך נמנעים ממחיקת מסך בזמן שהוא עדיין מריץ update()/handleInput().
+
 #pragma once
+
 #include "IScreen.hpp"
-#include <vector>
 #include <memory>
+#include <vector>
 
 class IRenderer;
 struct InputEvent;
@@ -4891,97 +5239,129 @@ class ScreenManager {
 private:
     std::vector<std::unique_ptr<IScreen>> m_screens;
 
-    enum class PendingActionType { Push, Pop, Change };
+    enum class PendingActionType {
+        Push,
+        Pop,
+        Change
+    };
+
     struct PendingAction {
         PendingActionType type;
         std::unique_ptr<IScreen> screen;
     };
+
     std::vector<PendingAction> m_pendingActions;
 
-    void applyPendingActions() {
-        // תיקון: לא מבצעים range-for ישירות על m_pendingActions, כי onEnter()/
-        // onExit() עלולים לקרוא בעצמם ל-pushScreen/popScreen/changeScreen (למשל
-        // מסך שפותח אוטומטית מסך משנה בכניסה) - מה שידחוף פעולות חדשות לתוך
-        // m_pendingActions בזמן שאנחנו עדיין מאזרים אותו, ויגרום ל-invalidation
-        // של האיטרטורים (Undefined Behavior).
-        //
-        // הפתרון: מושכים (move) את כל הפעולות החוצה למשתנה מקומי, מבצעים אותן,
-        // וחוזרים על התהליך כל עוד נוספו פעולות חדשות תוך כדי הביצוע.
-        while (!m_pendingActions.empty()) {
-            std::vector<PendingAction> actionsToApply = std::move(m_pendingActions);
-            m_pendingActions.clear();
+private:
 
-            for (auto& action : actionsToApply) {
-                switch (action.type) {
-                    case PendingActionType::Push:
-                        m_screens.push_back(std::move(action.screen));
-                        m_screens.back()->onEnter();
-                        break;
-
-                    case PendingActionType::Pop:
-                        if (!m_screens.empty()) {
-                            m_screens.back()->onExit();
-                            m_screens.pop_back();
-                        }
-                        break;
-
-                    case PendingActionType::Change:
-                        while (!m_screens.empty()) {
-                            m_screens.back()->onExit();
-                            m_screens.pop_back();
-                        }
-                        m_screens.push_back(std::move(action.screen));
-                        m_screens.back()->onEnter();
-                        break;
-                }
-            }
-        }
-    }
-
-public:
-    ScreenManager() = default;
-    ~ScreenManager() {
+    // מסיר את כל המסכים מהמחסנית.
+    // משמש בעת החלפת כל המסכים במסך חדש.
+    void clearScreens() {
         while (!m_screens.empty()) {
             m_screens.back()->onExit();
             m_screens.pop_back();
         }
     }
 
-    // מניעת העתקה של מנהל המסכים
+    void applyPush(std::unique_ptr<IScreen> screen) {
+        m_screens.push_back(std::move(screen));
+        m_screens.back()->onEnter();
+    }
+
+    void applyPop() {
+        if (m_screens.empty()) {
+            return;
+        }
+
+        m_screens.back()->onExit();
+        m_screens.pop_back();
+    }
+
+    void applyChange(std::unique_ptr<IScreen> screen) {
+        clearScreens();
+        applyPush(std::move(screen));
+    }
+
+    void processAction(PendingAction& action) {
+        switch (action.type) {
+        case PendingActionType::Push:
+            applyPush(std::move(action.screen));
+            break;
+
+        case PendingActionType::Pop:
+            applyPop();
+            break;
+
+        case PendingActionType::Change:
+            applyChange(std::move(action.screen));
+            break;
+        }
+    }
+
+    // מבצע את כל הפעולות שנדחו.
+    // onEnter()/onExit() יכולים בעצמם לבצע push/pop/change.
+    // לכן אי אפשר לעבור ישירות על m_pendingActions,
+    // אחרת vector עלול להשתנות בזמן האיטרציה.
+    // הפתרון הוא להעביר (move) את כל הפעולות לרשימה זמנית,
+    // לבצע אותן, ואז לבדוק האם נוספו פעולות חדשות.
+    void applyPendingActions() {
+        while (!m_pendingActions.empty()) {
+
+            auto actionsToApply = std::move(m_pendingActions);
+            m_pendingActions.clear();
+
+            for (auto& action : actionsToApply) {
+                processAction(action);
+            }
+        }
+    }
+
+public:
+
+    ScreenManager() = default;
+
+    // אין צורך לקרוא ל-onExit().
+    // ה-unique_ptr ידאג להשמיד את כל המסכים בצורה אוטומטית.
+    ~ScreenManager() = default;
+
     ScreenManager(const ScreenManager&) = delete;
     ScreenManager& operator=(const ScreenManager&) = delete;
 
-    // מעבר למסך חדש וניקוי כל המחסנית
+    // מחליף את כל מחסנית המסכים במסך חדש.
     void changeScreen(std::unique_ptr<IScreen> newScreen) {
-        m_pendingActions.push_back({PendingActionType::Change, std::move(newScreen)});
+        m_pendingActions.push_back(
+            { PendingActionType::Change, std::move(newScreen) });
     }
 
-    // דחיפת מסך חדש מעל המסך הנוכחי (למשל תפריט השהיה)
+    // מוסיף מסך חדש מעל המסך הפעיל.
     void pushScreen(std::unique_ptr<IScreen> newScreen) {
-        m_pendingActions.push_back({PendingActionType::Push, std::move(newScreen)});
+        m_pendingActions.push_back(
+            { PendingActionType::Push, std::move(newScreen) });
     }
 
-    // הסרת המסך העליון וחזרה למסך הקודם
+    // מסיר את המסך העליון.
     void popScreen() {
-        m_pendingActions.push_back({PendingActionType::Pop, nullptr});
+        m_pendingActions.push_back(
+            { PendingActionType::Pop, nullptr });
     }
 
-    // עדכון המסך הפעיל
+    // מעדכן את המסך הפעיל.
     void update(float deltaTime) {
         applyPendingActions();
+
         if (!m_screens.empty()) {
             m_screens.back()->update(deltaTime);
         }
     }
 
-    // רינדור המסך הפעיל
+    // מצייר את המסך הפעיל.
     void draw(IRenderer& renderer) {
         if (!m_screens.empty()) {
             m_screens.back()->draw(renderer);
         }
     }
 
-    // ניתוב קלט למסך הפעיל
+    // מעביר את אירועי הקלט למסך הפעיל בלבד.
     void handleInput(const std::vector<InputEvent>& events) {
         if (!m_screens.empty()) {
             m_screens.back()->handleInput(events);
@@ -4994,7 +5374,7 @@ public:
 };
 </file>
 
-<file path="main.cpp">
+<file path="main_opencv.cpp">
 // src/main.cpp
 #include "graphics_impl/img_backend/ImgRenderer.hpp"
 #include "graphics_impl/img_backend/ImgInputTranslator.hpp"
@@ -5053,8 +5433,7 @@ int main() {
         int windowY = (screenHeight - windowHeight) / 2;
         cv::moveWindow(windowName, windowX, windowY);
 
-        // 4. טעינת מסך הפתיחה החדש כמסך הראשי של האפליקציה (במקום MainMenuScreen)
-        // הערה: StartScreen משתמש כעת בממשק הבנאי המעודכן המעביר את ה-ScreenManager
+        // 4. טעינת מסך הפתיחה כמסך הראשי של האפליקציה 
         screenManager.changeScreen(std::make_unique<StartScreen>(screenManager));
 
         // טעינת תמונות הכלים לתוך ה-AssetManager של ה-Renderer.
@@ -5117,6 +5496,107 @@ int main() {
 
     } catch (const std::exception& e) {
         std::cerr << "Critical Error: " << e.what() << std::endl;
+        return -1;
+    }
+
+    return 0;
+}
+</file>
+
+<file path="main_sfml.cpp">
+#include "graphics_impl/sfml_backend/SfmlRenderer.hpp"
+#include "graphics_impl/sfml_backend/SfmlInputTranslator.hpp"
+#include "ui/framework/ScreenManager.hpp"
+#include "ui/framework/IRenderer.hpp"
+#include "ui/framework/IInputTranslator.hpp"
+#include "core/view/screens/StartScreen.hpp"
+#include <chrono>
+#include <memory>
+#include <iostream>
+
+int main()
+{
+    try
+    {
+        const std::string windowName = "Kung-Fu Chess Game (SFML 3 Edition)";
+        const unsigned int windowWidth = 800;
+        const unsigned int windowHeight = 800;
+
+        sf::ContextSettings settings;
+        settings.antiAliasingLevel = 4;
+
+        // ב-SFML 3 הבנאי של VideoMode מקבל את הממדים כוקטור יחיד, ויש להגדיר State מפורש (כמו Windowed או Fullscreen)
+        sf::RenderWindow window(
+            sf::VideoMode({windowWidth, windowHeight}),
+            windowName,
+            sf::Style::Default, // שינוי כאן
+            sf::State::Windowed,
+            settings);
+
+        std::string defaultFontId = "default_font";
+        SfmlRenderer sfmlRenderer(window, defaultFontId);
+        SfmlInputTranslator sfmlInputTranslator(window);
+        ScreenManager screenManager;
+
+        IRenderer &renderer = sfmlRenderer;
+        IInputTranslator &inputTranslator = sfmlInputTranslator;
+
+        try
+        {
+            sfmlRenderer.getAssetManager().loadAsset<SfmlFontAsset>(defaultFontId, "assets/arial.ttf");
+        }
+        catch (const std::exception &e)
+        {
+            std::cerr << "Warning: Could not load default font: " << e.what() << std::endl;
+        }
+
+        sfmlRenderer.getAssetManager().loadAsset<SfmlTextureAsset>("wK", "assets/wK.png");
+        sfmlRenderer.getAssetManager().loadAsset<SfmlTextureAsset>("wQ", "assets/wQ.png");
+        sfmlRenderer.getAssetManager().loadAsset<SfmlTextureAsset>("wR", "assets/wR.png");
+        sfmlRenderer.getAssetManager().loadAsset<SfmlTextureAsset>("wB", "assets/wB.png");
+        sfmlRenderer.getAssetManager().loadAsset<SfmlTextureAsset>("wN", "assets/wN.png");
+        sfmlRenderer.getAssetManager().loadAsset<SfmlTextureAsset>("wP", "assets/wP.png");
+
+        sfmlRenderer.getAssetManager().loadAsset<SfmlTextureAsset>("bK", "assets/bK.png");
+        sfmlRenderer.getAssetManager().loadAsset<SfmlTextureAsset>("bQ", "assets/bQ.png");
+        sfmlRenderer.getAssetManager().loadAsset<SfmlTextureAsset>("bR", "assets/bR.png");
+        sfmlRenderer.getAssetManager().loadAsset<SfmlTextureAsset>("bB", "assets/bB.png");
+        sfmlRenderer.getAssetManager().loadAsset<SfmlTextureAsset>("bN", "assets/bN.png");
+        sfmlRenderer.getAssetManager().loadAsset<SfmlTextureAsset>("bP", "assets/bP.png");
+
+        screenManager.changeScreen(std::make_unique<StartScreen>(screenManager));
+
+        auto previousTime = std::chrono::high_resolution_clock::now();
+        bool running = true;
+
+        std::cout << "Starting SFML 3 main loop..." << std::endl;
+
+        while (running && window.isOpen() && !screenManager.isEmpty())
+        {
+            auto currentTime = std::chrono::high_resolution_clock::now();
+            std::chrono::duration<float> elapsed = currentTime - previousTime;
+            previousTime = currentTime;
+            float deltaTime = elapsed.count();
+            if (deltaTime > 0.1f)
+                deltaTime = 0.1f;
+
+            std::vector<InputEvent> events;
+            inputTranslator.pollEvents(events);
+            screenManager.handleInput(events);
+
+            screenManager.update(deltaTime);
+
+            renderer.beginFrame();
+            screenManager.draw(renderer);
+            renderer.endFrame();
+            renderer.presentFrame();
+        }
+
+        std::cout << "SFML Game loop exited cleanly." << std::endl;
+    }
+    catch (const std::exception &e)
+    {
+        std::cerr << "Critical Error in main: " << e.what() << std::endl;
         return -1;
     }
 

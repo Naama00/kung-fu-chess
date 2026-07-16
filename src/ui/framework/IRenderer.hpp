@@ -18,7 +18,7 @@ public:
     // בדיקה האם משטח התצוגה (החלון) עדיין פתוח מבחינת המשתמש/מערכת ההפעלה.
     virtual bool isWindowOpen() const = 0;
 
-    // פעולות ציור בסיסיות (פרימיטיביים)
+    // פעולות ציור בסיסיות
     virtual void drawRectangle(Vector2D position, Vector2D size, Color color, bool fill = true) = 0;
     virtual void drawLine(Vector2D start, Vector2D end, Color color, float thickness = 1.0f) = 0;
     virtual void drawCircle(Vector2D center, float radius, Color color, bool fill = true) = 0;

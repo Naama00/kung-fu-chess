@@ -1,5 +1,6 @@
 // קובץ זה מגדיר את אירועי המקלדת והעכבר הלוגיים בצורה מנותקת לחלוטין מהספרייה הגרפית
 #pragma once
+#include <cstdint>
 
 // קואורדינטות דו-מימדיות גנריות
 struct Vector2D {
@@ -9,10 +10,10 @@ struct Vector2D {
 
 // צבע גנרי בפורמט RGBA
 struct Color {
-    unsigned char r = 255;
-    unsigned char g = 255;
-    unsigned char b = 255;
-    unsigned char a = 255;
+    std::uint8_t r = 255;
+    std::uint8_t g = 255;
+    std::uint8_t b = 255;
+    std::uint8_t a = 255;
 };
 
 // הגדרת מקשים גנריים התואמת את השימוש ב-Translator וב-main
@@ -34,8 +35,8 @@ enum class MouseButton {
 
 // נתונים עבור אירועי מקלדת
 struct KeyEvent {
-    Key key;
-    int rawCode;
+    Key key = Key::Unknown;
+    int rawCode = 0; 
 };
 
 // נתונים עבור אירועי עכבר - משתמשים בקואורדינטות לוגיות בלבד

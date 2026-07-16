@@ -11,18 +11,20 @@ namespace kungfu
     {
         namespace
         {
-            struct PixelPos { float x; float y; };
-
-            // תיקון: לוגיקת האינטרפולציה (פרבולה עבור Airborne, smoothstep עבור
-            // Moving) הייתה משוכפלת כמעט מילה במילה בין שתי הלולאות למטה.
-            // ריכזתי אותה כאן כדי שכל שינוי עתידי בעקומת האנימציה יתבצע במקום אחד.
+            constexpr float kJumpHeightFactor = 1.5f;
+            constexpr float kParabolaScale = 4.0f;
+            struct PixelPos
+            {
+                float x;
+                float y;
+            };
             PixelPos computeAnimatedPixel(PieceState state,
-                                           const Position &from,
-                                           const Position &to,
-                                           int startTime,
-                                           int arrivalTime,
-                                           int currentTimeMs,
-                                           float cellSize)
+                                          const Position &from,
+                                          const Position &to,
+                                          int startTime,
+                                          int arrivalTime,
+                                          int currentTimeMs,
+                                          float cellSize)
             {
                 float startX = from.col() * cellSize;
                 float startY = from.row() * cellSize;
@@ -35,7 +37,7 @@ namespace kungfu
                 {
                     int elapsed = currentTimeMs - startTime;
                     t = static_cast<float>(elapsed) / static_cast<float>(duration);
-                    t = std::max(0.0f, std::min(t, 1.0f));
+                    t = std::clamp(t, 0.0f, 1.0f);
                 }
 
                 PixelPos result{};
@@ -44,8 +46,8 @@ namespace kungfu
                     result.x = startX + t * (endX - startX);
                     result.y = startY + t * (endY - startY);
 
-                    float maxHeight = cellSize * 1.5f;
-                    result.y -= maxHeight * 4.0f * t * (1.0f - t);
+                    float maxHeight = cellSize * kJumpHeightFactor;
+                    result.y -= maxHeight * kParabolaScale * t * (1.0f - t);
                 }
                 else
                 {
@@ -54,6 +56,25 @@ namespace kungfu
                     result.y = startY + smoothed_t * (endY - startY);
                 }
                 return result;
+            }
+            PieceSnapshot createPieceSnapshot(
+                const std::shared_ptr<const Piece> &piece,
+                const RealTimeArbiter &arbiter,
+                int currentTimeMs)
+            {
+                PieceSnapshot snapshot;
+
+                snapshot.type = piece->type();
+                snapshot.color = piece->color();
+                snapshot.logicalPosition = piece->position();
+                snapshot.state = piece->state();
+
+                snapshot.cooldownProgress =
+                    arbiter.getCooldownProgress(
+                        std::const_pointer_cast<Piece>(piece),
+                        currentTimeMs);
+
+                return snapshot;
             }
         } // anonymous namespace
 
@@ -71,14 +92,9 @@ namespace kungfu
             snap.isGameOver = gameOver;
             snap.selectedCell = selectedCell;
 
-            // תיקון: קריאה יחידה ל-board.pieces() (ולא הסתמכות מרומזת על
-            // ה-range-for לקרוא לה שוב בהמשך), ו-reserve כדי למנוע reallocations
-            // חוזרות של snap.pieces תוך כדי מילוי.
             const auto &boardPieces = board.pieces();
             snap.pieces.reserve(boardPieces.size());
 
-            // תיקון: unordered_set במקום vector+std::find - חיפוש O(1) במקום
-            // O(n) על כל כלי (משפיע בעיקר כשיש הרבה כלים/אנימציות במקביל).
             std::unordered_set<std::uint64_t> drawnPieceIds;
             drawnPieceIds.reserve(boardPieces.size());
 
@@ -90,17 +106,7 @@ namespace kungfu
                     continue;
                 }
 
-                PieceSnapshot pSnap;
-                pSnap.type = piece->type();
-                pSnap.color = piece->color();
-                pSnap.logicalPosition = piece->position();
-                pSnap.state = piece->state();
-
-                // תיקון: cooldownProgress מחושב פעם אחת כאן, כדי שה-View (למשל
-                // ChessGameScreen) לא יצטרך לחפש שוב את הכלי בלוח בשביל זה.
-                pSnap.cooldownProgress = arbiter.getCooldownProgress(
-                    std::const_pointer_cast<Piece>(piece), currentTimeMs);
-
+                PieceSnapshot pSnap =createPieceSnapshot(piece, arbiter, currentTimeMs);
                 pSnap.pixelX = piece->position().col() * cellSize;
                 pSnap.pixelY = piece->position().row() * cellSize;
 
@@ -142,14 +148,8 @@ namespace kungfu
                     continue;
                 }
 
-                PieceSnapshot pSnap;
-                pSnap.type = piece->type();
-                pSnap.color = piece->color();
-                pSnap.logicalPosition = piece->position();
-                pSnap.state = piece->state();
-                pSnap.cooldownProgress = arbiter.getCooldownProgress(
-                    std::const_pointer_cast<Piece>(piece), currentTimeMs);
-
+                PieceSnapshot pSnap =createPieceSnapshot(piece, arbiter, currentTimeMs);
+                
                 auto px = computeAnimatedPixel(
                     piece->state(), motion.from(), motion.to(),
                     motion.startTime(), motion.arrivalTime(),

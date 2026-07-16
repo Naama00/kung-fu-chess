@@ -11,7 +11,7 @@ find_package(OpenCV REQUIRED)
 
 # -------- Find SFML 3 --------
 # איתור SFML בגרסה 3 ומעלה עם שמות הרכיבים המעודכנים באותיות גדולות
-find_package(SFML 3 COMPONENTS Graphics Window System REQUIRED)
+find_package(SFML 3 REQUIRED COMPONENTS Graphics Window System Audio)
 # ---------------------------
 
 # -------- Catch2 via FetchContent --------
@@ -82,8 +82,8 @@ add_executable(kungfu_game_sfml
     src/main_sfml.cpp
 )
 target_include_directories(kungfu_game_sfml PRIVATE src)
-# קישור באמצעות ה-Namespaces המעודכנים של SFML 3
-target_link_libraries(kungfu_game_sfml PRIVATE kungfu_engine SFML::Graphics SFML::Window SFML::System)
+# קישור ספריית הליבה (kungfu_engine) לצד ה-Namespaces המעודכנים של SFML 3
+target_link_libraries(kungfu_game_sfml PRIVATE kungfu_engine SFML::Graphics SFML::Window SFML::System SFML::Audio)
 
 # ── Windows Post-Build DLL Auto-Copy ─────────────────────────────────────────
 if(WIN32)
