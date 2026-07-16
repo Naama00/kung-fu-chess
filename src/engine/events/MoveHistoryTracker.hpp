@@ -1,8 +1,8 @@
 // core/engine/MoveHistoryTracker.hpp
 #pragma once
-#include "core/engine/IGameObserver.hpp"
-#include "core/common/PieceTokenCodec.hpp"
-#include "core/common/Enums.hpp"
+#include "engine/events/IGameObserver.hpp"
+#include "engine/common/PieceTokenCodec.hpp"
+#include "engine/common/Enums.hpp"
 #include <vector>
 #include <string>
 #include <cstdio>

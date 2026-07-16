@@ -1,6 +1,6 @@
 // core/engine/IGameObserver.hpp
 #pragma once
-#include "core/common/ArrivalEvent.hpp"
+#include "engine/common/ArrivalEvent.hpp"
 
 namespace kungfu {
 
