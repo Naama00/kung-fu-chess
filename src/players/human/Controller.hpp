@@ -3,10 +3,10 @@
 #include <memory>
 #include <optional>
 #include <string>
-#include "core/input/BoardMapper.hpp"
-#include "core/common/Position.hpp"
-#include "core/common/Enums.hpp"
-#include "core/input/InputConfig.hpp" 
+#include "players/human/BoardMapper.hpp"
+#include "engine/common/Position.hpp"
+#include "engine/common/Enums.hpp"
+#include "players/human/InputConfig.hpp" 
 
 namespace kungfu {
 

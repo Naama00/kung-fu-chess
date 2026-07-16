@@ -1,4 +1,4 @@
-#include "core/input/BoardMapper.hpp"
+#include "players/human/BoardMapper.hpp"
 
 namespace kungfu {
 

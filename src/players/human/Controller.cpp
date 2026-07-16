@@ -1,5 +1,5 @@
-#include "core/input/Controller.hpp"
-#include "core/engine/IGameEngine.hpp"
+#include "players/human/Controller.hpp"
+#include "engine/core/IGameEngine.hpp"
 
 namespace kungfu {
 

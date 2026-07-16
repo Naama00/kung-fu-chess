@@ -1,8 +1,8 @@
 #pragma once
 
 #include <optional>
-#include "core/common/Position.hpp"
-#include "core/input/InputConfig.hpp"   
+#include "engine/common/Position.hpp"
+#include "players/human/InputConfig.hpp"   
 
 namespace kungfu {
 
