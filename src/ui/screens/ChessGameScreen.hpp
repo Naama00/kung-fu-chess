@@ -12,6 +12,7 @@
 #include "engine/core/GameEngine.hpp"
 #include "engine/events/IGameObserver.hpp"
 #include "players/human/HumanPlayer.hpp"
+#include "players/ai/AIPlayer.hpp"
 #include "engine/snapshot/SnapshotBuilder.hpp"
 #include "engine/io/BoardParser.hpp"
 #include "engine/common/PieceTokenCodec.hpp"
@@ -27,9 +28,12 @@ class ChessGameScreen : public BaseScreen
 private:
     std::shared_ptr<kungfu::GameEngine> m_gameEngine;
     std::shared_ptr<kungfu::HumanPlayer> m_humanPlayer;
+    std::shared_ptr<kungfu::AIPlayer> m_aiPlayer;
     kungfu::GameConfig m_config;
     std::shared_ptr<ISoundPlayer> m_soundPlayer;
     bool m_isPaused = false;
+    bool m_isAiOpponent = false;    // שדה חדש למעקב אחר משחק מול ה-AI
+    float m_aiDecisionTimer = 1.0f; // טיימר אקראי לפעולת ה-AI במצב סימולטני
 
     // היסטוריית מהלכים של כל שחקן
     std::vector<std::string> m_whiteHistory;
@@ -73,13 +77,13 @@ private:
 
     BoardPos m_hoveredTile{-1, -1};
     float m_pauseTransitionProgress = 0.0f;
-    
+
     // רכיבי UI מודולריים
     ParticleSystem m_particleSystem;
     SidebarView m_sidebarView;
     HeaderView m_headerView;
     FooterView m_footerView;
-    BoardView m_boardView; 
+    BoardView m_boardView;
 
     int getPieceValue(kungfu::PieceType type) const
     {
@@ -163,6 +167,16 @@ private:
 
         m_gameEngine = std::make_shared<kungfu::GameEngine>(board, ruleEngine, m_config);
         m_humanPlayer = std::make_shared<kungfu::HumanPlayer>(m_gameEngine);
+
+        // יצירת ה-AI רק במידה והשחקן בחר לשחק מול המחשב
+        if (m_isAiOpponent)
+        {
+            m_aiPlayer = std::make_shared<kungfu::AIPlayer>(kungfu::PlayerColor::Black);
+        }
+        else
+        {
+            m_aiPlayer = nullptr;
+        }
 
         m_humanPlayer->setCellSize(100);
 
@@ -336,7 +350,7 @@ protected:
         int cols = board->cols();
 
         auto selectedOpt = m_humanPlayer->selectedPosition();
-        
+
         auto snapshot = kungfu::view::SnapshotBuilder::build(
             *board,
             m_gameEngine->getArbiter(),
@@ -353,26 +367,28 @@ protected:
 
         m_particleSystem.draw(renderer);
 
-        m_headerView.draw(renderer, "KUNG-FU CHESS", m_theme.background, m_theme.border, m_theme.titleText, 
+        m_headerView.draw(renderer, "KUNG-FU CHESS", m_theme.background, m_theme.border, m_theme.titleText,
                           *m_pauseButton, *m_sidebarRestartButton, *m_sidebarMenuButton);
-        
+
         m_sidebarView.draw(renderer, m_whiteHistory, m_blackHistory, m_theme.background, m_theme.border);
-        
+
         int whiteScore = calculatePlayerScore(kungfu::PlayerColor::White);
         int blackScore = calculatePlayerScore(kungfu::PlayerColor::Black);
-        m_footerView.draw(renderer, whiteScore, blackScore, m_gameEngine->isGameOver(), m_isPaused, 
-                          m_config.allowSimultaneousMovement, m_gameEngine->currentTurn(), 
+        m_footerView.draw(renderer, whiteScore, blackScore, m_gameEngine->isGameOver(), m_isPaused,
+                          m_config.allowSimultaneousMovement, m_gameEngine->currentTurn(),
                           m_theme.background, m_theme.border);
-        
+
         drawOverlays(renderer, snapshot);
     }
 
 public:
     explicit ChessGameScreen(ScreenManager &manager,
-                             kungfu::GameConfig config = kungfu::GameConfig{},
+                             bool isSimultaneousMode,
+                             bool isAiOpponent = false, // פרמטר חדש
                              std::shared_ptr<ISoundPlayer> soundPlayer = std::make_shared<NullSoundPlayer>())
-        : BaseScreen(manager, "Chess Match"), m_config(config), m_soundPlayer(std::move(soundPlayer))
+        : BaseScreen(manager, "Chess Match"), m_isAiOpponent(isAiOpponent), m_soundPlayer(std::move(soundPlayer))
     {
+        m_config.allowSimultaneousMovement = isSimultaneousMode;
         if (!m_config.allowSimultaneousMovement)
         {
             m_config.cooldownDurationMs = 0;
@@ -460,6 +476,77 @@ public:
             m_menuButton->update(deltaTime);
         }
 
+        // --- ניהול וקבלת החלטות של ה-AI ---
+        if (!m_isPaused && !m_gameEngine->isGameOver() && m_isAiOpponent && m_aiPlayer)
+        {
+            auto snapshot = kungfu::view::SnapshotBuilder::build(
+                *m_gameEngine->getBoard(),
+                m_gameEngine->getArbiter(),
+                m_gameEngine->getCurrentTimeMs(),
+                m_gameEngine->isGameOver(),
+                std::nullopt,
+                m_boardRangeX / 8);
+
+            bool shouldAiMove = false;
+
+            if (!m_config.allowSimultaneousMovement)
+            {
+                // מצב קלאסי (תורות): ה-AI זז מיד ברגע שהתור עובר לשחור
+                if (m_gameEngine->currentTurn() == kungfu::PlayerColor::Black)
+                {
+                    shouldAiMove = true;
+                }
+            }
+            else
+            {
+                // מצב קונג-פו (זמן אמת): ה-AI פועל במרווחי זמן מדומים לקבלת החלטות
+                m_aiDecisionTimer -= deltaTime;
+                if (m_aiDecisionTimer <= 0.0f)
+                {
+                    shouldAiMove = true;
+                    // איפוס מחדש של הטיימר לזמן אקראי בין 1.0 ל-2.2 שניות (לדימוי שחקן אנושי)
+                    m_aiDecisionTimer = 1.0f + (static_cast<float>(std::rand()) / RAND_MAX) * 1.2f;
+                }
+            }
+
+            if (shouldAiMove)
+            {
+                auto aiRequests = m_aiPlayer->decideActions(snapshot);
+                if (!aiRequests.empty())
+                {
+                    auto aiResults = m_gameEngine->processActionRequests(aiRequests);
+                    if (!aiResults.empty() && aiResults.front().status == kungfu::ActionStatus::Accepted)
+                    {
+
+                        // תרגום המהלך וכתיבתו להיסטוריה הצידית של שחור
+                        auto action = aiRequests.front().action;
+                        kungfu::PieceType pieceType = kungfu::PieceType::Pawn;
+                        auto pieceOpt = m_gameEngine->getBoard()->pieceAt(action.from);
+                        if (pieceOpt.has_value() && pieceOpt.value())
+                        {
+                            pieceType = pieceOpt.value()->type();
+                        }
+
+                        BoardPos fromPos{action.from.row(), action.from.col()};
+                        BoardPos toPos{action.to.row(), action.to.col()};
+                        std::string logText = getMoveNotationString(pieceType, fromPos, toPos);
+
+                        m_blackHistory.push_back(logText);
+                        if (m_blackHistory.size() > 8)
+                        {
+                            m_blackHistory.erase(m_blackHistory.begin());
+                        }
+
+                        // במצב תורות קלאסי בלבד: קידום הסימולציה ב-1000ms להשלמת ההגעה הפיזית ליעד
+                        if (!m_config.allowSimultaneousMovement)
+                        {
+                            m_gameEngine->wait(1000);
+                        }
+                    }
+                }
+            }
+        }
+
         auto selectedOpt = m_humanPlayer->selectedPosition();
         if (selectedOpt.has_value() && (m_selectedPieceAnim.isJumping || m_isHovering))
         {
@@ -508,6 +595,18 @@ public:
                                 BoardPos clickedTile{row, col};
                                 float timeSinceLastClick = m_totalTime - m_lastClickTime;
 
+                                // --- הגנה ארכיטקטונית לחסימת קלט ---
+                                // אם המשחק מול ה-AI, והמשתמש מבצע קליק ראשון, נמנע ממנו לבחור בכלים של ה-AI (השחורים)
+                                auto selectedBefore = m_humanPlayer->selectedPosition();
+                                if (!selectedBefore.has_value() && m_isAiOpponent)
+                                {
+                                    auto pieceColor = m_gameEngine->getPieceColorAt(kungfu::Position(row, col));
+                                    if (pieceColor.has_value() && pieceColor.value() == kungfu::PlayerColor::Black)
+                                    {
+                                        continue; // מעבר ישיר לאירוע הבא - מניעת המשך העיבוד ב-Controller [1]
+                                    }
+                                }
+
                                 if (clickedTile == m_lastClickedTile && timeSinceLastClick < 0.48f && timeSinceLastClick > 0.001f)
                                 {
                                     m_lastClickTime = 0.0f;
@@ -515,14 +614,65 @@ public:
 
                                     auto selectedOpt = m_humanPlayer->selectedPosition();
 
-                                    if (!selectedOpt.has_value())
+                                    // אם כבר יש כלי מסומן, לחיצה כפולה עליו תבצע קפיצה על המקום במנוע המשחק
+                                    if (selectedOpt.has_value())
                                     {
+                                        auto pos = *selectedOpt;
+                                        auto moveResult = m_gameEngine->requestMove(pos, pos); // שליחת בקשת קפיצה (from == to)
+
+                                        if (moveResult.isAccepted)
+                                        {
+                                            // מציאת סוג הכלי לטובת רישום המהלך בהיסטוריית המהלכים
+                                            kungfu::PieceType pieceType = kungfu::PieceType::Pawn;
+                                            auto pieceOpt = m_gameEngine->getBoard()->pieceAt(pos);
+                                            if (pieceOpt.has_value() && pieceOpt.value())
+                                            {
+                                                pieceType = pieceOpt.value()->type();
+                                            }
+                                            else
+                                            {
+                                                auto transitOpt = m_gameEngine->getArbiter().getPieceInTransitAt(pos);
+                                                if (transitOpt.has_value() && transitOpt.value())
+                                                {
+                                                    pieceType = transitOpt.value()->type();
+                                                }
+                                            }
+
+                                            std::string logText = getMoveNotationString(pieceType, BoardPos{pos.row(), pos.col()}, BoardPos{pos.row(), pos.col()});
+
+                                            // זיהוי צבע הכלי שקפץ לצורך רישום בלוג המתאים
+                                            auto pieceColor = kungfu::PlayerColor::White;
+                                            auto transitOpt = m_gameEngine->getArbiter().getPieceInTransitAt(pos);
+                                            if (transitOpt.has_value() && transitOpt.value())
+                                            {
+                                                pieceColor = transitOpt.value()->color();
+                                            }
+
+                                            if (pieceColor == kungfu::PlayerColor::White)
+                                            {
+                                                m_whiteHistory.push_back(logText);
+                                                if (m_whiteHistory.size() > 8)
+                                                    m_whiteHistory.erase(m_whiteHistory.begin());
+                                            }
+                                            else
+                                            {
+                                                m_blackHistory.push_back(logText);
+                                                if (m_blackHistory.size() > 8)
+                                                    m_blackHistory.erase(m_blackHistory.begin());
+                                            }
+                                        }
+
+                                        m_humanPlayer->clearSelection(); // ביטול סימון הכלי לאחר הקפיצה
+                                    }
+                                    else
+                                    {
+                                        // אם אין כלי מסומן, נבצע לחיצה רגילה לצורך סימון ראשוני
                                         int virtualX = col * 100 + 50;
                                         int virtualY = row * 100 + 50;
                                         m_humanPlayer->handleClick(virtualX, virtualY);
                                     }
 
-                                    m_isHovering = !m_isHovering;
+                                    m_isHovering = false;
                                     m_selectedPieceAnim.isJumping = false;
                                     m_selectedPieceAnim.jumpTimer = 0.0f;
                                 }
@@ -587,29 +737,31 @@ public:
                                             selectedBefore,
                                             m_boardRangeX / 8);
 
-                                        auto requests = m_humanPlayer->decideActions(snapshot);
-                                        if (!requests.empty()) {
-                                            auto actionResults = m_gameEngine->processActionRequests(requests);
-                                            if (!actionResults.empty() && actionResults.front().status == kungfu::ActionStatus::Accepted) {
-                                                BoardPos fromPos{selectedBefore->row(), selectedBefore->col()};
-                                                BoardPos toPos{row, col};
-                                                std::string logText = getMoveNotationString(movingPieceType, fromPos, toPos);
+                                        auto requests = m_humanPlayer->decideActions(snapshot); // ניקוז הבקשה הממתינות כדי שלא תצטבר
 
-                                                if (activeColor == kungfu::PlayerColor::White)
+                                        // אנו בודקים האם המהלך התקבל בהצלחה ישירות מתוצאת הקליק המקורית
+                                        bool moveAccepted = (result.description.find("Move requested:") == 0);
+
+                                        if (moveAccepted)
+                                        {
+                                            BoardPos fromPos{selectedBefore->row(), selectedBefore->col()};
+                                            BoardPos toPos{row, col};
+                                            std::string logText = getMoveNotationString(movingPieceType, fromPos, toPos);
+
+                                            if (activeColor == kungfu::PlayerColor::White)
+                                            {
+                                                m_whiteHistory.push_back(logText);
+                                                if (m_whiteHistory.size() > 8)
                                                 {
-                                                    m_whiteHistory.push_back(logText);
-                                                    if (m_whiteHistory.size() > 8)
-                                                    {
-                                                        m_whiteHistory.erase(m_whiteHistory.begin());
-                                                    }
+                                                    m_whiteHistory.erase(m_whiteHistory.begin());
                                                 }
-                                                else
+                                            }
+                                            else
+                                            {
+                                                m_blackHistory.push_back(logText);
+                                                if (m_blackHistory.size() > 8)
                                                 {
-                                                    m_blackHistory.push_back(logText);
-                                                    if (m_blackHistory.size() > 8)
-                                                    {
-                                                        m_blackHistory.erase(m_blackHistory.begin());
-                                                    }
+                                                    m_blackHistory.erase(m_blackHistory.begin());
                                                 }
                                             }
                                         }

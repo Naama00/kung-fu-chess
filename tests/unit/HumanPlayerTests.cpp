@@ -100,3 +100,21 @@ TEST_CASE("HumanPlayer wraps controller clicks into ActionRequest objects", "[pl
     REQUIRE(requests.front().action.to == kungfu::Position(2, 2));
     REQUIRE(requests.front().playerColor == kungfu::PlayerColor::White);
 }
+
+TEST_CASE("HumanPlayer does not queue a request when selection is cleared", "[player]") {
+    auto mockEngine = std::make_shared<MockGameEngine>(8, 8);
+    mockEngine->setHasPiece(kungfu::Position(1, 1), true, kungfu::PlayerColor::White);
+
+    kungfu::HumanPlayer player(mockEngine, 100);
+
+    auto firstResult = player.handleClick(150, 150);
+    REQUIRE(firstResult.actionTaken);
+    REQUIRE(firstResult.description == "Piece selected");
+
+    auto secondResult = player.handleClick(150, 150);
+    REQUIRE(secondResult.actionTaken);
+    REQUIRE(secondResult.description == "Selection cleared");
+
+    auto requests = player.decideActions(kungfu::view::GameSnapshot{});
+    REQUIRE(requests.empty());
+}

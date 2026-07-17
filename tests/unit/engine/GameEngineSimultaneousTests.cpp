@@ -130,6 +130,11 @@ TEST_CASE("Pawn hasMoved Flag Updates Automatically Upon Arrival", "[engine][sim
     game.wait(1000);
     REQUIRE(pawn->hasMoved());
 
+    auto immediateSecondDoubleStep = game.requestMove(kungfu::Position(3, 0), kungfu::Position(4, 0));
+    REQUIRE_FALSE(immediateSecondDoubleStep.isAccepted);
+    REQUIRE(immediateSecondDoubleStep.reason == "piece_on_cooldown");
+
+    game.wait(2000);
     auto secondDoubleStep = game.requestMove(kungfu::Position(3, 0), kungfu::Position(4, 0));
     REQUIRE(secondDoubleStep.isAccepted);
 }

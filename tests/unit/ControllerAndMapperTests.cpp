@@ -147,6 +147,17 @@ TEST_CASE("Controller Selection State and Clicks Flow", "[input]") {
         REQUIRE(controller.selectedPosition().value() == kungfu::Position(2, 2));
     }
 
+    SECTION("Second click on the selected piece clears selection instead of requesting a jump") {
+        controller.click(150, 150);
+        mockEngine->setMoveResponse(true, "ok");
+        auto result = controller.click(150, 150);
+
+        REQUIRE(result.actionTaken);
+        REQUIRE(result.description == "Selection cleared");
+        REQUIRE_FALSE(controller.selectedPosition().has_value());
+        REQUIRE(mockEngine->getMoveCount() == 0);
+    }
+
     SECTION("Second click on empty cell requests a move and clears selection") {
         controller.click(150, 150);
         mockEngine->setMoveResponse(true, "ok");

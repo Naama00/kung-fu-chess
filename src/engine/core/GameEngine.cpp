@@ -39,6 +39,14 @@ MoveResult GameEngine::requestMove(const Position& from, const Position& to) {
     auto piece = sourcePieceOpt.value();
 
     // 2. שאילתת מצב פיזיקלי דרך ה-Arbiter בלבד (DIP)
+if (arbiter_.isOnCooldown(piece, currentTimeMs_)) {
+    // אם המשחק במצב סימולטני ופרה-מובס מאופשרים, נאפשר לרשום פרה-מוב גם בזמן שהכלי בצינון
+    if (config_.allowSimultaneousMovement && config_.enablePremoves && from != to) {
+        return handlePremoveRegistration(piece, from, to);
+    }
+    return {false, "piece_on_cooldown"};
+}
+
     if (arbiter_.isPieceBusy(piece, currentTimeMs_)) {
         // מניעת רישום פרה-מוב של קפיצה עצמית (מניעת קפיצה אוטומטית לאחר צינון)
         if (from == to) {

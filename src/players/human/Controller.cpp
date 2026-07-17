@@ -60,8 +60,17 @@ ControllerResult Controller::click(int x, int y) {
             return result;
         }
 
+        // אם נלחץ על אותה משבצת שבה כבר יש כלי מסומן, ביטול הבחירה מונע
+        // שליחה אוטומטית של בקשת jump/קפיצה ללא כוונה של המשתמש.
+        if (from == targetCell) {
+            clearSelection();
+            result.actionTaken = true;
+            result.description = "Selection cleared";
+            return result;
+        }
+
         // מחליפים את הסימון רק אם לחצנו על כלי ידידותי אחר
-        if (from != targetCell && engine_->hasPieceAt(targetCell)) {
+        if (engine_->hasPieceAt(targetCell)) {
             auto targetColor = engine_->getPieceColorAt(targetCell);
             if (targetColor.has_value() && targetColor.value() == selectedColor_.value()) {
                 selectedPosition_ = targetCell;

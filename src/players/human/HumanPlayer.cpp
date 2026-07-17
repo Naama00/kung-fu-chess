@@ -10,7 +10,8 @@ ControllerResult HumanPlayer::handleClick(int x, int y) {
     auto result = controller_.click(x, y);
     pendingRequests_.clear();
 
-    if (result.actionTaken && result.from.has_value() && result.to.has_value() && result.playerColor.has_value()) {
+    if (result.actionTaken && !result.description.empty() && result.description != "Selection cleared" &&
+        result.from.has_value() && result.to.has_value() && result.playerColor.has_value()) {
         pendingRequests_.emplace_back(
             nextRequestId_++,
             result.playerColor.value(),

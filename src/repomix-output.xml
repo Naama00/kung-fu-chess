@@ -486,7 +486,34 @@ struct PlayerAction {
 </file>
 
 <file path="engine/analysis/IMoveGenerator.hpp">
+#pragma once
 
+#include <vector>
+#include "engine/actions/ActionRequest.hpp"
+#include "engine/common/Position.hpp"
+#include "engine/snapshot/GameSnapshot.hpp"
+
+namespace kungfu {
+
+class IMoveGenerator {
+public:
+    struct MoveCandidate {
+        Position from;
+        Position to;
+    };
+
+    virtual ~IMoveGenerator() = default;
+
+    virtual std::vector<MoveCandidate> generateForPiece(
+        const view::GameSnapshot& snapshot,
+        const Position& piecePosition) const = 0;
+
+    virtual std::vector<MoveCandidate> generateForPlayer(
+        const view::GameSnapshot& snapshot,
+        PlayerColor playerColor) const = 0;
+};
+
+} // namespace kungfu
 </file>
 
 <file path="engine/analysis/IPositionEvaluator.hpp">
@@ -498,11 +525,140 @@ struct PlayerAction {
 </file>
 
 <file path="engine/analysis/MoveGenerator.cpp">
+#include "engine/analysis/MoveGenerator.hpp"
 
+#include <algorithm>
+#include <memory>
+#include <vector>
+
+#include "engine/board/Board.hpp"
+#include "engine/common/Position.hpp"
+#include "engine/rules/RuleEngine.hpp"
+
+namespace kungfu {
+namespace {
+
+std::shared_ptr<Piece> createPieceFromSnapshot(const view::PieceSnapshot& pieceSnapshot) {
+    auto piece = std::make_shared<Piece>(pieceSnapshot.type, pieceSnapshot.color, pieceSnapshot.logicalPosition);
+    piece->setState(pieceSnapshot.state);
+    if (pieceSnapshot.hasMoved) {
+        piece->markMoved();
+    }
+    return piece;
+}
+
+} // namespace
+
+std::shared_ptr<Board> MoveGenerator::buildBoardFromSnapshot(const view::GameSnapshot& snapshot) const {
+    auto board = std::make_shared<Board>(snapshot.boardRows, snapshot.boardCols);
+    for (const auto& pieceSnapshot : snapshot.pieces) {
+        if (pieceSnapshot.type == PieceType::King && pieceSnapshot.color == PlayerColor::White) {
+            // no-op placeholder to keep the function explicit for the current implementation
+        }
+        auto piece = createPieceFromSnapshot(pieceSnapshot);
+        board->placePiece(piece, pieceSnapshot.logicalPosition);
+    }
+    return board;
+}
+
+std::vector<IMoveGenerator::MoveCandidate> MoveGenerator::generateForPiece(
+    const view::GameSnapshot& snapshot,
+    const Position& piecePosition) const {
+    std::vector<MoveCandidate> result;
+    auto board = buildBoardFromSnapshot(snapshot);
+    if (!board) {
+        return result;
+    }
+
+    auto sourcePieceOpt = board->pieceAt(piecePosition);
+    if (!sourcePieceOpt.has_value() || !sourcePieceOpt.value()) {
+        return result;
+    }
+
+    const auto& piece = sourcePieceOpt.value();
+    RuleEngine engine(board);
+    for (int row = 0; row < snapshot.boardRows; ++row) {
+        for (int col = 0; col < snapshot.boardCols; ++col) {
+            Position target(row, col);
+            if (engine.validateMove(piecePosition, target).isValid) {
+                result.push_back({piecePosition, target});
+            }
+        }
+    }
+
+    std::sort(result.begin(), result.end(), [](const MoveCandidate& lhs, const MoveCandidate& rhs) {
+        if (lhs.to.row() != rhs.to.row()) {
+            return lhs.to.row() < rhs.to.row();
+        }
+        return lhs.to.col() < rhs.to.col();
+    });
+
+    return result;
+}
+
+std::vector<IMoveGenerator::MoveCandidate> MoveGenerator::generateForPlayer(
+    const view::GameSnapshot& snapshot,
+    PlayerColor playerColor) const {
+    std::vector<MoveCandidate> result;
+    auto board = buildBoardFromSnapshot(snapshot);
+    if (!board) {
+        return result;
+    }
+
+    const auto pieces = board->pieces();
+    for (const auto& piece : pieces) {
+        if (!piece || piece->color() != playerColor) {
+            continue;
+        }
+        auto pieceMoves = generateForPiece(snapshot, piece->position());
+        result.insert(result.end(), pieceMoves.begin(), pieceMoves.end());
+    }
+
+    std::sort(result.begin(), result.end(), [](const MoveCandidate& lhs, const MoveCandidate& rhs) {
+        if (lhs.from.row() != rhs.from.row()) {
+            return lhs.from.row() < rhs.from.row();
+        }
+        if (lhs.from.col() != rhs.from.col()) {
+            return lhs.from.col() < rhs.from.col();
+        }
+        if (lhs.to.row() != rhs.to.row()) {
+            return lhs.to.row() < rhs.to.row();
+        }
+        return lhs.to.col() < rhs.to.col();
+    });
+
+    return result;
+}
+
+} // namespace kungfu
 </file>
 
 <file path="engine/analysis/MoveGenerator.hpp">
+#pragma once
 
+#include <vector>
+#include "engine/analysis/IMoveGenerator.hpp"
+#include "engine/board/Board.hpp"
+#include "engine/common/Position.hpp"
+#include "engine/snapshot/GameSnapshot.hpp"
+
+namespace kungfu {
+
+class MoveGenerator : public IMoveGenerator {
+public:
+    std::vector<MoveCandidate> generateForPiece(
+        const view::GameSnapshot& snapshot,
+        const Position& piecePosition) const override;
+
+    std::vector<MoveCandidate> generateForPlayer(
+        const view::GameSnapshot& snapshot,
+        PlayerColor playerColor) const override;
+
+private:
+    std::shared_ptr<Board> buildBoardFromSnapshot(const view::GameSnapshot& snapshot) const;
+};
+
+} // namespace kungfu
 </file>
 
 <file path="engine/analysis/PositionEvaluator.hpp">
@@ -1014,6 +1170,7 @@ private:
 #include "engine/common/GameConfig.hpp"
 #include <algorithm>
 #include <cmath>
+
 namespace kungfu {
 
 GameEngine::GameEngine(std::shared_ptr<IBoard> board,
@@ -1046,17 +1203,20 @@ MoveResult GameEngine::requestMove(const Position& from, const Position& to) {
     }
     auto piece = sourcePieceOpt.value();
 
-    // 2. שאילתת מצב פיזיקלי דרך ה-Arbiter בלבד (עקרון ה-DIP)
+    // 2. שאילתת מצב פיזיקלי דרך ה-Arbiter בלבד (DIP)
+    if (arbiter_.isOnCooldown(piece, currentTimeMs_)) {
+        return {false, "piece_on_cooldown"};
+    }
+
     if (arbiter_.isPieceBusy(piece, currentTimeMs_)) {
-        // האצלת אימות המהלך ההיפותטי ל-RuleEngine (עמידה ב-SRP)
-        auto validation = ruleEngine_->validateHypotheticalMove(piece, from, to);
-        if (!validation.isValid) {
-            return {false, validation.reason};
+        // מניעת רישום פרה-מוב של קפיצה עצמית (מניעת קפיצה אוטומטית לאחר צינון)
+        if (from == to) {
+            return {false, "piece_on_cooldown"};
         }
         return handlePremoveRegistration(piece, from, to);
     }
 
-    // 3. אימות תורות וחוקיות סימולטנית (חוקי משחק עליונים)
+    // 3. אימות תורות וחוקיות סימולטנית
     if (!config_.allowSimultaneousMovement) {
         if (piece->color() != currentTurn_) {
             return {false, "not_your_turn"};
@@ -1183,7 +1343,6 @@ int GameEngine::getScore() const noexcept {
     if (!board_) return 0;
     return PositionEvaluator::evaluateBalance(*board_, arbiter_);
 }
-
 
 std::optional<PlayerColor> GameEngine::getPieceColorAt(const Position& pos) const {
     if (!board_) {
@@ -2342,7 +2501,7 @@ namespace kungfu
         const GameConfig &config) noexcept
         : board_(std::move(board)), cooldownTracker_(cooldownTracker), config_(config) {}
 
-    void CollisionResolver::resolveMidRouteCollision(
+ void CollisionResolver::resolveMidRouteCollision(
         const Motion &winner,
         const Motion &loser,
         int currentTimeMs,
@@ -2350,28 +2509,16 @@ namespace kungfu
     {
         if (winner.piece()->color() != loser.piece()->color())
         {
-            // כשאויב נכנס לנתיב של כלי אחר תוך כדי תנועה — שניהם עוצרים.
-            // ה-winner עוצר לפני ה-loser (כי ה-loser חוסם את הנתיב שלו).
-            // ה-loser עוצר לפני ה-winner (כי ה-winner כבר "תופס" את הנתיב).
-            // הלכידה עצמה תקרה ב-resolveArrival כשמישהו יגיע ליעד שבו יושב האויב.
+            Position collisionPos = loser.piece()->position();
 
-            // עוצרים את ה-loser לפני ה-winner
-            Position winnerBlockPos = winner.to();
-            Position loserStop = findLastVacantPositionOnPath(
-                loser.from(), loser.to(), board_, &winnerBlockPos);
-            loser.piece()->setState(PieceState::Idle);
-            loser.piece()->setPosition(loserStop);
-            cooldownTracker_.setCooldown(loser.piece()->id(), currentTimeMs + config_.cooldownDurationMs);
-            events.push_back({loser.from(), loserStop, loser.piece(), false, true, false});
+            // המפסיד (loser) נלכד, מסומן כ-Captured ומוסר מהלוח
+            loser.piece()->setState(PieceState::Captured);
+            cooldownTracker_.clear(loser.piece()->id());
+            board_->removePiece(loser.piece());
 
-            // עוצרים את ה-winner לפני ה-loser (מיקומו הנוכחי/יעדו)
-            Position loserBlockPos = loser.from(); // ה-loser עדיין בדרך — from הוא הנקודה האחרונה הידועה שלו
-            Position winnerStop = findLastVacantPositionOnPath(
-                winner.from(), winner.to(), board_, &loserBlockPos);
-            winner.piece()->setState(PieceState::Idle);
-            winner.piece()->setPosition(winnerStop);
-            cooldownTracker_.setCooldown(winner.piece()->id(), currentTimeMs + config_.cooldownDurationMs);
-            events.push_back({winner.from(), winnerStop, winner.piece(), false, true, false});
+            // המנצח (winner) שורד וממשיך בדרכו (הוא נשאר ב-activeMotions_ ויגיע ליעדו כרגיל בזמנו המקורי)
+            bool capturedKing = (loser.piece()->type() == PieceType::King);
+            events.push_back({loser.from(), collisionPos, loser.piece(), capturedKing, false, true});
         }
         else
         {
@@ -2401,7 +2548,6 @@ namespace kungfu
         {
             auto landingTarget = board_->pieceAt(to);
 
-            // אם יש כלי בתנועה (Moving/Airborne) — מתעלמים ממנו, נחיתה רגילה
             if (landingTarget.has_value() && landingTarget.value() &&
                 (landingTarget.value()->state() == PieceState::Moving ||
                  landingTarget.value()->state() == PieceState::Airborne))
@@ -2411,7 +2557,6 @@ namespace kungfu
 
             if (!landingTarget.has_value())
             {
-                // משבצת פנויה — נחיתה רגילה
                 piece->setState(PieceState::Idle);
                 piece->setPosition(to);
                 board_->placePiece(piece, to);
@@ -2420,11 +2565,9 @@ namespace kungfu
                 return true;
             }
 
-            // יש כלי סטטי על משבצת הנחיתה
             auto targetPiece = landingTarget.value();
             if (targetPiece->color() != piece->color())
             {
-                // אויב — הלבן נוחת ואוכל אותו (כמו שנקבע: Airborne אוכל כל מי שנמצא בנחיתה)
                 bool capturedKing = (targetPiece->type() == PieceType::King);
                 targetPiece->setState(PieceState::Captured);
                 cooldownTracker_.clear(targetPiece->id());
@@ -2435,12 +2578,11 @@ namespace kungfu
                 board_->placePiece(piece, to);
                 piece->markMoved();
                 cooldownTracker_.setCooldown(piece->id(), motion.arrivalTime() + config_.cooldownDurationMs);
-                events.push_back({from, to, piece, capturedKing, false, true}); // isCapture = true!
+                events.push_back({from, to, piece, capturedKing, false, true});
                 return true;
             }
             else
             {
-                // ידידותי — מחפשים משבצת סמוכה פנויה לנחיתה
                 Position finalDestination = from;
                 for (int rOffset = -1; rOffset <= 1; ++rOffset)
                 {
@@ -2473,8 +2615,6 @@ namespace kungfu
 
         auto targetPieceOpt = board_->pieceAt(to);
 
-        // כלים שעדיין בתנועה (Moving) או באוויר (Airborne) אינם נחשבים כחוסמים —
-        // מיקומם על הלוח הוא אינטרפולטיבי בלבד ולא מיקום סופי שיש להתחשב בו.
         if (targetPieceOpt.has_value() &&
             targetPieceOpt.value() &&
             (targetPieceOpt.value()->state() == PieceState::Airborne ||
@@ -2489,21 +2629,15 @@ namespace kungfu
             auto targetPiece = targetPieceOpt.value();
             if (targetPiece->color() == piece->color())
             {
-                if (piece->type() != PieceType::Knight)
-                {
-                    isFriendlyBlock = true;
-                }
+                isFriendlyBlock = true; // חסום עבור כל סוגי הכלים כולל פרשים
             }
         }
 
-        // רגלי אינו יכול לאכול ישר קדימה — רק באלכסון.
-        // אם רגלי הגיע ליעד דרך מהלך ישר (אותה עמודה) ויש שם אויב — נעצר לפניו.
         if (targetPieceOpt.has_value() && targetPieceOpt.value() &&
             piece->type() == PieceType::Pawn &&
             targetPieceOpt.value()->color() != piece->color() &&
             to.col() == from.col())
         {
-            // מהלך קדימה ישר — לכידה אסורה. הרגלי נעצר לפני היעד.
             Position stopPos = findLastVacantPositionOnPath(from, to, board_);
             piece->setState(PieceState::Idle);
             piece->setPosition(stopPos);
@@ -2516,7 +2650,15 @@ namespace kungfu
 
         if (isFriendlyBlock)
         {
-            finalDestination = findLastVacantPositionOnPath(from, to, board_);
+            // הגנה מפני לולאה אינסופית: פרש אינו זקוק לחיפוש נתיב ונסוג ישר חזרה למוצא
+            if (piece->type() == PieceType::Knight)
+            {
+                finalDestination = from;
+            }
+            else
+            {
+                finalDestination = findLastVacantPositionOnPath(from, to, board_);
+            }
 
             piece->setState(PieceState::Idle);
             piece->setPosition(finalDestination);
@@ -2554,7 +2696,7 @@ namespace kungfu
             cooldownTracker_.clear(piece->id());
         }
         cooldownTracker_.setCooldown(finalPiece->id(), motion.arrivalTime() + config_.cooldownDurationMs);
-        events.push_back({from, finalDestination, finalPiece, capturedKing, false, isCapture}); // עדכון isCapture סופי
+        events.push_back({from, finalDestination, finalPiece, capturedKing, false, isCapture});
 
         return true;
     }
@@ -3006,16 +3148,14 @@ MoveValidation RuleEngine::validateMove(const Position& from, const Position& to
         return {false, "illegal_piece_move"};
     }
 
-    // 4. מניעת פגיעה בכלי ידידותי ביעד.
-    // כלים שנמצאים בתנועה (Moving) או באוויר (Airborne) אינם חוסמים את היעד —
-    // מיקומם על הלוח הוא אינטרפולטיבי בלבד ועשוי לחפוף את היעד בטעות.
+    // 4. מניעת פגיעה בכלי ידידותי ביעד (אין חריגים - חסום עבור כל הכלים כולל פרשים)
     auto targetPieceOpt = board_->pieceAt(to);
     if (targetPieceOpt.has_value()) {
         auto targetPiece = targetPieceOpt.value();
         if (targetPiece &&
             targetPiece->state() != PieceState::Moving &&
             targetPiece->state() != PieceState::Airborne &&
-            targetPiece->color() == piece->color()) {
+            targetPiece->color() == piece->color()) { 
             return {false, "friendly_destination"};
         }
     }
@@ -3062,8 +3202,6 @@ MoveValidation RuleEngine::validateHypotheticalMove(const PiecePtr& piece, const
         piece->setPosition(from);
         placedTemporarily = board_->placePiece(piece, from);
         if (!placedTemporarily) {
-            // הצבה נכשלה מסיבה בלתי צפויה - משחזרים מיד ולא ממשיכים לאמת
-            // מהלך על מצב לוח שקרי.
             piece->setPosition(originalPos);
             return {false, "internal_error"};
         }
@@ -3135,6 +3273,7 @@ struct PieceSnapshot {
     PlayerColor color;
     Position logicalPosition;
     PieceState state;
+    bool hasMoved = false;
     
     // מיקומי ציור בפיקסלים לטובת ה-Renderer
     float pixelX;
@@ -3229,6 +3368,7 @@ namespace kungfu
                 snapshot.color = piece->color();
                 snapshot.logicalPosition = piece->position();
                 snapshot.state = piece->state();
+                snapshot.hasMoved = piece->hasMoved();
 
                 snapshot.cooldownProgress =
                     arbiter.getCooldownProgress(
@@ -4414,11 +4554,60 @@ public:
 </file>
 
 <file path="players/ai/AIPlayer.cpp">
+#include "players/ai/AIPlayer.hpp"
 
+#include <utility>
+
+namespace kungfu {
+
+AIPlayer::AIPlayer(PlayerColor playerColor, std::mt19937::result_type seed)
+    : playerColor_(playerColor), rng_(seed) {}
+
+std::vector<ActionRequest> AIPlayer::decideActions(const view::GameSnapshot& snapshot) {
+    const auto legalMoves = moveGenerator_.generateForPlayer(snapshot, playerColor_);
+    if (legalMoves.empty()) {
+        return {};
+    }
+
+    std::uniform_int_distribution<std::size_t> dist(0, legalMoves.size() - 1);
+    const auto selected = legalMoves[dist(rng_)];
+
+    return {ActionRequest(nextRequestId_++, playerColor_, PlayerAction(selected.from, selected.to))};
+}
+
+} // namespace kungfu
 </file>
 
 <file path="players/ai/AIPlayer.hpp">
+#pragma once
 
+#include <cstdint>
+#include <memory>
+#include <random>
+#include <vector>
+
+#include "engine/actions/ActionRequest.hpp"
+#include "engine/analysis/MoveGenerator.hpp"
+#include "engine/common/Position.hpp"
+#include "engine/snapshot/GameSnapshot.hpp"
+#include "players/IPlayer.hpp"
+
+namespace kungfu {
+
+class AIPlayer : public IPlayer {
+public:
+    explicit AIPlayer(PlayerColor playerColor, std::mt19937::result_type seed = 0xC0FFEEu);
+
+    std::vector<ActionRequest> decideActions(const view::GameSnapshot& snapshot) override;
+
+private:
+    PlayerColor playerColor_;
+    std::mt19937 rng_;
+    MoveGenerator moveGenerator_;
+    std::uint64_t nextRequestId_ = 1;
+};
+
+} // namespace kungfu
 </file>
 
 <file path="players/ai/EasyAI.cpp">
@@ -4558,8 +4747,17 @@ ControllerResult Controller::click(int x, int y) {
             return result;
         }
 
+        // אם נלחץ על אותה משבצת שבה כבר יש כלי מסומן, ביטול הבחירה מונע
+        // שליחה אוטומטית של בקשת jump/קפיצה ללא כוונה של המשתמש.
+        if (from == targetCell) {
+            clearSelection();
+            result.actionTaken = true;
+            result.description = "Selection cleared";
+            return result;
+        }
+
         // מחליפים את הסימון רק אם לחצנו על כלי ידידותי אחר
-        if (from != targetCell && engine_->hasPieceAt(targetCell)) {
+        if (engine_->hasPieceAt(targetCell)) {
             auto targetColor = engine_->getPieceColorAt(targetCell);
             if (targetColor.has_value() && targetColor.value() == selectedColor_.value()) {
                 selectedPosition_ = targetCell;
@@ -4670,7 +4868,8 @@ ControllerResult HumanPlayer::handleClick(int x, int y) {
     auto result = controller_.click(x, y);
     pendingRequests_.clear();
 
-    if (result.actionTaken && result.from.has_value() && result.to.has_value() && result.playerColor.has_value()) {
+    if (result.actionTaken && !result.description.empty() && result.description != "Selection cleared" &&
+        result.from.has_value() && result.to.has_value() && result.playerColor.has_value()) {
         pendingRequests_.emplace_back(
             nextRequestId_++,
             result.playerColor.value(),
@@ -5930,6 +6129,7 @@ public:
 #include "engine/core/GameEngine.hpp"
 #include "engine/events/IGameObserver.hpp"
 #include "players/human/HumanPlayer.hpp"
+#include "players/ai/AIPlayer.hpp"
 #include "engine/snapshot/SnapshotBuilder.hpp"
 #include "engine/io/BoardParser.hpp"
 #include "engine/common/PieceTokenCodec.hpp"
@@ -5945,6 +6145,7 @@ class ChessGameScreen : public BaseScreen
 private:
     std::shared_ptr<kungfu::GameEngine> m_gameEngine;
     std::shared_ptr<kungfu::HumanPlayer> m_humanPlayer;
+    std::shared_ptr<kungfu::AIPlayer> m_aiPlayer;
     kungfu::GameConfig m_config;
     std::shared_ptr<ISoundPlayer> m_soundPlayer;
     bool m_isPaused = false;
@@ -6081,6 +6282,7 @@ private:
 
         m_gameEngine = std::make_shared<kungfu::GameEngine>(board, ruleEngine, m_config);
         m_humanPlayer = std::make_shared<kungfu::HumanPlayer>(m_gameEngine);
+        m_aiPlayer = std::make_shared<kungfu::AIPlayer>(kungfu::PlayerColor::Black);
 
         m_humanPlayer->setCellSize(100);
 
@@ -6376,6 +6578,26 @@ public:
         {
             m_rematchButton->update(deltaTime);
             m_menuButton->update(deltaTime);
+        }
+
+        if (!m_isPaused && !m_gameEngine->isGameOver()) {
+            auto snapshot = kungfu::view::SnapshotBuilder::build(
+                *m_gameEngine->getBoard(),
+                m_gameEngine->getArbiter(),
+                m_gameEngine->getCurrentTimeMs(),
+                m_gameEngine->isGameOver(),
+                std::nullopt,
+                m_boardRangeX / 8);
+
+            if (m_gameEngine->currentTurn() == kungfu::PlayerColor::Black && m_aiPlayer) {
+                auto aiRequests = m_aiPlayer->decideActions(snapshot);
+                if (!aiRequests.empty()) {
+                    auto aiResults = m_gameEngine->processActionRequests(aiRequests);
+                    if (!aiResults.empty() && aiResults.front().status == kungfu::ActionStatus::Accepted) {
+                        m_gameEngine->wait(1000);
+                    }
+                }
+            }
         }
 
         auto selectedOpt = m_humanPlayer->selectedPosition();

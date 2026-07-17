@@ -4,6 +4,30 @@
 #include "engine/rules/RuleEngine.hpp"
 #include "engine/core/GameEngine.hpp"
 
+TEST_CASE("Requests while a piece is on cooldown are rejected", "[engine][premove]") {
+    std::string boardStr =
+        "wR . .\n"
+        ". . .\n"
+        ". . .\n";
+
+    auto board = kungfu::BoardParser::parse(boardStr);
+    auto ruleEngine = std::make_shared<kungfu::RuleEngine>(board);
+    
+    // אנו מכבים פרה-מובס במפורש כדי לוודא שפעולות רגילות נדחות בזמן צינון
+    kungfu::GameConfig cfg;
+    cfg.enablePremoves = false;
+    kungfu::GameEngine game(board, ruleEngine, cfg);
+
+    auto firstMove = game.requestMove(kungfu::Position(0, 0), kungfu::Position(0, 1));
+    REQUIRE(firstMove.isAccepted);
+
+    game.wait(1500);
+
+    auto cooldownMove = game.requestMove(kungfu::Position(0, 1), kungfu::Position(0, 2));
+    REQUIRE_FALSE(cooldownMove.isAccepted);
+    REQUIRE(cooldownMove.reason == "piece_on_cooldown");
+}
+
 TEST_CASE("Premoves Are Disabled in Turn-Based Mode", "[engine][premove]") {
     std::string boardStr =
         "wR . .\n"
