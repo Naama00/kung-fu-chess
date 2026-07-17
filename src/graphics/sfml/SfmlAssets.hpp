@@ -23,7 +23,6 @@ public:
     sf::Font font;
 
     explicit SfmlFontAsset(const std::string& filePath) {
-        // שינוי כאן: loadFromFile הוחלף ב-openFromFile ב-SFML 3
         if (!font.openFromFile(filePath)) {
             throw std::runtime_error("Failed to load SFML font: " + filePath);
         }

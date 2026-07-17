@@ -101,7 +101,8 @@ private:
 
     void drawDifficultySelector(IRenderer &renderer)
     {
-        if (m_selectedOpponent != OpponentType::AI) return;
+        if (m_selectedOpponent != OpponentType::AI)
+            return;
 
         renderer.drawText("AI Difficulty:", {365.0f, 495.0f}, 16, m_theme.bodyText);
 

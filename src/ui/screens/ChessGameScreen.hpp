@@ -16,9 +16,10 @@
 #include "engine/io/BoardParser.hpp"
 #include "engine/common/PieceTokenCodec.hpp"
 #include "players/IPlayer.hpp"
-#include "players/ai/EasyAI.hpp"
-#include "players/ai/MediumAI.hpp"
-#include "players/ai/HardAI.hpp"
+#include "players/ai/GenericAIPlayer.hpp"
+#include "players/ai/ClassicMinimaxStrategy.hpp"
+#include "players/ai/RealTimeStrategies.hpp"
+#include <future> // נחוץ במידה ותבחרו להריץ את ה-AI ב-Thread נפרד ברקע
 #include <memory>
 #include <iostream>
 #include <string>
@@ -43,9 +44,10 @@ private:
     kungfu::GameConfig m_config;
     std::shared_ptr<ISoundPlayer> m_soundPlayer;
     bool m_isPaused = false;
-    bool m_isAiOpponent = false;    // שדה חדש למעקב אחר משחק מול ה-AI
+    bool m_isAiOpponent = false; // שדה חדש למעקב אחר משחק מול ה-AI
     AiDifficulty m_aiDifficulty = AiDifficulty::Medium;
     float m_aiDecisionTimer = 1.0f; // טיימר אקראי לפעולת ה-AI במצב סימולטני
+    bool m_aiActionPending = false;
 
     // היסטוריית מהלכים של כל שחקן
     std::vector<std::string> m_whiteHistory;
@@ -181,13 +183,33 @@ private:
 
         if (m_isAiOpponent)
         {
-            if (m_aiDifficulty == AiDifficulty::Easy) {
-                m_aiPlayer = std::make_shared<kungfu::EasyAI>(kungfu::PlayerColor::Black);
-            } else if (m_aiDifficulty == AiDifficulty::Medium) {
-                m_aiPlayer = std::make_shared<kungfu::MediumAI>(kungfu::PlayerColor::Black);
-            } else {
-                m_aiPlayer = std::make_shared<kungfu::HardAI>(kungfu::PlayerColor::Black);
+            std::unique_ptr<kungfu::IAIDecisionStrategy> strategy;
+
+            if (m_config.allowSimultaneousMovement)
+            {
+                // מצב זמן אמת - חלוקה לרמות קושי מהירות
+                if (m_aiDifficulty == AiDifficulty::Easy)
+                {
+                    strategy = std::make_unique<kungfu::RealTimeEasyStrategy>();
+                }
+                else if (m_aiDifficulty == AiDifficulty::Medium)
+                {
+                    strategy = std::make_unique<kungfu::RealTimeMediumStrategy>();
+                }
+                else
+                {
+                    strategy = std::make_unique<kungfu::RealTimeHardStrategy>();
+                }
             }
+            else
+            {
+                // מצב שחמט קלאסי - שימוש במינימקס
+                int depth = (m_aiDifficulty == AiDifficulty::Easy) ? 1 : (m_aiDifficulty == AiDifficulty::Medium) ? 2
+                                                                                                                  : 3;
+                strategy = std::make_unique<kungfu::ClassicMinimaxStrategy>(depth);
+            }
+
+            m_aiPlayer = std::make_shared<kungfu::GenericAIPlayer>(kungfu::PlayerColor::Black, std::move(strategy));
         }
         else
         {
@@ -459,7 +481,7 @@ public:
             return;
         }
 
-        int ms = static_cast<int>(deltaTime * 1000.0f);
+        const int ms = static_cast<int>(deltaTime * 1000.0f);
         m_gameEngine->wait(ms);
 
         if (m_soundPlayer && !m_gameEngine->isGameOver())
@@ -486,6 +508,11 @@ public:
 
         if (!m_isPaused && !m_gameEngine->isGameOver() && m_isAiOpponent && m_aiPlayer)
         {
+            if (!m_config.allowSimultaneousMovement && m_gameEngine->currentTurn() == kungfu::PlayerColor::White)
+            {
+                m_aiActionPending = false;
+            }
+
             auto snapshot = kungfu::view::SnapshotBuilder::build(
                 *m_gameEngine->getBoard(),
                 m_gameEngine->getArbiter(),
@@ -498,13 +525,18 @@ public:
 
             if (!m_config.allowSimultaneousMovement)
             {
-                if (m_gameEngine->currentTurn() == kungfu::PlayerColor::Black)
+                // בשחמט קלאסי - ה-AI יחשב מהלך רק כאשר זה תורו, הוא עדיין לא חסום,
+                // וחשוב מאוד: רק לאחר שהכלי הקודם סיים לחלוטין את התנועה שלו על הלוח!
+                if (m_gameEngine->currentTurn() == kungfu::PlayerColor::Black &&
+                    !m_aiActionPending &&
+                    !m_gameEngine->getArbiter().hasActiveMotion()) // <--- התנאי החסר שמונע את הנעילה!
                 {
                     shouldAiMove = true;
                 }
             }
             else
             {
+                // בזמן אמת - הטיימר של ה-AI ממשיך כרגיל
                 m_aiDecisionTimer -= deltaTime;
                 if (m_aiDecisionTimer <= 0.0f)
                 {
@@ -515,28 +547,38 @@ public:
 
             if (shouldAiMove)
             {
+                // נעילת ה-AI באופן מיידי כדי למנוע ריצה כפולה בפריימים הבאים
+                if (!m_config.allowSimultaneousMovement)
+                {
+                    m_aiActionPending = true;
+                }
+
                 auto aiRequests = m_aiPlayer->decideActions(snapshot);
                 if (!aiRequests.empty())
                 {
                     auto aiResults = m_gameEngine->processActionRequests(aiRequests);
                     if (!aiResults.empty() && aiResults.front().status == kungfu::ActionStatus::Accepted)
                     {
-                        auto action = aiRequests.front().action;
-                        kungfu::PieceType pieceType = kungfu::PieceType::Pawn;
-                        auto pieceOpt = m_gameEngine->getBoard()->pieceAt(action.from);
-                        if (pieceOpt.has_value() && pieceOpt.value())
+                        // עדכון היסטוריית המהלכים
+                        for (const auto &req : aiRequests)
                         {
-                            pieceType = pieceOpt.value()->type();
-                        }
+                            auto action = req.action;
+                            kungfu::PieceType pieceType = kungfu::PieceType::Pawn;
+                            auto pieceOpt = m_gameEngine->getBoard()->pieceAt(action.from);
+                            if (pieceOpt.has_value() && pieceOpt.value())
+                            {
+                                pieceType = pieceOpt.value()->type();
+                            }
 
-                        BoardPos fromPos{action.from.row(), action.from.col()};
-                        BoardPos toPos{action.to.row(), action.to.col()};
-                        std::string logText = getMoveNotationString(pieceType, fromPos, toPos);
+                            BoardPos fromPos{action.from.row(), action.from.col()};
+                            BoardPos toPos{action.to.row(), action.to.col()};
+                            std::string logText = getMoveNotationString(pieceType, fromPos, toPos);
 
-                        m_blackHistory.push_back(logText);
-                        if (m_blackHistory.size() > 8)
-                        {
-                            m_blackHistory.erase(m_blackHistory.begin());
+                            m_blackHistory.push_back(logText);
+                            if (m_blackHistory.size() > 8)
+                            {
+                                m_blackHistory.erase(m_blackHistory.begin());
+                            }
                         }
 
                         if (!m_config.allowSimultaneousMovement)
@@ -594,7 +636,7 @@ public:
                             if (mouse.action == MouseEvent::Action::Press && mouse.button == MouseButton::Left)
                             {
                                 BoardPos clickedTile{row, col};
-                                float timeSinceLastClick = m_totalTime - m_lastClickTime;
+                                const float timeSinceLastClick = m_totalTime - m_lastClickTime;
 
                                 auto selectedBefore = m_humanPlayer->selectedPosition();
                                 if (!selectedBefore.has_value() && m_isAiOpponent)
@@ -611,7 +653,7 @@ public:
                                     m_lastClickTime = 0.0f;
                                     m_lastClickedTile = BoardPos{-1, -1};
 
-                                        auto selectedOpt = m_humanPlayer->selectedPosition();
+                                    auto selectedOpt = m_humanPlayer->selectedPosition();
 
                                     if (selectedOpt.has_value())
                                     {
@@ -662,8 +704,8 @@ public:
                                     }
                                     else
                                     {
-                                        int virtualX = col * 100 + 50;
-                                        int virtualY = row * 100 + 50;
+                                        const int virtualX = col * 100 + 50;
+                                        const int virtualY = row * 100 + 50;
                                         m_humanPlayer->handleClick(virtualX, virtualY);
                                     }
 
@@ -676,8 +718,8 @@ public:
                                     m_lastClickTime = m_totalTime;
                                     m_lastClickedTile = clickedTile;
 
-                                    int virtualX = col * 100 + 50;
-                                    int virtualY = row * 100 + 50;
+                                    const int virtualX = col * 100 + 50;
+                                    const int virtualY = row * 100 + 50;
 
                                     auto activeColor = m_gameEngine->currentTurn();
                                     auto selectedBefore = m_humanPlayer->selectedPosition();
@@ -733,8 +775,7 @@ public:
                                             m_boardRangeX / 8);
 
                                         auto requests = m_humanPlayer->decideActions(snapshot);
-
-                                        bool moveAccepted = (result.description.find("Move requested:") == 0);
+                                        const bool moveAccepted = (result.description.find("Move requested:") == 0);
 
                                         if (moveAccepted)
                                         {
@@ -746,7 +787,7 @@ public:
                                             {
                                                 m_whiteHistory.push_back(logText);
                                                 if (m_whiteHistory.size() > 8)
-                                                    {
+                                                {
                                                     m_whiteHistory.erase(m_whiteHistory.begin());
                                                 }
                                             }
