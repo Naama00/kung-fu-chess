@@ -36,7 +36,7 @@ MoveValidation RuleEngine::validateMove(const Position& from, const Position& to
         return {false, "illegal_piece_move"};
     }
 
-    // 4. מניעת פגיעה בכלי ידידותי ביעד (אין חריגים - חסום עבור כל הכלים כולל פרשים)
+    // 4. מניעת פגיעה בכלי ידידותי ביעד
     auto targetPieceOpt = board_->pieceAt(to);
     if (targetPieceOpt.has_value()) {
         auto targetPiece = targetPieceOpt.value();

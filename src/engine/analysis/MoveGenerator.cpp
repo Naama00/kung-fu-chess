@@ -1,13 +1,13 @@
 // engine/analysis/MoveGenerator.cpp
 #include "engine/analysis/MoveGenerator.hpp"
+#include "engine/board/Board.hpp"
+#include "engine/common/Position.hpp"
+#include "engine/rules/RuleEngine.hpp"
+#include "engine/rules/PieceRules.hpp"
 
 #include <algorithm>
 #include <memory>
 #include <vector>
-
-#include "engine/board/Board.hpp"
-#include "engine/common/Position.hpp"
-#include "engine/rules/RuleEngine.hpp"
 
 namespace kungfu {
 namespace {
@@ -71,7 +71,6 @@ std::vector<IMoveGenerator::MoveCandidate> MoveGenerator::generateForPlayer(
     PlayerColor playerColor) const {
     std::vector<MoveCandidate> result;
     
-    // בונים את הלוח ואת ה-RuleEngine פעם אחת בלבד!
     auto board = buildBoardFromSnapshot(snapshot);
     if (!board) {
         return result;
@@ -85,27 +84,22 @@ std::vector<IMoveGenerator::MoveCandidate> MoveGenerator::generateForPlayer(
             continue;
         }
         
-        // מייצרים מהלכים ישירות עבור הכלי מבלי לקרוא ל-generateForPiece (שמיועדת לקריאות בודדות מבחוץ)
-        for (int row = 0; row < snapshot.boardRows; ++row) {
-            for (int col = 0; col < snapshot.boardCols; ++col) {
-                Position target(row, col);
-                if (engine.validateMove(piece->position(), target).isValid) {
-                    result.push_back({piece->position(), target});
-                }
+        // 1. שליפת היעדים הגיאומטריים הפוטנציאליים של הכלי פעם אחת בלבד!
+        const auto& rule = PieceRuleFactory::getRule(piece->type());
+        auto legalDestinations = rule.getLegalDestinations(*board, *piece);
+        
+        // 2. ריצה אך ורק על היעדים הרלוונטיים במקום על כל 64 המשבצות
+        for (const auto& target : legalDestinations) {
+            if (engine.validateMove(piece->position(), target).isValid) {
+                result.push_back({piece->position(), target});
             }
         }
     }
 
     std::sort(result.begin(), result.end(), [](const MoveCandidate& lhs, const MoveCandidate& rhs) {
-        if (lhs.from.row() != rhs.from.row()) {
-            return lhs.from.row() < rhs.from.row();
-        }
-        if (lhs.from.col() != rhs.from.col()) {
-            return lhs.from.col() < rhs.from.col();
-        }
-        if (lhs.to.row() != rhs.to.row()) {
-            return lhs.to.row() < rhs.to.row();
-        }
+        if (lhs.from.row() != rhs.from.row()) return lhs.from.row() < rhs.from.row();
+        if (lhs.from.col() != rhs.from.col()) return lhs.from.col() < rhs.from.col();
+        if (lhs.to.row() != rhs.to.row()) return lhs.to.row() < rhs.to.row();
         return lhs.to.col() < rhs.to.col();
     });
 

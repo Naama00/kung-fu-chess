@@ -65,7 +65,7 @@ namespace kungfu
         const GameConfig &config) noexcept
         : board_(std::move(board)), cooldownTracker_(cooldownTracker), config_(config) {}
 
- void CollisionResolver::resolveMidRouteCollision(
+    void CollisionResolver::resolveMidRouteCollision(
         const Motion &winner,
         const Motion &loser,
         int currentTimeMs,
@@ -80,7 +80,7 @@ namespace kungfu
             cooldownTracker_.clear(loser.piece()->id());
             board_->removePiece(loser.piece());
 
-            // המנצח (winner) שורד וממשיך בדרכו (הוא נשאר ב-activeMotions_ ויגיע ליעדו כרגיל בזמנו המקורי)
+            // המנצח (winner) שורד וממשיך בדרכו
             bool capturedKing = (loser.piece()->type() == PieceType::King);
             events.push_back({loser.from(), collisionPos, loser.piece(), capturedKing, false, true});
         }
@@ -107,7 +107,7 @@ namespace kungfu
         Position to = motion.to();
         auto piece = motion.piece();
 
-        // טיפול בנחיתת קפיצה (from == to)
+        // טיפול בנחיתת קפיצה עצמית (from == to)
         if (from == to)
         {
             auto landingTarget = board_->pieceAt(to);
@@ -130,7 +130,9 @@ namespace kungfu
             }
 
             auto targetPiece = landingTarget.value();
-            if (targetPiece->color() != piece->color())
+            
+            // פרש מבצע Self-Kill (לכידה ידידותית) גם בנחיתה מקפיצה עצמית
+            if (targetPiece->color() != piece->color() || piece->type() == PieceType::Knight)
             {
                 bool capturedKing = (targetPiece->type() == PieceType::King);
                 targetPiece->setState(PieceState::Captured);
@@ -193,7 +195,15 @@ namespace kungfu
             auto targetPiece = targetPieceOpt.value();
             if (targetPiece->color() == piece->color())
             {
-                isFriendlyBlock = true; // חסום עבור כל סוגי הכלים כולל פרשים
+                // פרש אינו נחסם על ידי כלי ידידותי ביעד - הוא מבצע Self-Kill
+                if (piece->type() == PieceType::Knight)
+                {
+                    isFriendlyBlock = false;
+                }
+                else
+                {
+                    isFriendlyBlock = true;
+                }
             }
         }
 
@@ -214,15 +224,8 @@ namespace kungfu
 
         if (isFriendlyBlock)
         {
-            // הגנה מפני לולאה אינסופית: פרש אינו זקוק לחיפוש נתיב ונסוג ישר חזרה למוצא
-            if (piece->type() == PieceType::Knight)
-            {
-                finalDestination = from;
-            }
-            else
-            {
-                finalDestination = findLastVacantPositionOnPath(from, to, board_);
-            }
+            // כלים מחליקים שנחסמים ביעד על ידי ידיד עוצרים פשוט במשבצת הפנויה האחרונה בנתיב
+            finalDestination = findLastVacantPositionOnPath(from, to, board_);
 
             piece->setState(PieceState::Idle);
             piece->setPosition(finalDestination);

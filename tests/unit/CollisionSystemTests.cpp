@@ -142,7 +142,7 @@ TEST_CASE("CollisionResolver Rules Resolution", "[rules][collision]") {
         REQUIRE(board->pieceAt(kungfu::Position(0, 2)).value() == friendlyPawn);
     }
 
-    SECTION("Knight landing on friendly piece triggers block instead of capture") {
+    SECTION("Knight landing on friendly piece triggers Self-Kill capture instead of block") {
         auto whiteKnight = std::make_shared<kungfu::Piece>(kungfu::PieceType::Knight, kungfu::PlayerColor::White, kungfu::Position(0, 0));
         auto friendlyPawn = std::make_shared<kungfu::Piece>(kungfu::PieceType::Pawn, kungfu::PlayerColor::White, kungfu::Position(2, 1));
 
@@ -155,9 +155,12 @@ TEST_CASE("CollisionResolver Rules Resolution", "[rules][collision]") {
 
         REQUIRE(success == true);
         REQUIRE(whiteKnight->state() == kungfu::PieceState::Idle);
-        REQUIRE(whiteKnight->position() == kungfu::Position(0, 0)); // נסוג חזרה למוצא כי הדרך חסומה
-        REQUIRE(friendlyPawn->state() == kungfu::PieceState::Idle);
-        REQUIRE(board->pieceAt(kungfu::Position(2, 1)).value() == friendlyPawn);
+        REQUIRE(whiteKnight->position() == kungfu::Position(2, 1)); // מגיע ליעד בהצלחה (לכידה ידידותית)
+        REQUIRE(friendlyPawn->state() == kungfu::PieceState::Captured); // הכלי הידידותי נלכד (Self-Kill)
+        
+        // הכלי הידידותי מוסר כעת מהלוח בעקבות הלכידה הידידותית
+        auto pcs = board->pieces();
+        REQUIRE(std::find(pcs.begin(), pcs.end(), friendlyPawn) == pcs.end());
     }
 
     SECTION("Normal arrival captures enemy piece and sets landing piece's cooldown") {

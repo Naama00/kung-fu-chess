@@ -1,4 +1,4 @@
-// engine/analysis/IThreatAnalyzer.hpp
+// תפקיד: ממשק מופשט המגדיר פונקציות לזיהוי איומים על משבצות ספציפיות בלוח.
 #pragma once
 
 #include <vector>
