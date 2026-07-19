@@ -1,11 +1,14 @@
-// integration/AIBattleTests.cpp
 #include <catch2/catch_test_macros.hpp>
 #include "engine/io/BoardParser.hpp"
 #include "engine/rules/RuleEngine.hpp"
 #include "engine/core/GameEngine.hpp"
 #include "engine/snapshot/SnapshotBuilder.hpp"
-#include "players/ai/EasyAI.hpp"
-#include "players/ai/HardAI.hpp"
+#include "players/ai/GenericAIPlayer.hpp"
+#include "players/ai/RealTimeStrategies.hpp"
+
+#include <memory>
+#include <optional>
+#include <vector>
 
 TEST_CASE("Integration match between EasyAI and HardAI does not crash or hang", "[integration][ai]") {
     std::string boardSetup =
@@ -20,8 +23,16 @@ TEST_CASE("Integration match between EasyAI and HardAI does not crash or hang", 
     auto ruleEngine = std::make_shared<kungfu::RuleEngine>(board);
     auto gameEngine = std::make_shared<kungfu::GameEngine>(board, ruleEngine);
 
-    kungfu::EasyAI easyAI(kungfu::PlayerColor::White);
-    kungfu::HardAI hardAI(kungfu::PlayerColor::Black);
+    // יצירת הבוטים באמצעות הטיפוסים הקונקרטיים בפרויקט שלך
+    kungfu::GenericAIPlayer easyAI(
+        kungfu::PlayerColor::White, 
+        std::make_unique<kungfu::RealTimeEasyStrategy>()
+    );
+    
+    kungfu::GenericAIPlayer hardAI(
+        kungfu::PlayerColor::Black, 
+        std::make_unique<kungfu::RealTimeHardStrategy>()
+    );
 
     // Simulating 5 turns of AI vs AI match to prove no crashes or infinite loops exist in the minimax tree
     for (int turn = 0; turn < 5; ++turn) {

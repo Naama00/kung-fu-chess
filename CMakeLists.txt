@@ -51,12 +51,18 @@ file(GLOB_RECURSE SFML_BACKEND_SOURCES CONFIGURE_DEPENDS
 
 add_library(kungfu_engine ${ENGINE_SOURCES})
 
-target_include_directories(kungfu_engine PUBLIC src)
+# הגדרת נתיב ברירת מחדל ל-Boost (כך שהקוד יתקמפל תמיד, גם בלי להגדיר בטרמינל)
+if(NOT Boost_INCLUDE_DIR)
+    set(Boost_INCLUDE_DIR "C:/local/boost_1_84_0")
+endif()
 
+# עדכון נתיבי החיפוש של המנוע
+target_include_directories(kungfu_engine PUBLIC src ${Boost_INCLUDE_DIR})
 # ------------------------------------------------------------------------------
 # Tests
 # ------------------------------------------------------------------------------
 
+# Force Reload of tests
 add_executable(kungfu_tests
     ${TEST_SOURCES}
 )

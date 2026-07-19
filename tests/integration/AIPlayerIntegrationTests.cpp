@@ -1,14 +1,15 @@
 #include <catch2/catch_test_macros.hpp>
-
 #include <memory>
 #include <optional>
+#include <vector>
 
 #include "engine/actions/ActionRequest.hpp"
 #include "engine/actions/PlayerAction.hpp"
 #include "engine/core/GameEngine.hpp"
 #include "engine/io/BoardParser.hpp"
 #include "engine/snapshot/SnapshotBuilder.hpp"
-#include "players/ai/EasyAI.hpp"
+#include "players/ai/GenericAIPlayer.hpp"
+#include "players/ai/RealTimeStrategies.hpp"
 
 TEST_CASE("AIPlayer can produce an action that GameEngine executes", "[integration][ai]") {
     std::string setup =
@@ -21,7 +22,12 @@ TEST_CASE("AIPlayer can produce an action that GameEngine executes", "[integrati
 
     auto ruleEngine = std::make_shared<kungfu::RuleEngine>(board);
     auto gameEngine = std::make_shared<kungfu::GameEngine>(board, ruleEngine);
-    kungfu::EasyAI aiPlayer(kungfu::PlayerColor::Black);
+    
+    // יצירת הבוט הקל באמצעות הטיפוסים הקונקרטיים בפרויקט שלך
+    kungfu::GenericAIPlayer aiPlayer(
+        kungfu::PlayerColor::Black, 
+        std::make_unique<kungfu::RealTimeEasyStrategy>()
+    );
 
     std::vector<kungfu::ActionRequest> whiteRequests;
     whiteRequests.emplace_back(1, kungfu::PlayerColor::White, kungfu::PlayerAction(kungfu::Position(0, 0), kungfu::Position(0, 1)));

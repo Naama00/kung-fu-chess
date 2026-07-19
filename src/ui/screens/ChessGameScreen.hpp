@@ -19,6 +19,7 @@
 #include "players/ai/GenericAIPlayer.hpp"
 #include "players/ai/ClassicMinimaxStrategy.hpp"
 #include "players/ai/RealTimeStrategies.hpp"
+#include "players/network/NetworkPlayer.hpp" // הוספת הייבוא של שחקן הרשת
 #include <future>
 #include <memory>
 #include <iostream>
@@ -26,6 +27,8 @@
 #include <vector>
 #include <cmath>
 #include <algorithm>
+#include <thread>
+#include <mutex>
 
 class ChessGameScreen : public BaseScreen
 {
@@ -39,6 +42,12 @@ private:
     kungfu::GameConfig m_config;
     std::shared_ptr<ISoundPlayer> m_soundPlayer;
     
+    // משתני רשת חדשים
+    bool m_isNetworkMode = false;
+    std::shared_ptr<kungfu::NetworkPlayer> m_networkPlayer;
+    boost::asio::io_context m_ioContext;
+    std::thread m_networkThread;
+
     bool m_isPaused = false;
     bool m_isAiOpponent = false;
     AiDifficulty m_aiDifficulty = AiDifficulty::Medium;
@@ -226,6 +235,7 @@ private:
     }
 
     void togglePause() {
+        if (m_isNetworkMode) return; // מניעת עצירת המשחק במצב רשת סימולטני
         m_isPaused = !m_isPaused;
         m_pauseButton = std::make_unique<Button>(
             Vector2D{500.0f, 25.0f}, Vector2D{140.0f, 50.0f}, m_isPaused ? "Resume" : "Pause",
@@ -307,7 +317,15 @@ private:
         BoardPos clickedTile{row, col};
         float timeSinceLastClick = m_totalTime - m_lastClickTime;
 
-        if (m_isAiOpponent && !m_humanPlayer->selectedPosition().has_value()) {
+        // וידוא שלחצים מבוצעים רק על כלים השייכים לשחקן במצב רשת
+        if (m_isNetworkMode && m_networkPlayer) {
+            auto clickedColorOpt = m_gameEngine->getPieceColorAt({row, col});
+            if (!m_humanPlayer->selectedPosition().has_value() && clickedColorOpt.has_value()) {
+                if (clickedColorOpt.value() != m_networkPlayer->assignedColor()) {
+                    return; // חסימת בחירה של כלי היריב
+                }
+            }
+        } else if (m_isAiOpponent && !m_humanPlayer->selectedPosition().has_value()) {
             if (m_gameEngine->getPieceColorAt({row, col}) == kungfu::PlayerColor::Black) {
                 return;
             }
@@ -318,9 +336,11 @@ private:
             m_lastClickedTile = {-1, -1};
 
             if (auto selectedOpt = m_humanPlayer->selectedPosition()) {
-                handleJump(*selectedOpt);
-            } else {
-                m_humanPlayer->handleClick(col * 100 + 50, row * 100 + 50);
+                if (m_isNetworkMode) {
+                    m_networkPlayer->sendMoveToServer(kungfu::PlayerAction(*selectedOpt, *selectedOpt));
+                } else {
+                    handleJump(*selectedOpt);
+                }
             }
             m_isHovering = false;
             m_selectedPieceAnim.isJumping = false;
@@ -336,6 +356,7 @@ private:
                 if (auto p = m_gameEngine->getBoard()->pieceAt(*selectedBefore)) activeColor = p.value()->color();
             }
 
+            // הפעלת לוגיקה מקומית (Controller)
             auto result = m_humanPlayer->handleClick(col * 100 + 50, row * 100 + 50);
             auto selectedAfter = m_humanPlayer->selectedPosition();
 
@@ -345,7 +366,11 @@ private:
 
             if (result.actionTaken && result.from && result.to && selectedBefore) {
                 if (result.description.rfind("Move requested:", 0) == 0) {
-                    addHistoryLog(activeColor, getMoveNotationString(movingPieceType, {selectedBefore->row(), selectedBefore->col()}, {row, col}));
+                    if (m_isNetworkMode) {
+                        m_networkPlayer->sendMoveToServer(kungfu::PlayerAction(result.from.value(), result.to.value()));
+                    } else {
+                        addHistoryLog(activeColor, getMoveNotationString(movingPieceType, {selectedBefore->row(), selectedBefore->col()}, {row, col}));
+                    }
                 }
             }
         }
@@ -455,8 +480,16 @@ public:
                              bool isSimultaneousMode,
                              bool isAiOpponent,
                              AiDifficulty aiDifficulty,
-                             std::shared_ptr<ISoundPlayer> soundPlayer = std::make_shared<NullSoundPlayer>())
-        : BaseScreen(manager, "Chess Match"), m_isAiOpponent(isAiOpponent), m_aiDifficulty(aiDifficulty), m_soundPlayer(std::move(soundPlayer)) {
+                             std::shared_ptr<ISoundPlayer> soundPlayer = std::make_shared<NullSoundPlayer>(), // הוחזר להיות חמישי!
+                             bool isNetworkMode = false, // הועבר לכאן
+                             std::string host = "127.0.0.1",
+                             std::string port = "8080")
+        : BaseScreen(manager, "Chess Match"), 
+          m_isAiOpponent(isAiOpponent), 
+          m_aiDifficulty(aiDifficulty), 
+          m_soundPlayer(std::move(soundPlayer)),
+          m_isNetworkMode(isNetworkMode) {
+        
         m_config.allowSimultaneousMovement = isSimultaneousMode;
         if (!m_config.allowSimultaneousMovement) {
             m_config.cooldownDurationMs = 0;
@@ -464,13 +497,36 @@ public:
             m_config.enablePremoves = false;
         }
         initializeScreen();
+
+        if (m_isNetworkMode) {
+            m_isAiOpponent = false;
+            m_aiPlayer = nullptr;
+
+            // אתחול וחיבור אסינכרוני לשרת
+            m_networkPlayer = std::make_shared<kungfu::NetworkPlayer>(m_ioContext, host, port);
+            m_networkPlayer->connectAndJoin();
+
+            // הרצת לולאת Asio ב-thread נפרד
+            m_networkThread = std::thread([this]() {
+                boost::asio::io_context::work work(m_ioContext);
+                m_ioContext.run();
+            });
+        }
     }
 
     explicit ChessGameScreen(ScreenManager &manager,
                              bool isSimultaneousMode,
                              bool isAiOpponent = false,
                              std::shared_ptr<ISoundPlayer> soundPlayer = std::make_shared<NullSoundPlayer>())
-        : ChessGameScreen(manager, isSimultaneousMode, isAiOpponent, AiDifficulty::Medium, soundPlayer) {}
+        : ChessGameScreen(manager, isSimultaneousMode, isAiOpponent, AiDifficulty::Medium, soundPlayer, false, "127.0.0.1", "8080") {}
+    ~ChessGameScreen() override {
+        if (m_isNetworkMode) {
+            m_ioContext.stop();
+            if (m_networkThread.joinable()) {
+                m_networkThread.join();
+            }
+        }
+    }
 
     void onEnter() override { std::cout << "Chess Game Screen Activated!" << std::endl; }
     void onExit() override { std::cout << "Chess Game Screen Deactivated!" << std::endl; }
@@ -505,7 +561,29 @@ public:
             m_menuButton->update(deltaTime);
         }
 
-        processAiTurn(deltaTime);
+        if (m_isNetworkMode && m_networkPlayer) {
+            // קריאת המהלכים שאושרו ושודרו מהשרת
+            auto snapshot = kungfu::view::SnapshotBuilder::build(
+                *m_gameEngine->getBoard(),
+                m_gameEngine->getArbiter(),
+                m_gameEngine->getCurrentTimeMs(),
+                m_gameEngine->isGameOver(),
+                std::nullopt,
+                m_boardRangeX / 8);
+
+            auto networkActions = m_networkPlayer->decideActions(snapshot);
+            for (const auto& req : networkActions) {
+                auto action = req.action;
+                auto pieceType = getPieceTypeAt(action.from);
+                
+                // החלת המהלך על המנוע המקומי שלנו
+                if (m_gameEngine->requestMove(action.from, action.to).isAccepted) {
+                    addHistoryLog(req.playerColor, getMoveNotationString(pieceType, {action.from.row(), action.from.col()}, {action.to.row(), action.to.col()}));
+                }
+            }
+        } else {
+            processAiTurn(deltaTime);
+        }
 
         auto selectedOpt = m_humanPlayer->selectedPosition();
         if (selectedOpt.has_value() && (m_selectedPieceAnim.isJumping || m_isHovering)) {
