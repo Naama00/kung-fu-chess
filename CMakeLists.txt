@@ -10,6 +10,14 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 # Dependencies
 # ------------------------------------------------------------------------------
 
+if(NOT Boost_INCLUDE_DIR)
+    set(Boost_INCLUDE_DIR "C:/local/boost_1_84_0")
+endif()
+
+if(NOT SFML_DIR)
+    set(SFML_DIR "C:/SFML/lib/cmake/SFML")
+endif()
+
 find_package(OpenCV REQUIRED)
 find_package(SFML 3 REQUIRED COMPONENTS Graphics Window System Audio)
 

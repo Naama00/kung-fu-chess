@@ -5579,7 +5579,6 @@ struct InputConfig {
 #include "NetworkPlayer.hpp"
 #include "../../server/Serializer.hpp"
 #include <iostream>
-#include <cstring>
 
 namespace kungfu
 {
@@ -5591,7 +5590,7 @@ namespace kungfu
           m_host(host),
           m_port(port)
     {
-        m_headerBuffer.resize(5); // כותרת בגודל קבוע: בית אחד לסוג, 4 בתים לאורך
+        m_headerBuffer.resize(kHeaderSize);
     }
 
     NetworkPlayer::~NetworkPlayer()
@@ -5604,7 +5603,7 @@ namespace kungfu
     {
         auto self = shared_from_this();
         boost::asio::post(m_strand, [self]()
-                          { self->doConnect(); });
+                           { self->doConnect(); });
     }
 
     void NetworkPlayer::doConnect()
@@ -5614,27 +5613,26 @@ namespace kungfu
         auto self = shared_from_this();
 
         boost::asio::async_connect(m_socket, endpoints,
-                                   boost::asio::bind_executor(m_strand,
-                                                              [self](boost::system::error_code ec, const tcp::endpoint &)
-                                                              {
-                                                                  if (!ec)
-                                                                  {
-                                                                      std::cout << "[Client] Connected to game server successfully!" << std::endl;
-                                                                      self->m_connected = true;
-                                                                      self->sendJoinRequest();
-                                                                      self->readHeader();
-                                                                  }
-                                                                  else
-                                                                  {
-                                                                      std::cerr << "[Client] Connection failed: " << ec.message() << std::endl;
-                                                                      self->m_connected = false;
-                                                                  }
-                                                              }));
+                                    boost::asio::bind_executor(m_strand,
+                                                                [self](boost::system::error_code ec, const tcp::endpoint &)
+                                                                {
+                                                                    if (!ec)
+                                                                    {
+                                                                        std::cout << "[Client] Connected to game server successfully!" << std::endl;
+                                                                        self->m_connected = true;
+                                                                        self->sendJoinRequest();
+                                                                        self->readHeader();
+                                                                    }
+                                                                    else
+                                                                    {
+                                                                        std::cerr << "[Client] Connection failed: " << ec.message() << std::endl;
+                                                                        self->m_connected = false;
+                                                                    }
+                                                                }));
     }
 
     void NetworkPlayer::sendJoinRequest()
     {
-        // שלח בקשה מסוג JOIN_MATCH_REQUEST עם גוף ריק (payloadSize = 0)
         writePacket(NetworkMessageType::JOIN_MATCH_REQUEST, {});
     }
 
@@ -5642,23 +5640,33 @@ namespace kungfu
     {
         auto self = shared_from_this();
         boost::asio::async_read(m_socket, boost::asio::buffer(m_headerBuffer),
-                                boost::asio::bind_executor(m_strand,
-                                                           [self](boost::system::error_code ec, std::size_t)
-                                                           {
-                                                               if (!ec)
-                                                               {
-                                                                   NetworkMessageType type = static_cast<NetworkMessageType>(self->m_headerBuffer[0]);
+                                 boost::asio::bind_executor(m_strand,
+                                                             [self](boost::system::error_code ec, std::size_t)
+                                                             {
+                                                                 if (ec)
+                                                                 {
+                                                                     self->handleDisconnect();
+                                                                     return;
+                                                                 }
 
-                                                                   std::uint32_t payloadSize = 0;
-                                                                   std::memcpy(&payloadSize, &self->m_headerBuffer[1], sizeof(payloadSize));
+                                                                 // קריאת הכותרת חייבת להיות עקבית עם Serializer::buildFrame
+                                                                 // שבו משתמש השרת (Big-Endian מפורש) - לא memcpy גולמי.
+                                                                 std::size_t offset = 0;
+                                                                 std::uint8_t rawType = 0;
+                                                                 std::uint32_t payloadSize = 0;
 
-                                                                   self->readPayload(type, payloadSize);
-                                                               }
-                                                               else
-                                                               {
-                                                                   self->handleDisconnect();
-                                                               }
-                                                           }));
+                                                                 bool ok = Serializer::readU8(self->m_headerBuffer, offset, rawType) &&
+                                                                           Serializer::readU32(self->m_headerBuffer, offset, payloadSize);
+
+                                                                 if (!ok || payloadSize > kMaxPayloadSize)
+                                                                 {
+                                                                     std::cerr << "[Client] Invalid or oversized header from server. Disconnecting." << std::endl;
+                                                                     self->handleDisconnect();
+                                                                     return;
+                                                                 }
+
+                                                                 self->readPayload(static_cast<NetworkMessageType>(rawType), payloadSize);
+                                                             }));
     }
 
     void NetworkPlayer::readPayload(NetworkMessageType type, std::uint32_t payloadSize)
@@ -5674,72 +5682,106 @@ namespace kungfu
 
         m_payloadBuffer.resize(payloadSize);
         boost::asio::async_read(m_socket, boost::asio::buffer(m_payloadBuffer),
-                                boost::asio::bind_executor(m_strand,
-                                                           [self, type](boost::system::error_code ec, std::size_t)
-                                                           {
-                                                               if (!ec)
-                                                               {
-                                                                   self->processMessage(type, self->m_payloadBuffer);
-                                                                   self->readHeader();
-                                                               }
-                                                               else
-                                                               {
-                                                                   self->handleDisconnect();
-                                                               }
-                                                           }));
+                                 boost::asio::bind_executor(m_strand,
+                                                             [self, type](boost::system::error_code ec, std::size_t)
+                                                             {
+                                                                 if (!ec)
+                                                                 {
+                                                                     self->processMessage(type, self->m_payloadBuffer);
+                                                                     self->readHeader();
+                                                                 }
+                                                                 else
+                                                                 {
+                                                                     self->handleDisconnect();
+                                                                 }
+                                                             }));
     }
 
     void NetworkPlayer::processMessage(NetworkMessageType type, const std::vector<std::uint8_t> &payload)
-{
-    if (type == NetworkMessageType::MATCH_FOUND)
     {
-        if (payload.size() >= 9)
+        switch (type)
         {
-            std::memcpy(&m_matchId, payload.data(), 8);
-            std::uint8_t colorVal = payload[8];
-            m_assignedColor = static_cast<PlayerColor>(colorVal);
+        case NetworkMessageType::MATCH_FOUND:
+        {
+            std::size_t offset = 0;
+            std::uint64_t matchId = 0;
+            std::uint8_t colorVal = 0;
 
-            std::cout << "[Client] Match found! ID: " << m_matchId
-                      << " Color: " << (m_assignedColor == PlayerColor::White ? "White" : "Black")
-                      << std::endl;
+            if (Serializer::readU64(payload, offset, matchId) &&
+                Serializer::readU8(payload, offset, colorVal))
+            {
+                // כתיבה דרך .store() ולא memcpy ישיר לתוך std::atomic:
+                // memcpy עוקף את מנגנון האטומיות ואינו מבטיח סמנטיקת
+                // memory-ordering תקינה, גם אם בפועל עובד על רוב הפלטפורמות.
+                m_matchId.store(matchId);
+                m_assignedColor.store(static_cast<PlayerColor>(colorVal));
+
+                std::cout << "[Client] Match found! ID: " << matchId
+                           << " Color: " << (m_assignedColor.load() == PlayerColor::White ? "White" : "Black")
+                           << std::endl;
+            }
+            else
+            {
+                std::cerr << "[Client] Malformed MATCH_FOUND payload. Ignoring." << std::endl;
+            }
+            break;
         }
-    }
-    else if (type == NetworkMessageType::GAME_MOVE)
-    {
-        if (payload.size() >= sizeof(NetworkMovePacket))
-        {
-            NetworkMovePacket packet;
-            std::memcpy(&packet, payload.data(), sizeof(NetworkMovePacket));
 
-            ActionRequest request = Serializer::deserializeToRequest(packet);
+        case NetworkMessageType::GAME_MOVE:
+        {
+            auto packet = Serializer::deserializeMovePacket(payload);
+            if (!packet.has_value())
+            {
+                std::cerr << "[Client] Malformed GAME_MOVE payload. Ignoring." << std::endl;
+                break;
+            }
+
+            ActionRequest request = Serializer::deserializeToRequest(*packet);
 
             std::lock_guard<std::mutex> lock(m_mutex);
             m_incomingActions.push_back(request);
+            break;
         }
-    }
-    // טיפול בתוצאת אימות המהלך שהתקבלה מהשרת
-    else if (type == NetworkMessageType::MOVE_RESULT)
-    {
-        if (payload.size() >= sizeof(ActionResult))
+
+        case NetworkMessageType::MOVE_RESULT:
         {
-            ActionResult result(0, ActionStatus::Rejected);
-            std::memcpy(&result, payload.data(), sizeof(ActionResult));
+            auto result = Serializer::deserializeToResult(payload);
+            if (!result.has_value())
+            {
+                std::cerr << "[Client] Malformed MOVE_RESULT payload. Ignoring." << std::endl;
+                break;
+            }
 
             std::lock_guard<std::mutex> lock(m_mutex);
-            m_incomingResults.push_back(result);
+            m_incomingResults.push_back(*result);
+            break;
+        }
+
+        case NetworkMessageType::GAME_OVER:
+            std::cout << "[Client] Game over." << std::endl;
+            m_matchEnded.store(true);
+            break;
+
+        case NetworkMessageType::OPPONENT_DISCONNECTED:
+            std::cout << "[Client] Opponent disconnected." << std::endl;
+            m_opponentDisconnected.store(true);
+            break;
+
+        case NetworkMessageType::HEARTBEAT:
+        case NetworkMessageType::JOIN_MATCH_REQUEST:
+            // הודעות שהלקוח לא אמור לקבל מהשרת - מתעלמים בשקט.
+            break;
         }
     }
-}
-
 
     void NetworkPlayer::sendMoveToServer(const PlayerAction &action)
     {
-        if (!m_connected || m_matchId == 0)
+        if (!m_connected || m_matchId.load() == 0)
             return;
 
-        NetworkMovePacket packet;
+        NetworkMovePacket packet{};
         packet.matchId = m_matchId.load();
-        packet.requestId = m_nextRequestId++;
+        packet.requestId = m_nextRequestId.fetch_add(1);
         packet.playerColor = static_cast<std::uint8_t>(m_assignedColor.load());
 
         // מיפוי קואורדינטות: x מייצג עמודה (col), y מייצג שורה (row)
@@ -5748,39 +5790,31 @@ namespace kungfu
         packet.to.x = action.to.col();
         packet.to.y = action.to.row();
 
-        std::vector<std::uint8_t> payload(sizeof(NetworkMovePacket));
-        std::memcpy(payload.data(), &packet, sizeof(NetworkMovePacket));
+        // סריאליזציה מפורשת (33 בתים קבועים) - לא memcpy של ה-struct,
+        // כדי להתאים בדיוק לפרוטוקול שהשרת מצפה לו ולהימנע מתלות ב-padding.
+        auto payload = Serializer::serializeMovePacket(packet);
 
         auto self = shared_from_this();
         boost::asio::post(m_strand, [self, payload]()
-                          { self->writePacket(NetworkMessageType::GAME_MOVE, payload); });
+                           { self->writePacket(NetworkMessageType::GAME_MOVE, payload); });
     }
 
     void NetworkPlayer::writePacket(NetworkMessageType type, const std::vector<std::uint8_t> &payload)
     {
-        std::uint32_t payloadSize = static_cast<std::uint32_t>(payload.size());
-
-        std::vector<std::uint8_t> writeBuffer;
-        writeBuffer.resize(5 + payloadSize);
-
-        writeBuffer[0] = static_cast<std::uint8_t>(type);
-        std::memcpy(&writeBuffer[1], &payloadSize, sizeof(payloadSize));
-
-        if (payloadSize > 0)
-        {
-            std::memcpy(&writeBuffer[5], payload.data(), payloadSize);
-        }
+        // Serializer::buildFrame בונה כותרת + payload בפורמט זהה לזה שהשרת
+        // קורא (Big-Endian מפורש), כך שאין סיכוי לאי-התאמת endianness.
+        auto frame = std::make_shared<std::vector<std::uint8_t>>(Serializer::buildFrame(type, payload));
 
         auto self = shared_from_this();
-        boost::asio::async_write(m_socket, boost::asio::buffer(writeBuffer),
-                                 boost::asio::bind_executor(m_strand,
-                                                            [self, writeBuffer](boost::system::error_code ec, std::size_t)
-                                                            {
-                                                                if (ec)
-                                                                {
-                                                                    std::cerr << "[Client] Write error: " << ec.message() << std::endl;
-                                                                }
-                                                            }));
+        boost::asio::async_write(m_socket, boost::asio::buffer(*frame),
+                                  boost::asio::bind_executor(m_strand,
+                                                              [self, frame](boost::system::error_code ec, std::size_t)
+                                                              {
+                                                                  if (ec)
+                                                                  {
+                                                                      std::cerr << "[Client] Write error: " << ec.message() << std::endl;
+                                                                  }
+                                                              }));
     }
 
     void NetworkPlayer::handleDisconnect()
@@ -5790,14 +5824,12 @@ namespace kungfu
         m_matchId = 0;
     }
 
-    // מימוש המתודה התקנית של ממשק IPlayer
     std::vector<ActionRequest> NetworkPlayer::decideActions(const view::GameSnapshot &snapshot)
     {
         (void)snapshot;
         std::lock_guard<std::mutex> lock(m_mutex);
 
-        // החזרת כל המהלכים שהצטברו מהרשת וניקוי התור באותו פריים
-        auto actions = m_incomingActions;
+        auto actions = std::move(m_incomingActions);
         m_incomingActions.clear();
         return actions;
     }
@@ -5815,9 +5847,11 @@ namespace kungfu
 #include <mutex>
 #include <string>
 #include <atomic>
+#include <cstdint>
 #include "players/IPlayer.hpp"
 #include "../../server/NetworkMessages.hpp"
-#include "../../engine/actions/ActionResult.hpp" // הוספת ייבוא עבור תוצאות פעולה
+#include "../../engine/actions/ActionRequest.hpp"
+#include "../../engine/actions/ActionResult.hpp"
 
 namespace kungfu
 {
@@ -5837,18 +5871,23 @@ namespace kungfu
         std::atomic<PlayerColor> m_assignedColor{PlayerColor::White};
         std::atomic<bool> m_connected{false};
 
-        // תור מוגן חוטים לאחסון מהלכים שהגיעו מהשרת
+        // דגלים שמעדכנים את הצד הצרכני (loop המשחק) על אירועים מהשרת
+        // שאינם מהלכים/תוצאות - בלי לחייב אותו לפרסר את זרם ההודעות בעצמו.
+        std::atomic<bool> m_matchEnded{false};
+        std::atomic<bool> m_opponentDisconnected{false};
+
+        // גישה לתורים האלה תמיד מוגנת ב-m_mutex, כולל לוגיקת ה-networking
+        // (שרצה על m_strand) וגם הצרכן (שרץ בד"כ ב-thread של לולאת המשחק).
         std::vector<ActionRequest> m_incomingActions;
-        
-        // תור מוגן חוטים לאחסון תוצאות אימות מהלכים מהשרת
         std::vector<ActionResult> m_incomingResults;
-        
         std::mutex m_mutex;
 
         std::vector<std::uint8_t> m_headerBuffer;
         std::vector<std::uint8_t> m_payloadBuffer;
 
-        std::uint64_t m_nextRequestId = 1;
+        // אטומי כי sendMoveToServer עשוי להיקרא מ-thread שאינו m_strand
+        // (בד"כ מ-thread לולאת המשחק).
+        std::atomic<std::uint64_t> m_nextRequestId{1};
 
     public:
         NetworkPlayer(boost::asio::io_context &ioContext, const std::string &host, const std::string &port);
@@ -5858,10 +5897,11 @@ namespace kungfu
 
         std::vector<ActionRequest> decideActions(const view::GameSnapshot &snapshot) override;
 
-        // מתודה לשליפת תוצאות האימות וניקוי התור המקומי באותו פריים
-        std::vector<ActionResult> pollResults() {
+        // שליפת תוצאות האימות שהצטברו וניקוי התור המקומי באותו פריים
+        std::vector<ActionResult> pollResults()
+        {
             std::lock_guard<std::mutex> lock(m_mutex);
-            auto results = m_incomingResults;
+            auto results = std::move(m_incomingResults);
             m_incomingResults.clear();
             return results;
         }
@@ -5871,6 +5911,12 @@ namespace kungfu
         bool isConnected() const { return m_connected; }
         std::uint64_t matchId() const { return m_matchId; }
         PlayerColor assignedColor() const { return m_assignedColor; }
+
+        // true פעם אחת אחרי שהמשחק הסתיים "בטבעיות" (GAME_OVER מהשרת)
+        bool matchEnded() const { return m_matchEnded; }
+
+        // true אם היריב התנתק לפני שהמשחק הסתיים (OPPONENT_DISCONNECTED)
+        bool opponentDisconnected() const { return m_opponentDisconnected; }
 
     private:
         void doConnect();
@@ -5921,6 +5967,7 @@ public:
 #include <boost/asio.hpp>
 #include <memory>
 #include <chrono>
+#include <functional>
 #include <iostream>
 #include <vector>
 #include <cstring>
@@ -5934,23 +5981,38 @@ class NetworkSession;
 
 class LiveMatch : public std::enable_shared_from_this<LiveMatch> {
 private:
+    static constexpr std::chrono::milliseconds kTickInterval{50}; // 20 טיקים בשנייה
+
     std::uint64_t m_matchId;
     std::shared_ptr<GameEngine> m_engine;
-    
+
     // שימוש ב-weak_ptr מונע מעגלי זיכרון (Session -> Match -> Session)
     std::weak_ptr<NetworkSession> m_whiteSession;
     std::weak_ptr<NetworkSession> m_blackSession;
 
+    // Strand ייעודי למשחק הזה בלבד. מבטיח שה-tick וטיפול במהלכים של
+    // המשחק הספציפי הזה אף פעם לא רצים בו-זמנית, גם אם בעתיד ה-io_context
+    // ירוץ ממספר threads (כלומר: תמיכה בהרצה מקבילה אמיתית של הרבה
+    // משחקים בו-זמנית, כל אחד עם ה-strand שלו, בלי צורך במנעול גלובלי).
+    boost::asio::strand<boost::asio::any_io_executor> m_strand;
+
     boost::asio::steady_timer m_tickTimer;
     std::chrono::steady_clock::time_point m_lastTickTime;
     bool m_isRunning = false;
+    bool m_hasEnded = false;
+
+    // נקרא פעם אחת כשהמשחק מסתיים (מכל סיבה) כדי שה-MatchManager יוכל
+    // להסיר אותו מהמפה שלו. נשמר כ-std::function כדי ש-LiveMatch לא יצטרך
+    // לדעת דבר על MatchManager (הפרדת אחריות).
+    std::function<void(std::uint64_t)> m_onMatchEnded;
 
 public:
-    LiveMatch(boost::asio::io_context& ioContext, 
-              std::uint64_t matchId, 
+    LiveMatch(boost::asio::io_context& ioContext,
+              std::uint64_t matchId,
               std::shared_ptr<GameEngine> engine)
-        : m_matchId(matchId), 
-          m_engine(std::move(engine)), 
+        : m_matchId(matchId),
+          m_engine(std::move(engine)),
+          m_strand(boost::asio::make_strand(ioContext.get_executor())),
           m_tickTimer(ioContext) {}
 
     void setPlayers(std::shared_ptr<NetworkSession> white, std::shared_ptr<NetworkSession> black) {
@@ -5958,37 +6020,67 @@ public:
         m_blackSession = black;
     }
 
+    void setOnMatchEnded(std::function<void(std::uint64_t)> callback) {
+        m_onMatchEnded = std::move(callback);
+    }
+
     std::uint64_t matchId() const { return m_matchId; }
     std::shared_ptr<GameEngine> engine() const { return m_engine; }
 
+    std::shared_ptr<NetworkSession> whiteSession() const { return m_whiteSession.lock(); }
+    std::shared_ptr<NetworkSession> blackSession() const { return m_blackSession.lock(); }
+
     void start() {
-        if (m_isRunning) return;
-        m_isRunning = true;
-        m_lastTickTime = std::chrono::steady_clock::now();
-        scheduleNextTick();
-        std::cout << "[Match " << m_matchId << "] Tick loop started on server." << std::endl;
+        auto self = shared_from_this();
+        boost::asio::post(m_strand, [self]() {
+            if (self->m_isRunning) return;
+            self->m_isRunning = true;
+            self->m_lastTickTime = std::chrono::steady_clock::now();
+            self->scheduleFirstTick();
+            std::cout << "[Match " << self->m_matchId << "] Tick loop started on server." << std::endl;
+        });
     }
 
+    // עצירה "שקטה" - לשימוש כשמישהו חיצוני (למשל ניתוק שחקן) רוצה לבטל
+    // את המשחק בלי לשדר הודעת GAME_OVER (במקרה הזה משודרת הודעה אחרת).
     void stop() {
-        m_isRunning = false;
-        boost::system::error_code ec;
-        m_tickTimer.cancel(ec);
+        auto self = shared_from_this();
+        boost::asio::post(m_strand, [self]() {
+            self->stopInternal();
+            self->markEndedOnce();
+        });
     }
 
-    // פונקציית עיבוד מהלכים שתמומש לאחר הגדרת NetworkSession
-    void handlePlayerMove(std::shared_ptr<NetworkSession> sender, const NetworkMovePacket& packet);
+    // מטופל מחוץ ל-strand (מגיע מ-NetworkSession) ומועבר פנימה אליו כדי
+    // להבטיח סדר מהלכים עקבי גם אם קריאות מגיעות מ-threads שונים.
+    void handlePlayerMove(std::shared_ptr<NetworkSession> sender, const NetworkMovePacket& packet) {
+        auto self = shared_from_this();
+        boost::asio::post(m_strand, [self, sender, packet]() {
+            self->handlePlayerMoveInternal(sender, packet);
+        });
+    }
 
 private:
-    void scheduleNextTick() {
-        if (!m_isRunning) return;
+    void scheduleFirstTick() {
+        m_tickTimer.expires_after(kTickInterval);
+        armTimer();
+    }
 
+    void scheduleNextTick() {
+        // מתזמן ביחס לזמן התפוגה הקודם (ולא ביחס ל"עכשיו") כדי למנוע
+        // סטייה מצטברת (drift) הנגרמת מזמן העיבוד של כל טיק.
+        m_tickTimer.expires_at(m_tickTimer.expiry() + kTickInterval);
+        armTimer();
+    }
+
+    void armTimer() {
         auto self = shared_from_this();
-        m_tickTimer.expires_after(std::chrono::milliseconds(50)); // 20 Ticks בשנייה
-        m_tickTimer.async_wait([self](const boost::system::error_code& ec) {
-            if (!ec && self->m_isRunning) {
-                self->onTick();
-            }
-        });
+        m_tickTimer.async_wait(boost::asio::bind_executor(m_strand,
+            [self](const boost::system::error_code& ec) {
+                if (!ec && self->m_isRunning) {
+                    self->onTick();
+                }
+            }));
     }
 
     void onTick() {
@@ -6001,12 +6093,38 @@ private:
 
         if (m_engine->isGameOver()) {
             std::cout << "[Match " << m_matchId << "] Game over on server." << std::endl;
-            stop();
+            stopInternal();
+            notifyGameOver();
+            markEndedOnce();
             return;
         }
 
         scheduleNextTick();
     }
+
+    void stopInternal() {
+        m_isRunning = false;
+        boost::system::error_code ec;
+        m_tickTimer.cancel(ec);
+    }
+
+    // מבטיח שהקריאה ל-callback הסיום תתבצע פעם אחת בדיוק, לא משנה אם
+    // המשחק הסתיים "בטבעיות" (onTick) או עקב ניתוק (stop() חיצוני).
+    void markEndedOnce() {
+        if (m_hasEnded) return;
+        m_hasEnded = true;
+        if (m_onMatchEnded) {
+            m_onMatchEnded(m_matchId);
+        }
+    }
+
+    // הודעה לשני השחקנים שהמשחק הסתיים בדרך "רגילה" (לא ניתוק).
+    // מוגדר inline בתחתית NetworkServer.hpp, שם NetworkSession כבר מוכר
+    // במלואו (כולל sendPacket).
+    void notifyGameOver();
+
+    // מימוש בפועל של טיפול במהלך שחקן - מוגדר inline בתחתית NetworkServer.hpp
+    void handlePlayerMoveInternal(std::shared_ptr<NetworkSession> sender, const NetworkMovePacket& packet);
 };
 
 } // namespace kungfu
@@ -6024,13 +6142,25 @@ int main() {
         const std::uint16_t port = 8080;
         boost::asio::io_context ioContext;
 
-        // העברת ה-ioContext כדי שה-MatchManager יוכל להגדיר טיימרים לכל משחק חצי
+        // העברת ה-ioContext כדי שה-MatchManager יוכל להגדיר טיימרים לכל משחק
         kungfu::MatchManager matchManager(ioContext);
 
         std::cout << "Starting KungFu Chess Server on port " << port << "..." << std::endl;
         kungfu::NetworkServer server(ioContext, port, matchManager);
 
         std::cout << "Server is running. Waiting for players to connect..." << std::endl;
+
+        // כרגע ה-io_context רץ מ-thread יחיד. כל NetworkSession וכל LiveMatch
+        // כבר מוגנים ע"י ה-strand הפרטי שלהם, ו-MatchManager מוגן ע"י mutex -
+        // כך שכאשר יהיה צורך לתמוך בכמות גדולה יותר של משחקים במקביל, אפשר
+        // לעבור להרצה מרובת-threads פשוט ע"י פתיחת כמה threads שכל אחד
+        // קורא ioContext.run(), ללא צורך בשינוי מבני בקוד:
+        //
+        //   std::vector<std::thread> pool;
+        //   for (unsigned i = 0; i < std::thread::hardware_concurrency(); ++i) {
+        //       pool.emplace_back([&ioContext]() { ioContext.run(); });
+        //   }
+        //   for (auto& t : pool) t.join();
         ioContext.run();
 
     } catch (const std::exception& e) {
@@ -6045,7 +6175,9 @@ int main() {
 <file path="server/MatchManager.hpp">
 #pragma once
 
+#include <boost/asio.hpp>
 #include <unordered_map>
+#include <unordered_set>
 #include <memory>
 #include <mutex>
 #include <vector>
@@ -6059,20 +6191,38 @@ namespace kungfu {
 class NetworkSession;
 class LiveMatch;
 
+// ============================================================================
+// MatchManager
+//
+// אחראי על שני דברים:
+//  1. Matchmaking - תור המתנה של שחקנים שממתינים ליריב.
+//  2. מחזור החיים של משחקים פעילים (יצירה, טעינה, וניקוי כשמסתיים).
+//
+// ה-mutex כאן קיים בכוונה, גם שכרגע main.cpp מריץ io_context.run() מ-thread
+// יחיד: המבנה כאן מיועד לתמוך במספר רב של משחקים במקביל, כולל אפשרות
+// עתידית להריץ io_context.run() ממספר threads (thread pool) כדי לנצל
+// ליבות מרובות - במקרה כזה registerPlayer/unregisterPlayer עלולים להיקרא
+// במקביל מ-threads שונים, ואילו הגישה למצב המשחק (LiveMatch) עצמו כבר
+// מוגנת בנפרד ע"י ה-strand הפרטי של כל LiveMatch.
+// ============================================================================
 class MatchManager {
 private:
     std::unordered_map<std::uint64_t, std::shared_ptr<LiveMatch>> m_matches;
     std::uint64_t m_nextMatchId = 1;
     std::mutex m_mutex;
 
-    std::queue<std::shared_ptr<NetworkSession>> m_waitingPlayers;
+    // queue שומר על סדר ההגעה (FIFO); set מאפשר בדיקת "כבר בתור?" ב-O(1)
+    std::queue<std::shared_ptr<NetworkSession>> m_waitingQueue;
+    std::unordered_set<std::shared_ptr<NetworkSession>> m_waitingSet;
+
     boost::asio::io_context& m_ioContext;
 
 public:
-    explicit MatchManager(boost::asio::io_context& ioContext) 
+    explicit MatchManager(boost::asio::io_context& ioContext)
         : m_ioContext(ioContext) {}
 
-    // הצהרות בלבד - המימוש המלא מועבר לתחתית NetworkServer.hpp
+    // הצהרות בלבד - המימוש המלא מועבר לתחתית NetworkServer.hpp, שם
+    // NetworkSession מוכר במלואו.
     void registerPlayer(std::shared_ptr<NetworkSession> session);
     void unregisterPlayer(std::shared_ptr<NetworkSession> session);
 
@@ -6085,8 +6235,18 @@ public:
         return nullptr;
     }
 
+    // נקרא ע"י LiveMatch (דרך callback) כשמשחק מסתיים, כדי לפנות אותו
+    // מהמפה. מונע memory leak לוגי של משחקים שהסתיימו "בטבעיות".
+    void removeMatch(std::uint64_t matchId) {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        if (m_matches.erase(matchId) > 0) {
+            std::cout << "[MatchManager] Match " << matchId << " removed after completion." << std::endl;
+        }
+    }
+
 private:
-    void startNewMatch(std::shared_ptr<NetworkSession> player1, std::shared_ptr<NetworkSession> player2);
+    std::shared_ptr<LiveMatch> startNewMatch(std::shared_ptr<NetworkSession> player1,
+                                              std::shared_ptr<NetworkSession> player2);
 };
 
 } // namespace kungfu
@@ -6096,17 +6256,19 @@ private:
 #pragma once
 
 #include <cstdint>
-#include <vector>
+#include <cstddef>
 
 namespace kungfu {
 
 // סוגי ההודעות ברשת
 enum class NetworkMessageType : std::uint8_t {
-    JOIN_MATCH_REQUEST,  // לקוח מבקש להצטרף למשחק
-    MATCH_FOUND,         // השרת מודיע שמצא משחק ומחזיר צבע ומזהה משחק
-    GAME_MOVE,           // שליחת מהלך (מלקוח לשרת או משרת ללקוח)
-    MOVE_RESULT,         // השרת מחזיר את תוצאת המהלך (חוקי/לא חוקי) -- נוסף פסיק מתוקן כאן
-    HEARTBEAT            // הודעת סיגנל קטנה לשמירה על החיבור
+    JOIN_MATCH_REQUEST,       // לקוח מבקש להצטרף למשחק
+    MATCH_FOUND,              // השרת מודיע שמצא משחק ומחזיר צבע ומזהה משחק
+    GAME_MOVE,                // שליחת מהלך (מלקוח לשרת או משרת ללקוח)
+    MOVE_RESULT,              // השרת מחזיר את תוצאת המהלך (חוקי/לא חוקי)
+    HEARTBEAT,                // הודעת סיגנל קטנה לשמירה על החיבור
+    GAME_OVER,                // השרת מודיע ששני הצדדים שהמשחק הסתיים (מצב טבעי)
+    OPPONENT_DISCONNECTED     // השרת מודיע שהיריב התנתק והמשחק בוטל
 };
 
 // ייצוג קומפקטי של Position למעבר ברשת
@@ -6115,7 +6277,11 @@ struct NetworkPosition {
     std::int32_t y;
 };
 
-// המבנה הקבוע של הודעת מהלך שעוברת בסוקט
+// המבנה הלוגי (בזיכרון) של הודעת מהלך.
+// שים לב: מבנה זה משמש רק כייצוג פנימי נוח לעבודה בקוד.
+// הוא *לא* נשלח ברשת באמצעות memcpy ישיר - הסריאליזציה בפועל
+// (סדר בתים, גודל שדות) מתבצעת באופן מפורש ב-Serializer,
+// כדי לא להיות תלויים בפריסת הזיכרון (padding/ABI) של הקומפיילר.
 struct NetworkMovePacket {
     std::uint64_t matchId;
     std::uint64_t requestId;
@@ -6124,11 +6290,16 @@ struct NetworkMovePacket {
     NetworkPosition to;
 };
 
-// כותרת כללית לכל חבילה ברשת כדי שהשרת ידע איך לקרוא את ההמשך
-struct NetworkHeader {
-    NetworkMessageType type;
-    std::uint32_t payloadSize; // אורך הנתונים שבאים מיד אחרי הכותרת
-};
+// גודל קבוע ומפורש (לא sizeof!) של NetworkMovePacket כפי שהוא נכתב על הרשת:
+// 8 (matchId) + 8 (requestId) + 1 (playerColor) + 4*4 (from.x/y, to.x/y) = 33 בתים
+inline constexpr std::size_t kMovePacketWireSize = 8 + 8 + 1 + 4 * 4;
+
+// כותרת כללית לכל חבילה ברשת: בית אחד לסוג ההודעה, 4 בתים (Big-Endian) לאורך ה-payload
+inline constexpr std::size_t kHeaderSize = 5;
+
+// הגנה מפני תוקף/באג שמנסה לגרום לשרת להקצות payload ענק (DoS).
+// 64KB נדיב בהרבה מכל הודעה לגיטימית בפרוטוקול הנוכחי.
+inline constexpr std::uint32_t kMaxPayloadSize = 64 * 1024;
 
 } // namespace kungfu
 </file>
@@ -6166,10 +6337,10 @@ private:
 
 public:
     NetworkSession(tcp::socket socket, MatchManager& matchManager)
-        : m_socket(std::move(socket)), 
+        : m_socket(std::move(socket)),
           m_strand(boost::asio::make_strand(m_socket.get_executor())),
           m_matchManager(matchManager) {
-        m_headerBuffer.resize(5); // כותרת בגודל קבוע: בית אחד לסוג, 4 בתים לאורך
+        m_headerBuffer.resize(kHeaderSize);
     }
 
     tcp::socket& socket() { return m_socket; }
@@ -6184,11 +6355,15 @@ public:
         });
     }
 
-    // שליחת הודעה בצורה בטוחה מסוג קול קריאה (Thread-safe)
+    // בונה את ה-frame השלם (כותרת + payload) פעם אחת ומעביר אותו הלאה
+    // כ-shared_ptr, כדי לא להעתיק את הנתונים פעם נוספת בתוך ה-strand
+    // (בגרסה הקודמת הפרמטר הועתק פעם אחת בעת ה-capture, ואז שוב בתוך
+    // writePacket - שתי העתקות מיותרות לכל שליחה).
     void sendPacket(NetworkMessageType type, const std::vector<std::uint8_t>& payload) {
+        auto frame = std::make_shared<std::vector<std::uint8_t>>(Serializer::buildFrame(type, payload));
         auto self = shared_from_this();
-        boost::asio::post(m_strand, [self, type, payload]() {
-            self->writePacket(type, payload);
+        boost::asio::post(m_strand, [self, frame]() {
+            self->writeFrame(frame);
         });
     }
 
@@ -6198,22 +6373,34 @@ private:
         boost::asio::async_read(m_socket, boost::asio::buffer(m_headerBuffer),
             boost::asio::bind_executor(m_strand,
             [self](boost::system::error_code ec, std::size_t) {
-                if (!ec) {
-                    NetworkMessageType type = static_cast<NetworkMessageType>(self->m_headerBuffer[0]);
-                    
-                    std::uint32_t payloadSize = 0;
-                    std::memcpy(&payloadSize, &self->m_headerBuffer[1], sizeof(payloadSize));
-
-                    self->readPayload(type, payloadSize);
-                } else {
+                if (ec) {
                     self->handleDisconnect();
+                    return;
                 }
+
+                std::size_t offset = 0;
+                std::uint8_t rawType = 0;
+                std::uint32_t payloadSize = 0;
+
+                bool ok = Serializer::readU8(self->m_headerBuffer, offset, rawType) &&
+                          Serializer::readU32(self->m_headerBuffer, offset, payloadSize);
+
+                if (!ok || payloadSize > kMaxPayloadSize) {
+                    // כותרת פגומה, או שחקן/תוקף שמנסה לגרום להקצאת זיכרון
+                    // ענקית - מנתקים את החיבור במקום לנסות להמשיך.
+                    std::cerr << "[Session] Invalid or oversized payload announced ("
+                              << payloadSize << " bytes). Disconnecting." << std::endl;
+                    self->handleDisconnect();
+                    return;
+                }
+
+                self->readPayload(static_cast<NetworkMessageType>(rawType), payloadSize);
             }));
     }
 
     void readPayload(NetworkMessageType type, std::uint32_t payloadSize) {
         auto self = shared_from_this();
-        
+
         if (payloadSize == 0) {
             processMessage(type, {});
             readHeader();
@@ -6236,39 +6423,28 @@ private:
     void processMessage(NetworkMessageType type, const std::vector<std::uint8_t>& payload) {
         if (type == NetworkMessageType::JOIN_MATCH_REQUEST) {
             m_matchManager.registerPlayer(shared_from_this());
-        } 
+        }
         else if (type == NetworkMessageType::GAME_MOVE) {
             if (m_matchId == 0) return;
 
-            NetworkMovePacket packet;
-            if (payload.size() >= sizeof(NetworkMovePacket)) {
-                std::memcpy(&packet, payload.data(), sizeof(NetworkMovePacket));
-                
-                auto match = m_matchManager.getMatch(m_matchId);
-                if (match) {
-                    match->handlePlayerMove(shared_from_this(), packet);
-                }
+            auto packet = Serializer::deserializeMovePacket(payload);
+            if (!packet.has_value()) {
+                std::cerr << "[Session] Received malformed GAME_MOVE payload. Ignoring." << std::endl;
+                return;
+            }
+
+            auto match = m_matchManager.getMatch(m_matchId);
+            if (match) {
+                match->handlePlayerMove(shared_from_this(), *packet);
             }
         }
     }
 
-    void writePacket(NetworkMessageType type, const std::vector<std::uint8_t>& payload) {
-        std::uint32_t payloadSize = static_cast<std::uint32_t>(payload.size());
-        
-        std::vector<std::uint8_t> writeBuffer;
-        writeBuffer.resize(5 + payloadSize);
-        
-        writeBuffer[0] = static_cast<std::uint8_t>(type);
-        std::memcpy(&writeBuffer[1], &payloadSize, sizeof(payloadSize));
-        
-        if (payloadSize > 0) {
-            std::memcpy(&writeBuffer[5], payload.data(), payloadSize);
-        }
-
+    void writeFrame(const std::shared_ptr<std::vector<std::uint8_t>>& frame) {
         auto self = shared_from_this();
-        boost::asio::async_write(m_socket, boost::asio::buffer(writeBuffer),
+        boost::asio::async_write(m_socket, boost::asio::buffer(*frame),
             boost::asio::bind_executor(m_strand,
-            [self, writeBuffer](boost::system::error_code ec, std::size_t) {
+            [self, frame](boost::system::error_code ec, std::size_t) {
                 if (ec) {
                     std::cerr << "[Session] Write error: " << ec.message() << std::endl;
                 }
@@ -6309,83 +6485,121 @@ private:
 // מימושי Inline לפתרון תלויות מעגליות (Circular Dependencies)
 // =================================────────────────────────────────============
 
-inline void LiveMatch::handlePlayerMove(std::shared_ptr<NetworkSession> sender, const NetworkMovePacket& packet) {
+inline void LiveMatch::handlePlayerMoveInternal(std::shared_ptr<NetworkSession> sender,
+                                                 const NetworkMovePacket& packet) {
     ActionRequest request = Serializer::deserializeToRequest(packet);
-    
+
     std::vector<ActionRequest> requests = { request };
     std::vector<ActionResult> results = m_engine->processActionRequests(requests);
 
-    if (!results.empty()) {
-        ActionResult result = results.front();
+    if (results.empty()) return;
 
-        std::vector<std::uint8_t> resultPayload(sizeof(ActionResult));
-        std::memcpy(resultPayload.data(), &result, sizeof(ActionResult));
-        sender->sendPacket(NetworkMessageType::MOVE_RESULT, resultPayload);
+    const ActionResult& result = results.front();
+    sender->sendPacket(NetworkMessageType::MOVE_RESULT, Serializer::serializeActionResult(result));
 
-        if (result.status == ActionStatus::Accepted) {
-            std::vector<std::uint8_t> movePayload(sizeof(NetworkMovePacket));
-            std::memcpy(movePayload.data(), &packet, sizeof(NetworkMovePacket));
+    if (result.status == ActionStatus::Accepted) {
+        auto movePayload = Serializer::serializeMovePacket(packet);
 
-            auto white = m_whiteSession.lock();
-            auto black = m_blackSession.lock();
+        auto white = whiteSession();
+        auto black = blackSession();
 
-            if (sender == white && black) {
-                black->sendPacket(NetworkMessageType::GAME_MOVE, movePayload);
-            } else if (sender == black && white) {
-                white->sendPacket(NetworkMessageType::GAME_MOVE, movePayload);
-            }
+        // שליחת עדכון התנועה לכל השחקנים המחוברים למשחק (גם ליוזם וגם ליריב)
+        if (white) {
+            white->sendPacket(NetworkMessageType::GAME_MOVE, movePayload);
         }
+        if (black) {
+            black->sendPacket(NetworkMessageType::GAME_MOVE, movePayload);
+        }
+    }
+}
+
+inline void LiveMatch::notifyGameOver() {
+    auto white = whiteSession();
+    auto black = blackSession();
+
+    if (white) {
+        white->sendPacket(NetworkMessageType::GAME_OVER, {});
+    }
+    if (black) {
+        black->sendPacket(NetworkMessageType::GAME_OVER, {});
     }
 }
 
 inline void MatchManager::registerPlayer(std::shared_ptr<NetworkSession> session) {
     std::lock_guard<std::mutex> lock(m_mutex);
 
-    if (!m_waitingPlayers.empty() && m_waitingPlayers.front() == session) {
+    // בדיקת O(1) אמיתית: תופסת שחקן שכבר נמצא בתור בכל מיקום, לא רק בראש.
+    if (m_waitingSet.count(session) > 0) {
         return;
     }
 
-    m_waitingPlayers.push(session);
-    std::cout << "[Lobby] Player queued. Queue size: " << m_waitingPlayers.size() << std::endl;
+    m_waitingQueue.push(session);
+    m_waitingSet.insert(session);
+    std::cout << "[Lobby] Player queued. Queue size: " << m_waitingQueue.size() << std::endl;
 
-    if (m_waitingPlayers.size() >= 2) {
-        auto player1 = m_waitingPlayers.front();
-        m_waitingPlayers.pop();
-        auto player2 = m_waitingPlayers.front();
-        m_waitingPlayers.pop();
+    if (m_waitingQueue.size() >= 2) {
+        auto player1 = m_waitingQueue.front();
+        m_waitingQueue.pop();
+        m_waitingSet.erase(player1);
+
+        auto player2 = m_waitingQueue.front();
+        m_waitingQueue.pop();
+        m_waitingSet.erase(player2);
 
         startNewMatch(player1, player2);
     }
 }
 
 inline void MatchManager::unregisterPlayer(std::shared_ptr<NetworkSession> session) {
-    std::lock_guard<std::mutex> lock(m_mutex);
-    
-    std::queue<std::shared_ptr<NetworkSession>> tempQueue;
-    while (!m_waitingPlayers.empty()) {
-        auto player = m_waitingPlayers.front();
-        m_waitingPlayers.pop();
-        if (player != session) {
-            tempQueue.push(player);
+    std::shared_ptr<LiveMatch> matchToClose;
+
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+
+        // הסרה מתור ההמתנה, אם השחקן עדיין שם.
+        if (m_waitingSet.erase(session) > 0) {
+            std::queue<std::shared_ptr<NetworkSession>> filtered;
+            while (!m_waitingQueue.empty()) {
+                auto player = m_waitingQueue.front();
+                m_waitingQueue.pop();
+                if (player != session) {
+                    filtered.push(player);
+                }
+            }
+            m_waitingQueue = std::move(filtered);
         }
-    }
-    m_waitingPlayers = std::move(tempQueue);
-    
-    std::uint64_t matchId = session->matchId();
-    if (matchId != 0) {
-        auto it = m_matches.find(matchId);
-        if (it != m_matches.end()) {
-            it->second->stop();
-            m_matches.erase(it);
-            std::cout << "[Lobby] Match " << matchId << " cleaned up due to disconnect." << std::endl;
+
+        std::uint64_t matchId = session->matchId();
+        if (matchId != 0) {
+            auto it = m_matches.find(matchId);
+            if (it != m_matches.end()) {
+                matchToClose = it->second;
+            }
         }
+    } // משחררים את המנעול לפני קריאה למשחק, כדי למנוע deadlock:
+      // match->stop() יגרום בסופו של דבר לקריאה חוזרת ל-removeMatch,
+      // שגם היא נועלת את אותו m_mutex.
+
+    if (matchToClose) {
+        auto opponent = (matchToClose->whiteSession() == session)
+            ? matchToClose->blackSession()
+            : matchToClose->whiteSession();
+
+        if (opponent) {
+            opponent->sendPacket(NetworkMessageType::OPPONENT_DISCONNECTED, {});
+        }
+
+        matchToClose->stop(); // יפעיל את ה-callback שמסיר את המשחק מהמפה
+        std::cout << "[Lobby] Match " << matchToClose->matchId()
+                  << " closed due to player disconnect." << std::endl;
     }
 }
 
-inline void MatchManager::startNewMatch(std::shared_ptr<NetworkSession> player1, std::shared_ptr<NetworkSession> player2) {
+inline std::shared_ptr<LiveMatch> MatchManager::startNewMatch(std::shared_ptr<NetworkSession> player1,
+                                                                std::shared_ptr<NetworkSession> player2) {
     std::uint64_t id = m_nextMatchId++;
 
-    std::string startBoard =
+    static const std::string kStartBoard =
         "bR bN bB bQ bK bB bN bR\n"
         "bP bP bP bP bP bP bP bP\n"
         ". . . . . . . .\n"
@@ -6395,9 +6609,9 @@ inline void MatchManager::startNewMatch(std::shared_ptr<NetworkSession> player1,
         "wP wP wP wP wP wP wP wP\n"
         "wR wN wB wQ wK wB wN wR\n";
 
-    auto board = BoardParser::parse(startBoard);
+    auto board = BoardParser::parse(kStartBoard);
     auto ruleEngine = std::make_shared<RuleEngine>(board);
-    
+
     GameConfig config;
     config.allowSimultaneousMovement = true;
     config.enablePremoves = true;
@@ -6406,6 +6620,13 @@ inline void MatchManager::startNewMatch(std::shared_ptr<NetworkSession> player1,
     auto engine = std::make_shared<GameEngine>(board, ruleEngine, config);
     auto match = std::make_shared<LiveMatch>(m_ioContext, id, engine);
 
+    // ברגע שהמשחק יסתיים (בכל דרך), נסיר אותו אוטומטית מהמפה. שומר על
+    // MatchManager כ"מקור האמת" היחיד ל-cleanup, בלי תלות בכך שמישהו
+    // יזכור לקרוא לו באופן ידני מכל נקודת יציאה אפשרית.
+    match->setOnMatchEnded([this](std::uint64_t finishedMatchId) {
+        removeMatch(finishedMatchId);
+    });
+
     player1->setMatchId(id);
     player1->setColor(PlayerColor::White);
 
@@ -6413,24 +6634,27 @@ inline void MatchManager::startNewMatch(std::shared_ptr<NetworkSession> player1,
     player2->setColor(PlayerColor::Black);
 
     match->setPlayers(player1, player2);
-    m_matches[id] = match;
 
-    std::vector<std::uint8_t> payloadWhite(9);
-    std::uint8_t colorWhite = static_cast<std::uint8_t>(PlayerColor::White);
-    std::memcpy(payloadWhite.data(), &id, 8);
-    std::memcpy(payloadWhite.data() + 8, &colorWhite, 1);
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        m_matches[id] = match;
+    }
 
-    std::vector<std::uint8_t> payloadBlack(9);
-    std::uint8_t colorBlack = static_cast<std::uint8_t>(PlayerColor::Black);
-    std::memcpy(payloadBlack.data(), &id, 8);
-    std::memcpy(payloadBlack.data() + 8, &colorBlack, 1);
+    auto buildMatchFoundPayload = [id](PlayerColor color) {
+        std::vector<std::uint8_t> payload;
+        Serializer::writeU64(payload, id);
+        Serializer::writeU8(payload, static_cast<std::uint8_t>(color));
+        return payload;
+    };
 
-    player1->sendPacket(NetworkMessageType::MATCH_FOUND, payloadWhite);
-    player2->sendPacket(NetworkMessageType::MATCH_FOUND, payloadBlack);
+    player1->sendPacket(NetworkMessageType::MATCH_FOUND, buildMatchFoundPayload(PlayerColor::White));
+    player2->sendPacket(NetworkMessageType::MATCH_FOUND, buildMatchFoundPayload(PlayerColor::Black));
 
     match->start();
 
     std::cout << "[MatchManager] Created match " << id << " between two players." << std::endl;
+
+    return match;
 }
 
 } // namespace kungfu
@@ -6443,34 +6667,175 @@ inline void MatchManager::startNewMatch(std::shared_ptr<NetworkSession> player1,
 #include "engine/actions/ActionRequest.hpp"
 #include "engine/actions/ActionResult.hpp"
 #include <cstring>
+#include <cstdint>
+#include <optional>
 #include <vector>
 
 namespace kungfu {
 
+// ============================================================================
+// Serializer
+//
+// אחראי על כל ההמרה בין מבני נתונים בזיכרון לבין רצפי בתים שעוברים ברשת.
+//
+// חשוב: לגבי NetworkMovePacket ו-NetworkHeader אנחנו כותבים/קוראים כל שדה
+// בנפרד (Big-Endian), ולא מעתיקים struct שלם עם memcpy. הסיבה: פריסת
+// הזיכרון של struct (padding, alignment) תלויה בקומפיילר ובפלטפורמה, ואינה
+// מובטחת להיות זהה בין תהליך השרת לתהליך הלקוח. סריאליזציה מפורשת חוסנת
+// אותנו מפני זה ומאפשרת לקליינטים שנכתבים בשפות/פלטפורמות אחרות (כולל Web)
+// לפענח את הפרוטוקול בביטחון.
+//
+// לגבי ActionResult: זהו טיפוס פנימי של מנוע המשחק שאיננו מוגדר בקובץ הזה.
+// כרגע הוא עדיין מועבר בהעתקה גולמית (memcpy), בהנחה ששרת ולקוח משתמשים
+// באותו build של המנוע. אם בעתיד ActionResult ישלח ללקוחות חיצוניים
+// (למשל דפדפן), יש להוסיף לו סריאליזציה מפורשת באותו האופן שנעשה כאן
+// ל-NetworkMovePacket.
+// ============================================================================
 class Serializer {
 public:
-    // תרגום חבילת רשת לבקשת מנוע - תיקון בנאי ללא דיפולט של PlayerAction
+    // ---- כתיבה (Big-Endian) ----
+
+    static void writeU8(std::vector<std::uint8_t>& buf, std::uint8_t v) {
+        buf.push_back(v);
+    }
+
+    static void writeU32(std::vector<std::uint8_t>& buf, std::uint32_t v) {
+        buf.push_back(static_cast<std::uint8_t>(v >> 24));
+        buf.push_back(static_cast<std::uint8_t>(v >> 16));
+        buf.push_back(static_cast<std::uint8_t>(v >> 8));
+        buf.push_back(static_cast<std::uint8_t>(v));
+    }
+
+    static void writeI32(std::vector<std::uint8_t>& buf, std::int32_t v) {
+        writeU32(buf, static_cast<std::uint32_t>(v));
+    }
+
+    static void writeU64(std::vector<std::uint8_t>& buf, std::uint64_t v) {
+        for (int shift = 56; shift >= 0; shift -= 8) {
+            buf.push_back(static_cast<std::uint8_t>(v >> shift));
+        }
+    }
+
+    // ---- קריאה (Big-Endian) ----
+    // כל פונקציית read מקדמת את offset ומחזירה false אם אין מספיק בתים.
+
+    static bool readU8(const std::vector<std::uint8_t>& buf, std::size_t& offset, std::uint8_t& out) {
+        if (offset + 1 > buf.size()) return false;
+        out = buf[offset];
+        offset += 1;
+        return true;
+    }
+
+    static bool readU32(const std::vector<std::uint8_t>& buf, std::size_t& offset, std::uint32_t& out) {
+        if (offset + 4 > buf.size()) return false;
+        out = (static_cast<std::uint32_t>(buf[offset])     << 24) |
+              (static_cast<std::uint32_t>(buf[offset + 1]) << 16) |
+              (static_cast<std::uint32_t>(buf[offset + 2]) << 8)  |
+               static_cast<std::uint32_t>(buf[offset + 3]);
+        offset += 4;
+        return true;
+    }
+
+    static bool readI32(const std::vector<std::uint8_t>& buf, std::size_t& offset, std::int32_t& out) {
+        std::uint32_t raw = 0;
+        if (!readU32(buf, offset, raw)) return false;
+        out = static_cast<std::int32_t>(raw);
+        return true;
+    }
+
+    static bool readU64(const std::vector<std::uint8_t>& buf, std::size_t& offset, std::uint64_t& out) {
+        if (offset + 8 > buf.size()) return false;
+        out = 0;
+        for (int i = 0; i < 8; ++i) {
+            out = (out << 8) | static_cast<std::uint64_t>(buf[offset + i]);
+        }
+        offset += 8;
+        return true;
+    }
+
+    // ---- כותרת + payload -> frame מלא לשליחה ----
+
+    static std::vector<std::uint8_t> buildFrame(NetworkMessageType type,
+                                                  const std::vector<std::uint8_t>& payload) {
+        std::vector<std::uint8_t> frame;
+        frame.reserve(kHeaderSize + payload.size());
+
+        writeU8(frame, static_cast<std::uint8_t>(type));
+        writeU32(frame, static_cast<std::uint32_t>(payload.size()));
+        frame.insert(frame.end(), payload.begin(), payload.end());
+
+        return frame;
+    }
+
+    // ---- NetworkMovePacket ----
+
+    static std::vector<std::uint8_t> serializeMovePacket(const NetworkMovePacket& packet) {
+        std::vector<std::uint8_t> buf;
+        buf.reserve(kMovePacketWireSize);
+
+        writeU64(buf, packet.matchId);
+        writeU64(buf, packet.requestId);
+        writeU8(buf, packet.playerColor);
+        writeI32(buf, packet.from.x);
+        writeI32(buf, packet.from.y);
+        writeI32(buf, packet.to.x);
+        writeI32(buf, packet.to.y);
+
+        return buf;
+    }
+
+    // מחזיר std::nullopt אם ה-payload שגוי/קצר מדי, במקום להתפרק בשקט.
+    static std::optional<NetworkMovePacket> deserializeMovePacket(const std::vector<std::uint8_t>& buf) {
+        if (buf.size() != kMovePacketWireSize) {
+            return std::nullopt;
+        }
+
+        std::size_t offset = 0;
+        NetworkMovePacket packet{};
+
+        bool ok = true;
+        ok &= readU64(buf, offset, packet.matchId);
+        ok &= readU64(buf, offset, packet.requestId);
+        ok &= readU8(buf, offset, packet.playerColor);
+        ok &= readI32(buf, offset, packet.from.x);
+        ok &= readI32(buf, offset, packet.from.y);
+        ok &= readI32(buf, offset, packet.to.x);
+        ok &= readI32(buf, offset, packet.to.y);
+
+        if (!ok) return std::nullopt;
+        return packet;
+    }
+
+    // תרגום חבילת רשת לבקשת מנוע.
+    // בבנאי של Position, הפרמטר הראשון הוא row (y) והשני הוא col (x).
     static ActionRequest deserializeToRequest(const NetworkMovePacket& packet) {
-        // בבנאי של Position, הראשון הוא row (שורה, y) והשני הוא col (עמודה, x)
         Position from(packet.from.y, packet.from.x);
         Position to(packet.to.y, packet.to.x);
-        
-        // אתחול תקין של האקשן באמצעות הבנאי היחיד שקיים עבורו
+
         PlayerAction action(from, to);
 
         return ActionRequest(
-            packet.requestId, 
-            static_cast<PlayerColor>(packet.playerColor), 
+            packet.requestId,
+            static_cast<PlayerColor>(packet.playerColor),
             action
         );
     }
 
-    // תרגום תוצאת מנוע לחבילת רשת - תיקון שגיאת הכתיב ל-ActionStatus::Rejected
-    static ActionResult deserializeToResult(const std::vector<std::uint8_t>& buffer) {
-        ActionResult result(0, ActionStatus::Rejected);
-        if (buffer.size() >= sizeof(ActionResult)) {
-            std::memcpy(&result, buffer.data(), sizeof(ActionResult));
+    // ---- ActionResult ----
+    // ראה הערה בראש הקובץ לגבי ההנחה על ABI משותף.
+
+    static std::vector<std::uint8_t> serializeActionResult(const ActionResult& result) {
+        std::vector<std::uint8_t> buf(sizeof(ActionResult));
+        std::memcpy(buf.data(), &result, sizeof(ActionResult));
+        return buf;
+    }
+
+    static std::optional<ActionResult> deserializeToResult(const std::vector<std::uint8_t>& buffer) {
+        if (buffer.size() < sizeof(ActionResult)) {
+            return std::nullopt;
         }
+        ActionResult result(0, ActionStatus::Rejected);
+        std::memcpy(&result, buffer.data(), sizeof(ActionResult));
         return result;
     }
 };

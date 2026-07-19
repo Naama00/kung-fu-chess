@@ -1,5 +1,7 @@
-// players/ai/ClassicMinimaxStrategy.cpp
 #include "players/ai/ClassicMinimaxStrategy.hpp"
+#include "engine/common/PieceValues.hpp"
+#include "engine/actions/ActionRequest.hpp"
+#include "engine/actions/PlayerAction.hpp"
 #include <algorithm>
 #include <limits>
 
@@ -8,21 +10,12 @@ namespace kungfu {
 // פונקציית עזר פנימית ומהירה להערכת שווי חומרי בלבד ללא הקצאות זיכרון כלל!
 int evaluateMaterialOnly(const view::GameSnapshot& snapshot, PlayerColor aiColor) {
     int score = 0;
-    auto getVal = [](PieceType type) {
-        switch (type) {
-            case PieceType::Queen:  return 900;
-            case PieceType::Rook:   return 500;
-            case PieceType::Bishop: return 300;
-            case PieceType::Knight: return 300;
-            case PieceType::Pawn:   return 100;
-            case PieceType::King:   return 10000;
-            default:                return 0;
-        }
-    };
 
     for (const auto& piece : snapshot.pieces) {
         if (piece.state == PieceState::Captured) continue;
-        int val = getVal(piece.type);
+        
+        // שימוש במחלקה המרכזית החדשה במקום ב-lambda המקומית שהייתה משוכפלת
+        int val = PieceValues::getCentipawnValue(piece.type);
         if (piece.color == aiColor) {
             score += val;
         } else {
@@ -34,6 +27,7 @@ int evaluateMaterialOnly(const view::GameSnapshot& snapshot, PlayerColor aiColor
 
 ClassicMinimaxStrategy::ClassicMinimaxStrategy(int searchDepth, std::mt19937::result_type seed)
     : searchDepth_(searchDepth), rng_(seed) {}
+
 
 ClassicMinimaxStrategy::PieceUndo ClassicMinimaxStrategy::applyMove(
     view::GameSnapshot& snapshot, const Position& from, const Position& to, PlayerColor color) const {
@@ -163,6 +157,6 @@ std::vector<ActionRequest> ClassicMinimaxStrategy::computeActions(const view::Ga
     const auto selected = bestMoves[dist(rng_)];
 
     return { ActionRequest(0, aiColor, PlayerAction(selected.from, selected.to)) };
-}
+};
 
 } // namespace kungfu

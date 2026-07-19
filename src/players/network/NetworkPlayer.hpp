@@ -7,9 +7,11 @@
 #include <mutex>
 #include <string>
 #include <atomic>
+#include <cstdint>
 #include "players/IPlayer.hpp"
 #include "../../server/NetworkMessages.hpp"
-#include "../../engine/actions/ActionResult.hpp" // הוספת ייבוא עבור תוצאות פעולה
+#include "../../engine/actions/ActionRequest.hpp"
+#include "../../engine/actions/ActionResult.hpp"
 
 namespace kungfu
 {
@@ -29,18 +31,23 @@ namespace kungfu
         std::atomic<PlayerColor> m_assignedColor{PlayerColor::White};
         std::atomic<bool> m_connected{false};
 
-        // תור מוגן חוטים לאחסון מהלכים שהגיעו מהשרת
+        // דגלים שמעדכנים את הצד הצרכני (loop המשחק) על אירועים מהשרת
+        // שאינם מהלכים/תוצאות - בלי לחייב אותו לפרסר את זרם ההודעות בעצמו.
+        std::atomic<bool> m_matchEnded{false};
+        std::atomic<bool> m_opponentDisconnected{false};
+
+        // גישה לתורים האלה תמיד מוגנת ב-m_mutex, כולל לוגיקת ה-networking
+        // (שרצה על m_strand) וגם הצרכן (שרץ בד"כ ב-thread של לולאת המשחק).
         std::vector<ActionRequest> m_incomingActions;
-        
-        // תור מוגן חוטים לאחסון תוצאות אימות מהלכים מהשרת
         std::vector<ActionResult> m_incomingResults;
-        
         std::mutex m_mutex;
 
         std::vector<std::uint8_t> m_headerBuffer;
         std::vector<std::uint8_t> m_payloadBuffer;
 
-        std::uint64_t m_nextRequestId = 1;
+        // אטומי כי sendMoveToServer עשוי להיקרא מ-thread שאינו m_strand
+        // (בד"כ מ-thread לולאת המשחק).
+        std::atomic<std::uint64_t> m_nextRequestId{1};
 
     public:
         NetworkPlayer(boost::asio::io_context &ioContext, const std::string &host, const std::string &port);
@@ -50,10 +57,11 @@ namespace kungfu
 
         std::vector<ActionRequest> decideActions(const view::GameSnapshot &snapshot) override;
 
-        // מתודה לשליפת תוצאות האימות וניקוי התור המקומי באותו פריים
-        std::vector<ActionResult> pollResults() {
+        // שליפת תוצאות האימות שהצטברו וניקוי התור המקומי באותו פריים
+        std::vector<ActionResult> pollResults()
+        {
             std::lock_guard<std::mutex> lock(m_mutex);
-            auto results = m_incomingResults;
+            auto results = std::move(m_incomingResults);
             m_incomingResults.clear();
             return results;
         }
@@ -63,6 +71,12 @@ namespace kungfu
         bool isConnected() const { return m_connected; }
         std::uint64_t matchId() const { return m_matchId; }
         PlayerColor assignedColor() const { return m_assignedColor; }
+
+        // true פעם אחת אחרי שהמשחק הסתיים "בטבעיות" (GAME_OVER מהשרת)
+        bool matchEnded() const { return m_matchEnded; }
+
+        // true אם היריב התנתק לפני שהמשחק הסתיים (OPPONENT_DISCONNECTED)
+        bool opponentDisconnected() const { return m_opponentDisconnected; }
 
     private:
         void doConnect();

@@ -4,20 +4,13 @@
 #include "engine/board/IBoard.hpp"
 #include "engine/realtime/RealTimeArbiter.hpp"
 #include "engine/analysis/MoveGenerator.hpp"
+#include "engine/common/PieceValues.hpp" 
 #include <vector>
 
 namespace kungfu {
 
 int PositionEvaluator::getPieceValue(PieceType type) noexcept {
-    switch (type) {
-        case PieceType::Pawn:   return 100;
-        case PieceType::Knight: return 300;
-        case PieceType::Bishop: return 300;
-        case PieceType::Rook:   return 500;
-        case PieceType::Queen:  return 900;
-        case PieceType::King:   return 10000;
-        default:                return 0;
-    }
+    return PieceValues::getCentipawnValue(type);
 }
 
 int PositionEvaluator::evaluate(const view::GameSnapshot& snapshot, PlayerColor evaluatingPlayer) const noexcept {

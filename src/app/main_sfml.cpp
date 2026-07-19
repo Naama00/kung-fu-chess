@@ -45,26 +45,22 @@ int main()
         
         try
         {
-            sfmlRenderer.getAssetManager().loadAsset<SfmlFontAsset>(defaultFontId, "assets/arial.ttf");
+            sfmlRenderer.getAssetManager().loadAsset<SfmlFontAsset>(defaultFontId, "assets/fonts/arial.ttf");
         }
         catch (const std::exception &e)
         {
             std::cerr << "Warning: Could not load default font: " << e.what() << std::endl;
         }
 
-        sfmlRenderer.getAssetManager().loadAsset<SfmlTextureAsset>("wK", "assets/wK.png");
-        sfmlRenderer.getAssetManager().loadAsset<SfmlTextureAsset>("wQ", "assets/wQ.png");
-        sfmlRenderer.getAssetManager().loadAsset<SfmlTextureAsset>("wR", "assets/wR.png");
-        sfmlRenderer.getAssetManager().loadAsset<SfmlTextureAsset>("wB", "assets/wB.png");
-        sfmlRenderer.getAssetManager().loadAsset<SfmlTextureAsset>("wN", "assets/wN.png");
-        sfmlRenderer.getAssetManager().loadAsset<SfmlTextureAsset>("wP", "assets/wP.png");
-
-        sfmlRenderer.getAssetManager().loadAsset<SfmlTextureAsset>("bK", "assets/bK.png");
-        sfmlRenderer.getAssetManager().loadAsset<SfmlTextureAsset>("bQ", "assets/bQ.png");
-        sfmlRenderer.getAssetManager().loadAsset<SfmlTextureAsset>("bR", "assets/bR.png");
-        sfmlRenderer.getAssetManager().loadAsset<SfmlTextureAsset>("bB", "assets/bB.png");
-        sfmlRenderer.getAssetManager().loadAsset<SfmlTextureAsset>("bN", "assets/bN.png");
-        sfmlRenderer.getAssetManager().loadAsset<SfmlTextureAsset>("bP", "assets/bP.png");
+  // טעינת תמונות הכלים לתוך ה-AssetManager בצורה מקוצרת
+        for (const std::string& color : {"w", "b"}) {
+            for (const std::string& type : {"K", "Q", "R", "B", "N", "P"}) {
+                std::string assetId = color + type;
+                sfmlRenderer.getAssetManager().loadAsset<SfmlTextureAsset>(
+                    assetId, "assets/images/" + assetId + ".png"
+                );
+            }
+        }
 
         screenManager.changeScreen(std::make_unique<StartScreen>(screenManager, soundPlayer));
 

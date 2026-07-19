@@ -3,6 +3,7 @@
 
 #include "players/ai/IAIDecisionStrategy.hpp"
 #include "engine/analysis/MoveGenerator.hpp"
+#include "engine/common/PieceValues.hpp" 
 
 namespace kungfu {
 
@@ -14,7 +15,7 @@ protected:
     int evaluateImmediateCapture(const view::GameSnapshot& snapshot, const Position& targetPos) const {
         for (const auto& piece : snapshot.pieces) {
             if (piece.logicalPosition == targetPos && piece.state != PieceState::Captured) {
-                return getPieceValue(piece.type);
+                return PieceValues::getCentipawnValue(piece.type);
             }
         }
         return 0; // תנועה רגילה
@@ -30,18 +31,6 @@ protected:
             }
         }
         return false;
-    }
-
-    int getPieceValue(PieceType type) const {
-        switch (type) {
-            case PieceType::Queen:  return 900;
-            case PieceType::Rook:   return 500;
-            case PieceType::Bishop: return 300;
-            case PieceType::Knight: return 300;
-            case PieceType::Pawn:   return 100;
-            case PieceType::King:   return 10000;
-            default:                return 0;
-        }
     }
 };
 

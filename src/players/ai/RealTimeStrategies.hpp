@@ -61,7 +61,7 @@ public:
 
                 // אם הכלי מאוים, עדיפות למהלכי בריחה למשבצת שאינה מאוימת
                 if (threatened && !isSquareThreatened(snapshot, m.to, aiColor)) {
-                    score += getPieceValue(piece.type) / 2;
+                    score += PieceValues::getCentipawnValue(piece.type) / 2;
                 }
 
                 if (score > bestScore) {
@@ -106,12 +106,12 @@ public:
 
                 // מניעת כניסה של כלי למשבצת מאוימת
                 if (isSquareThreatened(snapshot, m.to, aiColor)) {
-                    score -= getPieceValue(piece.type);
+                    score -= PieceValues::getCentipawnValue(piece.type);
                 }
 
                 // עדיפות עליונה לבריחה מאיומים
                 if (threatened && !isSquareThreatened(snapshot, m.to, aiColor)) {
-                    score += getPieceValue(piece.type);
+                    score += PieceValues::getCentipawnValue(piece.type);
                 }
 
                 // עדיפות מוגברת לתקיפת המלך היריב

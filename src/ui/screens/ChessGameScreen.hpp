@@ -20,6 +20,7 @@
 #include "players/ai/ClassicMinimaxStrategy.hpp"
 #include "players/ai/RealTimeStrategies.hpp"
 #include "players/network/NetworkPlayer.hpp"
+#include "engine/common/PieceValues.hpp" 
 #include <future>
 #include <memory>
 #include <iostream>
@@ -83,17 +84,6 @@ private:
     FooterView m_footerView;
     BoardView m_boardView;
 
-    int getPieceValue(kungfu::PieceType type) const {
-        switch (type) {
-            case kungfu::PieceType::Queen:  return 9;
-            case kungfu::PieceType::Rook:   return 5;
-            case kungfu::PieceType::Bishop: return 3;
-            case kungfu::PieceType::Knight: return 3;
-            case kungfu::PieceType::Pawn:   return 1;
-            default:                        return 0;
-        }
-    }
-
     kungfu::PieceType getPieceTypeAt(const kungfu::Position& pos) const {
         if (auto p = m_gameEngine->getBoard()->pieceAt(pos)) return p.value()->type();
         if (auto p = m_gameEngine->getArbiter().getPieceInTransitAt(pos)) return p.value()->type();
@@ -101,19 +91,24 @@ private:
     }
 
     int calculatePlayerScore(kungfu::PlayerColor color) const {
-        if (!m_gameEngine || !m_gameEngine->getBoard()) return 0;
-        int total = 0;
-        for (const auto &piece : m_gameEngine->getBoard()->pieces()) {
-            if (piece && piece->color() == color && piece->state() != kungfu::PieceState::Captured) 
-                total += getPieceValue(piece->type());
+    if (!m_gameEngine || !m_gameEngine->getBoard()) return 0;
+    int total = 0;
+    
+    // חישוב ניקוד הכלים שעל הלוח
+    for (const auto &piece : m_gameEngine->getBoard()->pieces()) {
+        if (piece && piece->color() == color && piece->state() != kungfu::PieceState::Captured) {
+            total += kungfu::PieceValues::getStandardValue(piece->type());
         }
-        for (const auto &motion : m_gameEngine->getArbiter().activeMotions()) {
-            auto piece = motion.piece();
-            if (piece && piece->color() == color && piece->state() == kungfu::PieceState::Airborne) 
-                total += getPieceValue(piece->type());
-        }
-        return total;
     }
+    // חישוב ניקוד הכלים שנמצאים כרגע בעיצומו של מהלך מעוף באוויר
+    for (const auto &motion : m_gameEngine->getArbiter().activeMotions()) {
+        auto piece = motion.piece();
+        if (piece && piece->color() == color && piece->state() == kungfu::PieceState::Airborne) {
+            total += kungfu::PieceValues::getStandardValue(piece->type());
+        }
+    }
+    return total;
+}
 
     std::string getMoveNotationString(kungfu::PieceType type, const BoardPos &from, const BoardPos &to) const {
         char pieceChar = kungfu::PieceTokenCodec::toChar(type);

@@ -60,19 +60,14 @@ int main() {
         screenManager.changeScreen(std::make_unique<StartScreen>(screenManager));
 
         // טעינת תמונות הכלים לתוך ה-AssetManager של ה-Renderer.
-        imgRenderer.getAssetManager().loadAsset<ImgTextureAsset>("wK", "assets/wK.png");
-        imgRenderer.getAssetManager().loadAsset<ImgTextureAsset>("wQ", "assets/wQ.png");
-        imgRenderer.getAssetManager().loadAsset<ImgTextureAsset>("wR", "assets/wR.png");
-        imgRenderer.getAssetManager().loadAsset<ImgTextureAsset>("wB", "assets/wB.png");
-        imgRenderer.getAssetManager().loadAsset<ImgTextureAsset>("wN", "assets/wN.png");
-        imgRenderer.getAssetManager().loadAsset<ImgTextureAsset>("wP", "assets/wP.png");
-
-        imgRenderer.getAssetManager().loadAsset<ImgTextureAsset>("bK", "assets/bK.png");
-        imgRenderer.getAssetManager().loadAsset<ImgTextureAsset>("bQ", "assets/bQ.png");
-        imgRenderer.getAssetManager().loadAsset<ImgTextureAsset>("bR", "assets/bR.png");
-        imgRenderer.getAssetManager().loadAsset<ImgTextureAsset>("bB", "assets/bB.png");
-        imgRenderer.getAssetManager().loadAsset<ImgTextureAsset>("bN", "assets/bN.png");
-        imgRenderer.getAssetManager().loadAsset<ImgTextureAsset>("bP", "assets/bP.png");
+        for (const std::string& color : {"w", "b"}) {
+            for (const std::string& type : {"K", "Q", "R", "B", "N", "P"}) {
+                std::string assetId = color + type;
+                imgRenderer.getAssetManager().loadAsset<ImgTextureAsset>(
+                    assetId, "assets/images/" + assetId + ".png"
+                );
+            }
+        }
 
         // הצגת פריים ריק ראשוני כדי שהחלון יהיה גלוי לפני הכניסה ללולאה.
         renderer.presentFrame();
