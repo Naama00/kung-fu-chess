@@ -1,7 +1,8 @@
-// server/NetworkSession.cpp
+// src/server/network/NetworkSession.cpp
 #include "NetworkSession.hpp"
 #include "Serializer.hpp"
-#include "MatchManager.hpp"
+#include "../match/MatchManager.hpp"
+#include "../match/LiveMatch.hpp"
 #include <iostream>
 
 namespace kungfu {
@@ -24,7 +25,6 @@ void NetworkSession::start() {
     updateActivity();
 }
 
-// שליחת חבילה אסינכרונית דרך ה-Socket המשותף אל כתובת היעד של הלקוח
 void NetworkSession::sendPacket(NetworkMessageType type, const std::vector<std::uint8_t>& payload) {
     auto frame = std::make_shared<std::vector<std::uint8_t>>(Serializer::buildFrame(type, payload));
     auto self = shared_from_this();
@@ -103,5 +103,8 @@ void NetworkSession::processMessage(NetworkMessageType type, const std::vector<s
 void NetworkSession::handleDisconnect() {
     m_matchManager.unregisterPlayer(shared_from_this());
 }
+
+std::chrono::steady_clock::time_point NetworkSession::lastActivity() const { return m_lastActivity; }
+void NetworkSession::updateActivity() { m_lastActivity = std::chrono::steady_clock::now(); }
 
 } // namespace kungfu

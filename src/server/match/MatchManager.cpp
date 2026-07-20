@@ -1,15 +1,19 @@
+// src/server/match/MatchManager.cpp
 #include "MatchManager.hpp"
-#include "NetworkSession.hpp"
+#include "../network/NetworkSession.hpp"
 #include "LiveMatch.hpp"
-#include "Serializer.hpp"
-#include "engine/io/BoardParser.hpp"
-#include "engine/rules/RuleEngine.hpp"
-#include "engine/common/GameConfig.hpp"
+#include "MatchFactory.hpp"
+#include "../network/Serializer.hpp"
 #include <algorithm>
 #include <iostream>
 #include <memory>
 
 namespace kungfu {
+
+MatchManager::MatchManager(boost::asio::io_context& ioContext)
+    : m_ioContext(ioContext), m_matchmakingTimer(ioContext) {
+    scheduleMatchmakingTick();
+}
 
 void MatchManager::scheduleMatchmakingTick() {
     m_matchmakingTimer.expires_after(std::chrono::seconds(1));
@@ -103,30 +107,44 @@ void MatchManager::runMatchmakingCycle() {
     m_waitingPool = std::move(remainingPlayers);
 }
 
+std::shared_ptr<LiveMatch> MatchManager::getMatch(std::uint64_t matchId) {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    auto it = m_matches.find(matchId);
+    if (it != m_matches.end()) {
+        return it->second;
+    }
+    return nullptr;
+}
+
+void MatchManager::removeMatch(std::uint64_t matchId) {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    if (m_matches.erase(matchId) > 0) {
+        std::cout << "[MatchManager] Match " << matchId << " removed after completion." << std::endl;
+    }
+}
+
+std::shared_ptr<LiveMatch> MatchManager::findActiveMatchForUser(const std::string& username) {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    for (const auto& pair : m_matches) {
+        auto match = pair.second;
+        if (match->isWaitingForReconnection()) {
+            if (match->isWhiteDisconnected() && match->whiteUsername() == username) {
+                return match;
+            }
+            if (match->isBlackDisconnected() && match->blackUsername() == username) {
+                return match;
+            }
+        }
+    }
+    return nullptr;
+}
+
 std::shared_ptr<LiveMatch> MatchManager::startNewMatch(std::shared_ptr<NetworkSession> player1,
                                                        std::shared_ptr<NetworkSession> player2) {
     std::uint64_t id = m_nextMatchId++;
 
-    static const std::string kStartBoard =
-        "bR bN bB bQ bK bB bN bR\n"
-        "bP bP bP bP bP bP bP bP\n"
-        ". . . . . . . .\n"
-        ". . . . . . . .\n"
-        ". . . . . . . .\n"
-        ". . . . . . . .\n"
-        "wP wP wP wP wP wP wP wP\n"
-        "wR wN wB wQ wK wB wN wR\n";
-
-    auto board = BoardParser::parse(kStartBoard);
-    auto ruleEngine = std::make_shared<RuleEngine>(board);
-
-    GameConfig config;
-    config.allowSimultaneousMovement = true;
-    config.enablePremoves = true;
-    config.allowJumping = true;
-
-    auto engine = std::make_shared<GameEngine>(board, ruleEngine, config);
-    auto match = std::make_shared<LiveMatch>(m_ioContext, id, engine);
+    // Standard Match construction delegated cleanly to MatchFactory
+    auto match = MatchFactory::createStandardMatch(m_ioContext, id, player1, player2);
 
     match->setOnMatchEnded([this](std::uint64_t finishedMatchId) {
         removeMatch(finishedMatchId);
@@ -137,8 +155,6 @@ std::shared_ptr<LiveMatch> MatchManager::startNewMatch(std::shared_ptr<NetworkSe
 
     player2->setMatchId(id);
     player2->setColor(PlayerColor::Black);
-
-    match->setPlayers(player1, player2);
 
     {
         std::lock_guard<std::mutex> lock(m_mutex);

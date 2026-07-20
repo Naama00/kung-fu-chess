@@ -1,4 +1,4 @@
-// server/NetworkSession.hpp
+// src/server/network/NetworkSession.hpp
 #pragma once
 
 #include <boost/asio.hpp>
@@ -13,13 +13,12 @@
 namespace kungfu {
 
 using boost::asio::ip::udp;
-
 class MatchManager;
 
 class NetworkSession : public std::enable_shared_from_this<NetworkSession> {
 private:
-    udp::socket& m_serverSocket; // הפניה ל-Socket המרכזי של השרת
-    udp::endpoint m_remoteEndpoint; // נקודת הקצה של הלקוח
+    udp::socket& m_serverSocket; 
+    udp::endpoint m_remoteEndpoint; 
     boost::asio::strand<boost::asio::any_io_executor> m_strand;
     MatchManager& m_matchManager;
     
@@ -30,7 +29,6 @@ private:
     int m_rating = 1200;
     bool m_isAuthenticated = false;
 
-    // מעקב פעילות לצורך זיהוי ניתוקים
     std::chrono::steady_clock::time_point m_lastActivity;
 
 public:
@@ -48,12 +46,11 @@ public:
     void start();
     void sendPacket(NetworkMessageType type, const std::vector<std::uint8_t>& payload);
 
-    // עיבוד הודעה שהתקבלה מהשרת המרכזי
     void processMessage(NetworkMessageType type, const std::vector<std::uint8_t>& payload);
     void handleDisconnect();
 
-    std::chrono::steady_clock::time_point lastActivity() const { return m_lastActivity; }
-    void updateActivity() { m_lastActivity = std::chrono::steady_clock::now(); }
+    std::chrono::steady_clock::time_point lastActivity() const;
+    void updateActivity();
 };
 
 } // namespace kungfu

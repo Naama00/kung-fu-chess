@@ -1,3 +1,4 @@
+# CMakeLists.txt
 cmake_minimum_required(VERSION 3.16)
 
 project(kung_fu_chess LANGUAGES CXX)
@@ -26,21 +27,27 @@ if(NOT SFML_DIR)
     set(SFML_DIR "C:/SFML/lib/cmake/SFML")
 endif()
 
+# Find external visual, system and utility frameworks
 find_package(OpenCV REQUIRED)
 find_package(SFML 3 REQUIRED COMPONENTS Graphics Window System Audio)
 
-include(FetchContent)
+# Find SQLite3 (using standard CMake integration)
+find_package(SQLite3 REQUIRED)
 
+# Find libsodium (vcpkg exports libsodium as "unofficial-sodium" in CONFIG mode)
+find_package(unofficial-sodium CONFIG REQUIRED)
+
+# Setup unit-testing framework (Catch2)
+include(FetchContent)
 FetchContent_Declare(
     Catch2
     GIT_REPOSITORY https://github.com/catchorg/Catch2.git
     GIT_TAG v3.7.1
 )
-
 FetchContent_MakeAvailable(Catch2)
 
 # ------------------------------------------------------------------------------
-# Sources
+# Source File Globbing (Keeps build script clean and dynamically updated)
 # ------------------------------------------------------------------------------
 
 file(GLOB_RECURSE ENGINE_SOURCES CONFIGURE_DEPENDS
@@ -60,67 +67,59 @@ file(GLOB_RECURSE SFML_BACKEND_SOURCES CONFIGURE_DEPENDS
     src/graphics/sfml/*.cpp
 )
 
+# Globbing all server implementation files (excluding main.cpp to prevent link errors in tests)
+file(GLOB_RECURSE SERVER_CORE_SOURCES CONFIGURE_DEPENDS
+    src/server/network/*.cpp
+    src/server/match/*.cpp
+    src/server/persistence/*.cpp
+)
+
 # ------------------------------------------------------------------------------
-# Engine
+# Target 1: Core Engine Library
 # ------------------------------------------------------------------------------
 
 add_library(kungfu_engine ${ENGINE_SOURCES})
-
-# הגדרת נתיב ברירת מחדל ל-Boost (כך שהקוד יתקמפל תמיד, גם בלי להגדיר בטרמינל)
-if(NOT Boost_INCLUDE_DIR)
-    set(Boost_INCLUDE_DIR "C:/local/boost_1_84_0")
-endif()
-
-# עדכון נתיבי החיפוש של המנוע
 target_include_directories(kungfu_engine PUBLIC src ${Boost_INCLUDE_DIR})
 
 # ------------------------------------------------------------------------------
-# Tests
+# Target 2: Server Core Library (Decoupled Shared State - DRY Principle)
 # ------------------------------------------------------------------------------
 
-add_executable(kungfu_tests
-    ${TEST_SOURCES}
+add_library(kungfu_server_core STATIC ${SERVER_CORE_SOURCES})
+target_include_directories(kungfu_server_core PUBLIC src/server)
+
+# Propagate dependencies automatically to anyone linking against the server core
+# Using the unofficial-sodium::sodium target exported by vcpkg
+target_link_libraries(kungfu_server_core PUBLIC 
+    kungfu_engine 
+    SQLite::SQLite3 
+    unofficial-sodium::sodium
 )
+
+# ------------------------------------------------------------------------------
+# Target 3: Server Executable (Uses the shared Server Core)
+# ------------------------------------------------------------------------------
+
+add_executable(kungfu_server src/server/main.cpp)
+target_link_libraries(kungfu_server PRIVATE kungfu_server_core)
+
+# ------------------------------------------------------------------------------
+# Target 4: Game Tests Executable (Lego-like clean inclusion of Server Core)
+# ------------------------------------------------------------------------------
+
+add_executable(kungfu_tests ${TEST_SOURCES})
 
 target_link_libraries(kungfu_tests PRIVATE
     kungfu_engine
+    kungfu_server_core
     Catch2::Catch2WithMain
-)
-
-target_sources(kungfu_tests PRIVATE
-    src/server/NetworkSession.cpp
-    src/server/DatabaseManager.cpp
-    src/server/LiveMatch.cpp
-    src/server/MatchManager.cpp
 )
 
 enable_testing()
 add_test(NAME unit_tests COMMAND kungfu_tests)
 
 # ------------------------------------------------------------------------------
-# Server executable (ההגדרה החדשה לשרת המשחק)
-# ------------------------------------------------------------------------------
-
-add_executable(kungfu_server
-    src/server/main.cpp
-    src/server/NetworkSession.cpp
-    src/server/DatabaseManager.cpp
-    src/server/LiveMatch.cpp
-    src/server/MatchManager.cpp
-)
-
-# הוספת תיקיית השרת המקומית לנתיבי החיפוש של השרת
-target_include_directories(kungfu_server PRIVATE
-    src/server
-)
-
-# קישור השרת למנוע המשחק (יורש אוטומטית את Boost ואת התיקייה src מתוך kungfu_engine)
-target_link_libraries(kungfu_server PRIVATE
-    kungfu_engine
-)
-
-# ------------------------------------------------------------------------------
-# OpenCV executable
+# Target 5: OpenCV Client Executable
 # ------------------------------------------------------------------------------
 
 add_executable(kungfu_game_opencv
@@ -139,7 +138,7 @@ target_link_libraries(kungfu_game_opencv PRIVATE
 )
 
 # ------------------------------------------------------------------------------
-# SFML executable
+# Target 6: SFML Client Executable
 # ------------------------------------------------------------------------------
 
 add_executable(kungfu_game_sfml
@@ -158,11 +157,10 @@ target_link_libraries(kungfu_game_sfml PRIVATE
 )
 
 # ------------------------------------------------------------------------------
-# Windows DLL Copy
+# Windows DLL Post-Build Copy Actions
 # ------------------------------------------------------------------------------
 
 if(WIN32)
-
     file(GLOB OPENCV_DLLS
         "${OpenCV_DIR}/x64/vc16/bin/opencv_world*.dll"
     )
@@ -176,7 +174,6 @@ if(WIN32)
     endforeach()
 
     if(SFML_DIR)
-
         file(GLOB SFML_DLLS
             "${SFML_DIR}/../../bin/sfml-*.dll"
             "${SFML_DIR}/bin/sfml-*.dll"
@@ -189,7 +186,5 @@ if(WIN32)
                     $<TARGET_FILE_DIR:kungfu_game_sfml>
             )
         endforeach()
-
     endif()
-
 endif()

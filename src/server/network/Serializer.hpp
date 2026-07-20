@@ -1,6 +1,6 @@
 #pragma once
 
-#include "NetworkMessages.hpp"
+#include "server/network/NetworkMessages.hpp"
 #include "engine/actions/ActionRequest.hpp"
 #include "engine/actions/ActionResult.hpp"
 #include <cstring>
@@ -13,24 +13,27 @@ namespace kungfu {
 // ============================================================================
 // Serializer
 //
-// אחראי על כל ההמרה בין מבני נתונים בזיכרון לבין רצפי בתים שעוברים ברשת.
+// Responsible for all conversion between in-memory data structures and the
+// byte sequences that travel over the network.
 //
-// חשוב: לגבי NetworkMovePacket ו-NetworkHeader אנחנו כותבים/קוראים כל שדה
-// בנפרד (Big-Endian), ולא מעתיקים struct שלם עם memcpy. הסיבה: פריסת
-// הזיכרון של struct (padding, alignment) תלויה בקומפיילר ובפלטפורמה, ואינה
-// מובטחת להיות זהה בין תהליך השרת לתהליך הלקוח. סריאליזציה מפורשת חוסנת
-// אותנו מפני זה ומאפשרת לקליינטים שנכתבים בשפות/פלטפורמות אחרות (כולל Web)
-// לפענח את הפרוטוקול בביטחון.
+// Important: for NetworkMovePacket and the packet header, we write/read each
+// field individually (Big-Endian), rather than copying a whole struct via
+// memcpy. Reason: a struct's memory layout (padding, alignment) depends on
+// the compiler and platform, and is not guaranteed to be identical between
+// the server process and a client process. Explicit serialization protects
+// us from this and lets clients written in other languages/platforms
+// (including a web client) decode the protocol reliably.
 //
-// לגבי ActionResult: זהו טיפוס פנימי של מנוע המשחק שאיננו מוגדר בקובץ הזה.
-// כרגע הוא עדיין מועבר בהעתקה גולמית (memcpy), בהנחה ששרת ולקוח משתמשים
-// באותו build של המנוע. אם בעתיד ActionResult ישלח ללקוחות חיצוניים
-// (למשל דפדפן), יש להוסיף לו סריאליזציה מפורשת באותו האופן שנעשה כאן
-// ל-NetworkMovePacket.
+// Regarding ActionResult: this is an internal game-engine type not defined in
+// this file. It is currently still transferred via a raw copy (memcpy), under
+// the assumption that server and client share the same engine build. If
+// ActionResult is ever sent to external clients (e.g. a browser), it should
+// get explicit field-by-field serialization the same way NetworkMovePacket
+// does.
 // ============================================================================
 class Serializer {
 public:
-    // ---- כתיבה (Big-Endian) ----
+    // ---- Writing (Big-Endian) ----
 
     static void writeU8(std::vector<std::uint8_t>& buf, std::uint8_t v) {
         buf.push_back(v);
@@ -53,8 +56,9 @@ public:
         }
     }
 
-    // ---- קריאה (Big-Endian) ----
-    // כל פונקציית read מקדמת את offset ומחזירה false אם אין מספיק בתים.
+    // ---- Reading (Big-Endian) ----
+    // Every read function advances offset and returns false if there aren't
+    // enough bytes remaining.
 
     static bool readU8(const std::vector<std::uint8_t>& buf, std::size_t& offset, std::uint8_t& out) {
         if (offset + 1 > buf.size()) return false;
@@ -90,7 +94,7 @@ public:
         return true;
     }
 
-    // ---- כותרת + payload -> frame מלא לשליחה ----
+    // ---- Header + payload -> full frame ready to send ----
 
     static std::vector<std::uint8_t> buildFrame(NetworkMessageType type,
                                                   const std::vector<std::uint8_t>& payload) {
@@ -121,7 +125,8 @@ public:
         return buf;
     }
 
-    // מחזיר std::nullopt אם ה-payload שגוי/קצר מדי, במקום להתפרק בשקט.
+    // Returns std::nullopt if the payload is malformed/too short, instead of
+    // silently reading garbage.
     static std::optional<NetworkMovePacket> deserializeMovePacket(const std::vector<std::uint8_t>& buf) {
         if (buf.size() != kMovePacketWireSize) {
             return std::nullopt;
@@ -143,8 +148,9 @@ public:
         return packet;
     }
 
-    // תרגום חבילת רשת לבקשת מנוע.
-    // בבנאי של Position, הפרמטר הראשון הוא row (y) והשני הוא col (x).
+    // Translates a network packet into an engine action request.
+    // Note: in the Position constructor, the first parameter is row (y) and
+    // the second is col (x).
     static ActionRequest deserializeToRequest(const NetworkMovePacket& packet) {
         Position from(packet.from.y, packet.from.x);
         Position to(packet.to.y, packet.to.x);
@@ -159,7 +165,7 @@ public:
     }
 
     // ---- ActionResult ----
-    // ראה הערה בראש הקובץ לגבי ההנחה על ABI משותף.
+    // See the note at the top of this file regarding the shared-ABI assumption.
 
     static std::vector<std::uint8_t> serializeActionResult(const ActionResult& result) {
         std::vector<std::uint8_t> buf(sizeof(ActionResult));
@@ -178,7 +184,8 @@ public:
 
     static std::vector<std::uint8_t> serializeAuthRequest(const std::string& username, const std::string& password) {
         std::vector<std::uint8_t> buf;
-        // אריזה: 4 בתים אורך המשתמש + המשתמש עצמו, ואז 4 בתים אורך סיסמה + הסיסמה עצמה
+        // Layout: 4-byte username length + username bytes, then 4-byte
+        // password length + password bytes.
         writeU32(buf, static_cast<std::uint32_t>(username.size()));
         for (char c : username) buf.push_back(static_cast<std::uint8_t>(c));
 

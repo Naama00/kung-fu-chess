@@ -1,7 +1,7 @@
 // players/network/NetworkPlayer.cpp
 #include "NetworkPlayer.hpp"
-#include "../../server/Serializer.hpp"
-#include "../../server/ClientAuth.hpp"
+#include "../../server/network/Serializer.hpp" // Updated relative include path
+#include "ClientAuth.hpp"                       // Updated to local inclusion (now located in players/network/)
 #include <iostream>
 
 namespace kungfu
@@ -53,7 +53,7 @@ namespace kungfu
             sendJoinRequest();
             startReceive();
             startHeartbeat();
-            startRetryTimer(); // הפעלת טיימר אבטחת הגעה
+            startRetryTimer(); 
         } else {
             std::cerr << "[Client] UDP Connection failed: " << ec.message() << std::endl;
             m_connected = false;
@@ -163,7 +163,7 @@ namespace kungfu
                     m_incomingResults.push_back(*result);
                 }
 
-                // הסרת המהלך מתור הבדיקה (Strand-Safe)
+                // Remove the confirmed request from pending queue
                 std::uint64_t reqId = result->requestId;
                 auto self = shared_from_this();
                 boost::asio::post(m_strand, [self, reqId]() {
@@ -208,7 +208,7 @@ namespace kungfu
 
         auto self = shared_from_this();
         boost::asio::post(m_strand, [self, packet]() {
-            // שמירת המהלך במפת הממתינים המאובטחת
+            // Save inside the tracking map for reliable execution check
             PendingMove pm{packet, std::chrono::steady_clock::now(), 0};
             self->m_pendingMoves[packet.requestId] = pm;
 
@@ -243,7 +243,6 @@ namespace kungfu
             }));
     }
 
-    // הפעלת טיימר סריקת מהלכים אבודים כל 100ms
     void NetworkPlayer::startRetryTimer()
     {
         auto self = shared_from_this();
@@ -257,13 +256,12 @@ namespace kungfu
             }));
     }
 
-    // סריקת המהלכים וביצוע שידור חוזר במקרה של איבוד חבילה
     void NetworkPlayer::checkAndRetryMoves()
     {
         auto now = std::chrono::steady_clock::now();
         for (auto& pair : m_pendingMoves) {
             auto& pm = pair.second;
-            // אם עברו מעל 200ms מרגע השליחה האחרון
+            // Retry if no server confirmation was received within 200ms
             if (now - pm.lastSent >= std::chrono::milliseconds(200)) {
                 if (pm.retries >= 5) {
                     std::cerr << "[Client] Move request " << pm.packet.requestId 

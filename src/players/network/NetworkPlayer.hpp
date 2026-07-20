@@ -11,7 +11,7 @@
 #include <cstdint>
 #include <chrono>
 #include "players/IPlayer.hpp"
-#include "../../server/NetworkMessages.hpp"
+#include "../../server/network/NetworkMessages.hpp" // Updated relative include path
 #include "../../engine/actions/ActionRequest.hpp"
 #include "../../engine/actions/ActionResult.hpp"
 
@@ -36,7 +36,7 @@ namespace kungfu
         std::atomic<bool> m_matchEnded{false};
         std::atomic<bool> m_opponentDisconnected{false};
 
-        // תורים המשותפים עם ה-UI thread (מוגנים ב-Mutex)
+        // Shared action/result queues accessed by the UI thread (protected by m_mutex)
         std::vector<ActionRequest> m_incomingActions;
         std::vector<ActionResult> m_incomingResults;
         std::mutex m_mutex;
@@ -47,11 +47,11 @@ namespace kungfu
         std::atomic<bool> m_isOpponentDisconnected{false};
         std::atomic<int> m_disconnectCountdown{20};
 
-        // טיימרים
+        // Network timers
         boost::asio::steady_timer m_heartbeatTimer;
-        boost::asio::steady_timer m_retryTimer; // טיימר לבדיקת איבודי חבילות
+        boost::asio::steady_timer m_retryTimer; // Reliable delivery check timer
 
-        // מבנה נתונים למהלכים הממתינים לאישור (מנוהל רק על ה-Strand - אין צורך בנעילה)
+        // Moves awaiting server confirmation (managed strictly on the Strand thread context)
         struct PendingMove {
             NetworkMovePacket packet;
             std::chrono::steady_clock::time_point lastSent;
@@ -86,7 +86,7 @@ namespace kungfu
         
         void startHeartbeat();
         
-        // מנגנון אבטחת הגעה (Application-level ACKs)
+        // Application-level ACKs and reliability mechanisms
         void startRetryTimer();
         void checkAndRetryMoves();
     };

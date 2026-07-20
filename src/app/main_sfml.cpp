@@ -5,10 +5,10 @@
 #include "ui/framework/IRenderer.hpp"
 #include "ui/framework/IInputTranslator.hpp"
 #include "graphics/sfml/SfmlSoundPlayer.hpp"
-#include "ui/screens/LoginScreen.hpp" // ייבוא מסך ההתחברות החדש
-#include "server/NetworkMessages.hpp"
-#include "server/Serializer.hpp"
-#include "server/ClientAuth.hpp"
+#include "ui/screens/LoginScreen.hpp" 
+#include "server/network/NetworkMessages.hpp"
+#include "server/network/Serializer.hpp"   
+#include "players/network/ClientAuth.hpp"    
 #include <chrono>
 #include <memory>
 #include <iostream>

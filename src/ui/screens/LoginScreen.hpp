@@ -4,8 +4,8 @@
 #include "ui/framework/ISoundPlayer.hpp"
 #include "ui/screens/StartScreen.hpp"
 #include "ui/framework/ScreenManager.hpp"
-#include "server/Serializer.hpp"
-#include "server/ClientAuth.hpp"
+#include "server/network/Serializer.hpp"        
+#include "players/network/ClientAuth.hpp"      
 #include <future>
 #include <string>
 #include <vector>

@@ -3,8 +3,9 @@
 #include <thread>
 #include <chrono>
 #include <memory>
-#include "server/NetworkServer.hpp"
-#include "server/MatchManager.hpp"
+#include <iostream> 
+#include "server/network/NetworkServer.hpp"
+#include "server/match/MatchManager.hpp"
 #include "players/network/NetworkPlayer.hpp"
 
 using namespace kungfu;
