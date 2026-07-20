@@ -10,6 +10,8 @@
 #include "engine/realtime/RealTimeArbiter.hpp"
 #include "engine/common/GameConfig.hpp"
 #include "engine/common/ArrivalEvent.hpp"
+#include "engine/events/GameEvents.hpp"
+#include "ui/framework/EventBus.hpp"
 #include <memory>
 #include <vector>
 #include <string>
@@ -24,7 +26,8 @@ public:
     GameEngine(std::shared_ptr<IBoard> board,
                std::shared_ptr<RuleEngine> ruleEngine,
                GameConfig config = GameConfig{},
-               std::shared_ptr<IPromotionRule> promotionRule = std::make_shared<ChessPromotionRule>()) noexcept;
+               std::shared_ptr<IPromotionRule> promotionRule = std::make_shared<ChessPromotionRule>(),
+               std::shared_ptr<EventBus> eventBus = std::make_shared<EventBus>()) noexcept;
 
     MoveResult requestMove(const Position& from, const Position& to) override;
     std::vector<ActionResult> processActionRequests(const std::vector<ActionRequest>& requests) override;
@@ -59,7 +62,7 @@ private:
     PlayerColor currentTurn_ = PlayerColor::White;
     PiecePtr pendingTurnPiece_;   
     std::vector<MoveResult> premoveFailures_;
-
+    std::shared_ptr<EventBus> eventBus_;    
     std::vector<std::shared_ptr<IGameObserver>> observers_; // רשימת המשקיפים
 };
 

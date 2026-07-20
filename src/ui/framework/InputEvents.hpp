@@ -1,4 +1,4 @@
-// קובץ זה מגדיר את אירועי המקלדת והעכבר הלוגיים בצורה מנותקת לחלוטין מהספרייה הגרפית
+// ui/framework/InputEvents.hpp
 #pragma once
 #include <cstdint>
 
@@ -16,13 +16,16 @@ struct Color {
     std::uint8_t a = 255;
 };
 
-// הגדרת מקשים גנריים התואמת את השימוש ב-Translator וב-main
+// הגדרת מקשים גנריים מורחבת לתמיכה בהקלדה
 enum class Key {
     Unknown,
     Escape,
     Space,
     W, S, A, D,
-    Left, Right
+    Left, Right,
+    Backspace,
+    Enter,
+    Tab
 };
 
 // הגדרת כפתורי עכבר
@@ -39,7 +42,7 @@ struct KeyEvent {
     int rawCode = 0; 
 };
 
-// נתונים עבור אירועי עכבר - משתמשים בקואורדינטות לוגיות בלבד
+// נתונים עבור אירועי עכבר
 struct MouseEvent {
     enum class Action { Press, Release, Move };
     Action action;
@@ -48,7 +51,7 @@ struct MouseEvent {
     float logicalY;
 };
 
-// אירוע קלט מאוחד המאפשר גישה נוחה וישירה לשדות
+// אירוע קלט מאוחד
 struct InputEvent {
     enum class Type { Mouse, Keyboard };
     Type type;

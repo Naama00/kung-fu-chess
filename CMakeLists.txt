@@ -6,6 +6,14 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
+if(WIN32)
+    add_compile_definitions(_WIN32_WINNT=0x0601)
+endif()
+
+if(MSVC)
+    add_compile_options(/FS)
+endif()
+
 # ------------------------------------------------------------------------------
 # Dependencies
 # ------------------------------------------------------------------------------
@@ -79,6 +87,13 @@ target_link_libraries(kungfu_tests PRIVATE
     Catch2::Catch2WithMain
 )
 
+target_sources(kungfu_tests PRIVATE
+    src/server/NetworkSession.cpp
+    src/server/DatabaseManager.cpp
+    src/server/LiveMatch.cpp
+    src/server/MatchManager.cpp
+)
+
 enable_testing()
 add_test(NAME unit_tests COMMAND kungfu_tests)
 
@@ -88,6 +103,10 @@ add_test(NAME unit_tests COMMAND kungfu_tests)
 
 add_executable(kungfu_server
     src/server/main.cpp
+    src/server/NetworkSession.cpp
+    src/server/DatabaseManager.cpp
+    src/server/LiveMatch.cpp
+    src/server/MatchManager.cpp
 )
 
 # הוספת תיקיית השרת המקומית לנתיבי החיפוש של השרת

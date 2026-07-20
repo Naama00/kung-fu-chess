@@ -11,12 +11,14 @@ namespace kungfu {
 GameEngine::GameEngine(std::shared_ptr<IBoard> board,
                        std::shared_ptr<RuleEngine> ruleEngine,
                        GameConfig config,
-                       std::shared_ptr<IPromotionRule> promotionRule) noexcept
+                       std::shared_ptr<IPromotionRule> promotionRule,
+                       std::shared_ptr<EventBus> eventBus) noexcept
     : board_(std::move(board))
     , ruleEngine_(std::move(ruleEngine))
     , promotionRule_(std::move(promotionRule))
     , config_(config)
-    , arbiter_(board_, config_) {}
+    , arbiter_(board_, config_)
+    , eventBus_(std::move(eventBus)) {}
 
 MoveResult GameEngine::requestMove(const Position& from, const Position& to) {
     if (gameOver_) {
@@ -146,13 +148,41 @@ void GameEngine::wait(int ms) noexcept {
         }
         return promoted;
     };
-    auto events = arbiter_.advanceTime(ms, currentTimeMs_, promotionCallback);
+      auto events = arbiter_.advanceTime(ms, currentTimeMs_, promotionCallback);
     for (const auto& event : events) {
         if (event.capturedKing) {
             gameOver_ = true;
+            
+            // פרסום אירוע סיום משחק ב-Bus
+            if (eventBus_) {
+                GameTransitionEvent endEvent{
+                    GameTransitionType::Ended,
+                    event.piece ? event.piece->color() : PlayerColor::White
+                };
+                eventBus_->publish(endEvent);
+            }
         }
         
-        // הפצת האירועים לכל המשקיפים הרשומים
+        // הפצת האירוע הגנרי לBUS
+        if (eventBus_) {
+            // 1. פרסום אירוע סיום מהלך
+            eventBus_->publish(MoveCompletedEvent{event}); 
+            // 2. פרסום אוטומטי של אירוע שמע מתאים לפי אופי הפעולה
+            if (event.capturedKing) {
+                eventBus_->publish(PlaySoundEvent{"game_over"});
+            } else if (event.isCapture) {
+                eventBus_->publish(PlaySoundEvent{"capture"});
+            } else {
+                eventBus_->publish(PlaySoundEvent{"move"});
+            }
+            
+            // 3. חישוב ופרסום שינוי ניקוד מעודכן
+            int whiteScore = PositionEvaluator::evaluateBalance(*board_, arbiter_); // או לוגיקת חישוב חומרי פשוטה
+            int blackScore = -whiteScore; // או החישוב הקיים ב-ChessGameScreen של ניקוד הכלים
+            eventBus_->publish(ScoreChangedEvent{whiteScore, blackScore});
+        }
+
+        // השארת מנגנון ה-Observers הקיים כדי לא לשבור תלויות קודמות במכה אחת:
         for (auto& observer : observers_) {
             observer->onMoveCompleted(event, currentTimeMs_);
         }

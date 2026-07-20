@@ -5,9 +5,11 @@
 #include <memory>
 #include <vector>
 #include <mutex>
+#include <map>
 #include <string>
 #include <atomic>
 #include <cstdint>
+#include <chrono>
 #include "players/IPlayer.hpp"
 #include "../../server/NetworkMessages.hpp"
 #include "../../engine/actions/ActionRequest.hpp"
@@ -15,13 +17,13 @@
 
 namespace kungfu
 {
-    using boost::asio::ip::tcp;
+    using boost::asio::ip::udp;
 
     class NetworkPlayer : public IPlayer, public std::enable_shared_from_this<NetworkPlayer>
     {
     private:
         boost::asio::io_context &m_ioContext;
-        tcp::socket m_socket;
+        udp::socket m_socket;
         boost::asio::strand<boost::asio::any_io_executor> m_strand;
 
         std::string m_host;
@@ -31,60 +33,61 @@ namespace kungfu
         std::atomic<PlayerColor> m_assignedColor{PlayerColor::White};
         std::atomic<bool> m_connected{false};
 
-        // דגלים שמעדכנים את הצד הצרכני (loop המשחק) על אירועים מהשרת
-        // שאינם מהלכים/תוצאות - בלי לחייב אותו לפרסר את זרם ההודעות בעצמו.
         std::atomic<bool> m_matchEnded{false};
         std::atomic<bool> m_opponentDisconnected{false};
 
-        // גישה לתורים האלה תמיד מוגנת ב-m_mutex, כולל לוגיקת ה-networking
-        // (שרצה על m_strand) וגם הצרכן (שרץ בד"כ ב-thread של לולאת המשחק).
+        // תורים המשותפים עם ה-UI thread (מוגנים ב-Mutex)
         std::vector<ActionRequest> m_incomingActions;
         std::vector<ActionResult> m_incomingResults;
         std::mutex m_mutex;
 
-        std::vector<std::uint8_t> m_headerBuffer;
-        std::vector<std::uint8_t> m_payloadBuffer;
+        std::vector<std::uint8_t> m_recvBuffer;
 
-        // אטומי כי sendMoveToServer עשוי להיקרא מ-thread שאינו m_strand
-        // (בד"כ מ-thread לולאת המשחק).
         std::atomic<std::uint64_t> m_nextRequestId{1};
+        std::atomic<bool> m_isOpponentDisconnected{false};
+        std::atomic<int> m_disconnectCountdown{20};
+
+        // טיימרים
+        boost::asio::steady_timer m_heartbeatTimer;
+        boost::asio::steady_timer m_retryTimer; // טיימר לבדיקת איבודי חבילות
+
+        // מבנה נתונים למהלכים הממתינים לאישור (מנוהל רק על ה-Strand - אין צורך בנעילה)
+        struct PendingMove {
+            NetworkMovePacket packet;
+            std::chrono::steady_clock::time_point lastSent;
+            int retries = 0;
+        };
+        std::map<std::uint64_t, PendingMove> m_pendingMoves;
 
     public:
         NetworkPlayer(boost::asio::io_context &ioContext, const std::string &host, const std::string &port);
         ~NetworkPlayer() override;
 
         void connectAndJoin();
-
         std::vector<ActionRequest> decideActions(const view::GameSnapshot &snapshot) override;
-
-        // שליפת תוצאות האימות שהצטברו וניקוי התור המקומי באותו פריים
-        std::vector<ActionResult> pollResults()
-        {
-            std::lock_guard<std::mutex> lock(m_mutex);
-            auto results = std::move(m_incomingResults);
-            m_incomingResults.clear();
-            return results;
-        }
-
+        std::vector<ActionResult> pollResults();
         void sendMoveToServer(const PlayerAction &action);
 
         bool isConnected() const { return m_connected; }
         std::uint64_t matchId() const { return m_matchId; }
         PlayerColor assignedColor() const { return m_assignedColor; }
-
-        // true פעם אחת אחרי שהמשחק הסתיים "בטבעיות" (GAME_OVER מהשרת)
         bool matchEnded() const { return m_matchEnded; }
-
-        // true אם היריב התנתק לפני שהמשחק הסתיים (OPPONENT_DISCONNECTED)
         bool opponentDisconnected() const { return m_opponentDisconnected; }
+        bool isOpponentDisconnectedWithCountdown() const { return m_isOpponentDisconnected.load(); }
+        int opponentDisconnectCountdown() const { return m_disconnectCountdown.load(); }
 
     private:
         void doConnect();
         void sendJoinRequest();
-        void readHeader();
-        void readPayload(NetworkMessageType type, std::uint32_t payloadSize);
-        void processMessage(NetworkMessageType type, const std::vector<std::uint8_t> &payload);
+        void startReceive();
+        void processDatagram(std::size_t bytesRecvd);
         void writePacket(NetworkMessageType type, const std::vector<std::uint8_t> &payload);
         void handleDisconnect();
+        
+        void startHeartbeat();
+        
+        // מנגנון אבטחת הגעה (Application-level ACKs)
+        void startRetryTimer();
+        void checkAndRetryMoves();
     };
 } // namespace kungfu

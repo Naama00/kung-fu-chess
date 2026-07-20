@@ -91,15 +91,23 @@ private:
 
     Vector2D m_windowSize{800.0f, 800.0f};
 
-    static Key translateKey(int rawCode) {
+     static Key translateKey(int rawCode) {
         switch (rawCode & 0xFF) {
-            case 27: return Key::Escape;
-            case 32: return Key::Space;
-            case 'w': case 'W': return Key::W;
-            case 's': case 'S': return Key::S;
-            case 'a': case 'A': return Key::A;
-            case 'd': case 'D': return Key::D;
-            default: return Key::Unknown;
+            case 27:      return Key::Escape;
+            case 32:      return Key::Space;
+            case 'w': 
+            case 'W':     return Key::W;
+            case 's': 
+            case 'S':     return Key::S;
+            case 'a': 
+            case 'A':     return Key::A;
+            case 'd': 
+            case 'D':     return Key::D;
+            case 8: 
+            case 127:     return Key::Backspace;
+            case 13:      return Key::Enter;
+            case 9:       return Key::Tab;
+            default:      return Key::Unknown;
         }
     }
 

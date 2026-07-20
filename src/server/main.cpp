@@ -11,7 +11,11 @@ int main() {
 
         // העברת ה-ioContext כדי שה-MatchManager יוכל להגדיר טיימרים לכל משחק
         kungfu::MatchManager matchManager(ioContext);
-
+        // אתחול מסד הנתונים (ייצור קובץ kungfu_chess.db וטבלאות אם אינם קיימים)
+        if (!matchManager.dbManager().initialize("kungfu_chess.db")) {
+            std::cerr << "Database initialization failed! Exiting." << std::endl;
+            return 1;
+        }
         std::cout << "Starting KungFu Chess Server on port " << port << "..." << std::endl;
         kungfu::NetworkServer server(ioContext, port, matchManager);
 

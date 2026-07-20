@@ -13,7 +13,13 @@ enum class NetworkMessageType : std::uint8_t {
     MOVE_RESULT,              // השרת מחזיר את תוצאת המהלך (חוקי/לא חוקי)
     HEARTBEAT,                // הודעת סיגנל קטנה לשמירה על החיבור
     GAME_OVER,                // השרת מודיע ששני הצדדים שהמשחק הסתיים (מצב טבעי)
-    OPPONENT_DISCONNECTED     // השרת מודיע שהיריב התנתק והמשחק בוטל
+    OPPONENT_DISCONNECTED,    // השרת מודיע שהיריב התנתק והמשחק בוטל
+    LOGIN_REQUEST,            // לקוח שולח פרטי חיבור (טקסט)
+    LOGIN_RESPONSE,           // שרת מגיב: 0=נכשל, 1=הצליח + ערך ELO ב-4 בתים
+    REGISTER_REQUEST,         // לקוח מבקש להירשם (טקסט)
+    REGISTER_RESPONSE,        // שרת מגיב: 0=נכשל, 1=הצליח
+    MATCH_TIMEOUT,            // השרת מודיע שהמשחק בוטל עקב חוסר פעילות (timeout)  
+    DISCONNECT_COUNTDOWN,    // השרת מודיע שהמשחק עומד להסתיים עקב חוסר פעילות (timeout) 
 };
 
 // ייצוג קומפקטי של Position למעבר ברשת

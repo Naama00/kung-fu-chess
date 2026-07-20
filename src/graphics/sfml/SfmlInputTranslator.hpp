@@ -10,17 +10,20 @@ class SfmlInputTranslator : public IInputTranslator {
 private:
     sf::RenderWindow& m_window;
 
-    static Key translateKey(sf::Keyboard::Key sfKey) {
+     static Key translateKey(sf::Keyboard::Key sfKey) {
         switch (sfKey) {
-            case sf::Keyboard::Key::Escape: return Key::Escape;
-            case sf::Keyboard::Key::Space:  return Key::Space;
-            case sf::Keyboard::Key::W:      return Key::W;
-            case sf::Keyboard::Key::S:      return Key::S;
-            case sf::Keyboard::Key::A:      return Key::A;
-            case sf::Keyboard::Key::D:      return Key::D;
-            case sf::Keyboard::Key::Left:   return Key::Left;
-            case sf::Keyboard::Key::Right:  return Key::Right;
-            default:                        return Key::Unknown;
+            case sf::Keyboard::Key::Escape:    return Key::Escape;
+            case sf::Keyboard::Key::Space:     return Key::Space;
+            case sf::Keyboard::Key::W:         return Key::W;
+            case sf::Keyboard::Key::S:         return Key::S;
+            case sf::Keyboard::Key::A:         return Key::A;
+            case sf::Keyboard::Key::D:         return Key::D;
+            case sf::Keyboard::Key::Left:      return Key::Left;
+            case sf::Keyboard::Key::Right:     return Key::Right;
+            case sf::Keyboard::Key::Backspace: return Key::Backspace;
+            case sf::Keyboard::Key::Enter:     return Key::Enter;
+            case sf::Keyboard::Key::Tab:       return Key::Tab;
+            default:                           return Key::Unknown;
         }
     }
 

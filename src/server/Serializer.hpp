@@ -175,6 +175,33 @@ public:
         std::memcpy(&result, buffer.data(), sizeof(ActionResult));
         return result;
     }
+
+    static std::vector<std::uint8_t> serializeAuthRequest(const std::string& username, const std::string& password) {
+        std::vector<std::uint8_t> buf;
+        // אריזה: 4 בתים אורך המשתמש + המשתמש עצמו, ואז 4 בתים אורך סיסמה + הסיסמה עצמה
+        writeU32(buf, static_cast<std::uint32_t>(username.size()));
+        for (char c : username) buf.push_back(static_cast<std::uint8_t>(c));
+
+        writeU32(buf, static_cast<std::uint32_t>(password.size()));
+        for (char c : password) buf.push_back(static_cast<std::uint8_t>(c));
+
+        return buf;
+    }
+
+    static bool deserializeAuthRequest(const std::vector<std::uint8_t>& buf, std::string& outUsername, std::string& outPassword) {
+        std::size_t offset = 0;
+        std::uint32_t userLen = 0;
+        if (!readU32(buf, offset, userLen) || offset + userLen > buf.size()) return false;
+
+        outUsername.assign(buf.begin() + offset, buf.begin() + offset + userLen);
+        offset += userLen;
+
+        std::uint32_t passLen = 0;
+        if (!readU32(buf, offset, passLen) || offset + passLen > buf.size()) return false;
+
+        outPassword.assign(buf.begin() + offset, buf.begin() + offset + passLen);
+        return true;
+    }
 };
 
 } // namespace kungfu

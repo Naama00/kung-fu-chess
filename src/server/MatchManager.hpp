@@ -1,3 +1,4 @@
+
 #pragma once
 
 #include <boost/asio.hpp>
@@ -6,48 +7,47 @@
 #include <memory>
 #include <mutex>
 #include <vector>
-#include <queue>
-#include "../engine/core/GameEngine.hpp"
+#include <chrono>
+#include "DatabaseManager.hpp"
 #include "NetworkMessages.hpp"
+#include "LiveMatch.hpp"
 
 namespace kungfu {
 
-// הצהרות קודמות בלבד - מונע תלות מעגלית
 class NetworkSession;
 class LiveMatch;
 
-// ============================================================================
-// MatchManager
-//
-// אחראי על שני דברים:
-//  1. Matchmaking - תור המתנה של שחקנים שממתינים ליריב.
-//  2. מחזור החיים של משחקים פעילים (יצירה, טעינה, וניקוי כשמסתיים).
-//
-// ה-mutex כאן קיים בכוונה, גם שכרגע main.cpp מריץ io_context.run() מ-thread
-// יחיד: המבנה כאן מיועד לתמוך במספר רב של משחקים במקביל, כולל אפשרות
-// עתידית להריץ io_context.run() ממספר threads (thread pool) כדי לנצל
-// ליבות מרובות - במקרה כזה registerPlayer/unregisterPlayer עלולים להיקרא
-// במקביל מ-threads שונים, ואילו הגישה למצב המשחק (LiveMatch) עצמו כבר
-// מוגנת בנפרד ע"י ה-strand הפרטי של כל LiveMatch.
-// ============================================================================
 class MatchManager {
+public:
+    // מבנה נתונים לייצוג שחקן בבריכת ההמתנה
+    struct WaitingPlayer {
+        std::shared_ptr<NetworkSession> session;
+        std::chrono::steady_clock::time_point joinTime;
+        int rating;
+    };
+
 private:
     std::unordered_map<std::uint64_t, std::shared_ptr<LiveMatch>> m_matches;
     std::uint64_t m_nextMatchId = 1;
     std::mutex m_mutex;
 
-    // queue שומר על סדר ההגעה (FIFO); set מאפשר בדיקת "כבר בתור?" ב-O(1)
-    std::queue<std::shared_ptr<NetworkSession>> m_waitingQueue;
-    std::unordered_set<std::shared_ptr<NetworkSession>> m_waitingSet;
+    // בריכת הממתינים החדשה
+    std::vector<WaitingPlayer> m_waitingPool;
 
+    DatabaseManager m_dbManager;
     boost::asio::io_context& m_ioContext;
+    
+    // טיימר אסינכרוני לביצוע סריקה מחזורית של הבריכה
+    boost::asio::steady_timer m_matchmakingTimer;
 
 public:
     explicit MatchManager(boost::asio::io_context& ioContext)
-        : m_ioContext(ioContext) {}
+        : m_ioContext(ioContext), m_matchmakingTimer(ioContext) {
+        scheduleMatchmakingTick();
+    }
 
-    // הצהרות בלבד - המימוש המלא מועבר לתחתית NetworkServer.hpp, שם
-    // NetworkSession מוכר במלואו.
+    DatabaseManager& dbManager() { return m_dbManager; }
+
     void registerPlayer(std::shared_ptr<NetworkSession> session);
     void unregisterPlayer(std::shared_ptr<NetworkSession> session);
 
@@ -60,8 +60,6 @@ public:
         return nullptr;
     }
 
-    // נקרא ע"י LiveMatch (דרך callback) כשמשחק מסתיים, כדי לפנות אותו
-    // מהמפה. מונע memory leak לוגי של משחקים שהסתיימו "בטבעיות".
     void removeMatch(std::uint64_t matchId) {
         std::lock_guard<std::mutex> lock(m_mutex);
         if (m_matches.erase(matchId) > 0) {
@@ -69,7 +67,25 @@ public:
         }
     }
 
+        std::shared_ptr<LiveMatch> findActiveMatchForUser(const std::string& username) {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        for (const auto& pair : m_matches) {
+            auto match = pair.second;
+            if (match->isWaitingForReconnection()) {
+                if (match->isWhiteDisconnected() && match->whiteUsername() == username) {
+                    return match;
+                }
+                if (match->isBlackDisconnected() && match->blackUsername() == username) {
+                    return match;
+                }
+            }
+        }
+        return nullptr;
+    }
+
 private:
+    void scheduleMatchmakingTick();
+    void runMatchmakingCycle();
     std::shared_ptr<LiveMatch> startNewMatch(std::shared_ptr<NetworkSession> player1,
                                               std::shared_ptr<NetworkSession> player2);
 };

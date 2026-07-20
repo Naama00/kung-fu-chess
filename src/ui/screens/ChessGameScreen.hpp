@@ -15,6 +15,8 @@
 #include "engine/snapshot/SnapshotBuilder.hpp"
 #include "engine/io/BoardParser.hpp"
 #include "engine/common/PieceTokenCodec.hpp"
+#include "ui/framework/EventBus.hpp"
+#include "engine/events/GameEvents.hpp"
 #include "players/IPlayer.hpp"
 #include "players/ai/GenericAIPlayer.hpp"
 #include "players/ai/ClassicMinimaxStrategy.hpp"
@@ -41,7 +43,11 @@ private:
     std::shared_ptr<kungfu::IPlayer> m_aiPlayer;
     kungfu::GameConfig m_config;
     std::shared_ptr<ISoundPlayer> m_soundPlayer;
-    
+    std::shared_ptr<kungfu::EventBus> m_eventBus;
+    // ניהול הניקוד ישירות דרך הבוס
+    int m_whiteScore = 39;
+    int m_blackScore = 39;
+
     bool m_isNetworkMode = false;
     std::shared_ptr<kungfu::NetworkPlayer> m_networkPlayer;
     boost::asio::io_context m_ioContext;
@@ -91,23 +97,7 @@ private:
     }
 
     int calculatePlayerScore(kungfu::PlayerColor color) const {
-    if (!m_gameEngine || !m_gameEngine->getBoard()) return 0;
-    int total = 0;
-    
-    // חישוב ניקוד הכלים שעל הלוח
-    for (const auto &piece : m_gameEngine->getBoard()->pieces()) {
-        if (piece && piece->color() == color && piece->state() != kungfu::PieceState::Captured) {
-            total += kungfu::PieceValues::getStandardValue(piece->type());
-        }
-    }
-    // חישוב ניקוד הכלים שנמצאים כרגע בעיצומו של מהלך מעוף באוויר
-    for (const auto &motion : m_gameEngine->getArbiter().activeMotions()) {
-        auto piece = motion.piece();
-        if (piece && piece->color() == color && piece->state() == kungfu::PieceState::Airborne) {
-            total += kungfu::PieceValues::getStandardValue(piece->type());
-        }
-    }
-    return total;
+    return (color == kungfu::PlayerColor::White) ? m_whiteScore : m_blackScore;
 }
 
     std::string getMoveNotationString(kungfu::PieceType type, const BoardPos &from, const BoardPos &to) const {
@@ -134,44 +124,88 @@ private:
     }
 
     void resetGame() {
-        std::string startBoard =
-            "bR bN bB bQ bK bB bN bR\n"
-            "bP bP bP bP bP bP bP bP\n"
-            ". . . . . . . .\n"
-            ". . . . . . . .\n"
-            ". . . . . . . .\n"
-            ". . . . . . . .\n"
-            "wP wP wP wP wP wP wP wP\n"
-            "wR wN wB wQ wK wB wN wR\n";
+    std::string startBoard =
+        "bR bN bB bQ bK bB bN bR\n"
+        "bP bP bP bP bP bP bP bP\n"
+        ". . . . . . . .\n"
+        ". . . . . . . .\n"
+        ". . . . . . . .\n"
+        ". . . . . . . .\n"
+        "wP wP wP wP wP wP wP wP\n"
+        "wR wN wB wQ wK wB wN wR\n";
 
-        auto board = kungfu::BoardParser::parse(startBoard);
-        m_gameEngine = std::make_shared<kungfu::GameEngine>(board, std::make_shared<kungfu::RuleEngine>(board), m_config);
-        m_humanPlayer = std::make_shared<kungfu::HumanPlayer>(m_gameEngine);
-        m_aiPlayer = m_isAiOpponent ? std::make_shared<kungfu::GenericAIPlayer>(kungfu::PlayerColor::Black, createAiStrategy()) : nullptr;
-        m_humanPlayer->setCellSize(kungfu::InputConfig::kDefaultCellSize);
+    // 1. אתחול ה-Event Bus
+    m_eventBus = std::make_shared<kungfu::EventBus>();
 
-        struct GameEventObserver : public kungfu::IGameObserver {
-            std::shared_ptr<ISoundPlayer> player;
-            ChessGameScreen *screen;
-            GameEventObserver(std::shared_ptr<ISoundPlayer> p, ChessGameScreen *s) : player(std::move(p)), screen(s) {}
-            void onMoveCompleted(const kungfu::ArrivalEvent &event, int) override {
-                if (event.cancelled || !event.piece) return;
-                if (event.capturedKing) player->playSound("game_over");
-                else if (event.isCapture) player->playSound("capture");
-                if (event.isCapture && screen) screen->spawnCaptureExplosion(event.to, event.piece->color());
-            }
-        };
+    auto board = kungfu::BoardParser::parse(startBoard);
+    
+    // 2. העברת ה-Event Bus למנוע המשחק (מתאים לבנאי החדש שלו)
+    m_gameEngine = std::make_shared<kungfu::GameEngine>(
+        board, 
+        std::make_shared<kungfu::RuleEngine>(board), 
+        m_config,
+        std::make_shared<kungfu::ChessPromotionRule>(),
+        m_eventBus
+    );
+    
+    m_humanPlayer = std::make_shared<kungfu::HumanPlayer>(m_gameEngine);
+    m_aiPlayer = m_isAiOpponent ? std::make_shared<kungfu::GenericAIPlayer>(kungfu::PlayerColor::Black, createAiStrategy()) : nullptr;
+    m_humanPlayer->setCellSize(kungfu::InputConfig::kDefaultCellSize);
 
-        if (m_soundPlayer) m_gameEngine->addObserver(std::make_shared<GameEventObserver>(m_soundPlayer, this));
+    // 3. רישום מנויים ב-Event Bus (Pub/Sub)
+    // א. עדכון ניקוד (Update Scores)
+    m_eventBus->subscribe<kungfu::ScoreChangedEvent>([this](const kungfu::ScoreChangedEvent& ev) {
+        m_whiteScore = ev.whiteScore;
+        m_blackScore = ev.blackScore;
+    });
 
-        m_isPaused = m_isHovering = m_selectedPieceAnim.isJumping = m_aiThinking = false;
-        m_selectedPieceAnim.jumpTimer = m_pauseTransitionProgress = 0.0f;
-        m_particleSystem.clear();
-        m_whiteHistory = m_blackHistory = {"Connected"};
+    // ב. עדכון לוג מהלכים + פיצוץ חלקיקים (Update Move Logs)
+    m_eventBus->subscribe<kungfu::MoveCompletedEvent>([this](const kungfu::MoveCompletedEvent& ev) {
+        if (ev.detail.cancelled || !ev.detail.piece) return;
+        
+        // יצירת מחרוזת התיעוד בצורה אוטומטית ועקבית
+        std::string notation = getMoveNotationString(
+            ev.detail.piece->type(), 
+            {ev.detail.from.row(), ev.detail.from.col()}, 
+            {ev.detail.to.row(), ev.detail.to.col()}
+        );
+        addHistoryLog(ev.detail.piece->color(), notation);
 
-        m_pauseButton = std::make_unique<Button>(Vector2D{500.0f, 25.0f}, Vector2D{140.0f, 50.0f}, "Pause", [this]() { togglePause(); });
-        m_pauseButton->setColors(m_theme.buttonNormal, m_theme.buttonHover, {255, 255, 255, 255});
-    }
+        // הפעלת פיצוץ החלקיקים בעת אכילה
+        if (ev.detail.isCapture) {
+            spawnCaptureExplosion(ev.detail.to, ev.detail.piece->color());
+        }
+    });
+
+    // ג. הוספת שמע (Adding Sound)
+    m_eventBus->subscribe<kungfu::PlaySoundEvent>([this](const kungfu::PlaySoundEvent& ev) {
+        if (m_soundPlayer) {
+            m_soundPlayer->playSound(ev.soundId);
+        }
+    });
+
+    // ד. אנימציות תחילת/סיום משחק (Game Start/End Animations)
+    m_eventBus->subscribe<kungfu::GameTransitionEvent>([this](const kungfu::GameTransitionEvent& ev) {
+        if (ev.type == kungfu::GameTransitionType::Ended) {
+            // הפעלת אפקט חגיגי במרכז הלוח בעת סיום
+            m_particleSystem.spawnExplosion({400.0f, 500.0f}, Color{255, 215, 0, 255}); // זהב
+        }
+    });
+
+    // איפוס משתני עזר
+    m_whiteScore = 39;
+    m_blackScore = 39;
+    m_isPaused = m_isHovering = m_selectedPieceAnim.isJumping = m_aiThinking = false;
+    m_selectedPieceAnim.jumpTimer = m_pauseTransitionProgress = 0.0f;
+    m_particleSystem.clear();
+    m_whiteHistory = m_blackHistory = {"Connected"};
+
+    m_pauseButton = std::make_unique<Button>(Vector2D{500.0f, 25.0f}, Vector2D{140.0f, 50.0f}, "Pause", [this]() { togglePause(); });
+    m_pauseButton->setColors(m_theme.buttonNormal, m_theme.buttonHover, {255, 255, 255, 255});
+
+    // פרסום אירוע שהמשחק החל (לצורך מנגנונים חיצוניים עתידיים)
+    m_eventBus->publish(kungfu::GameTransitionEvent{kungfu::GameTransitionType::Started, kungfu::PlayerColor::White});
+}
 
     void spawnCaptureExplosion(const kungfu::Position &boardPos, kungfu::PlayerColor attackerColor) {
         float cellWidth = m_boardRangeX / 8.0f, cellHeight = m_boardRangeY / 8.0f;
@@ -221,6 +255,18 @@ private:
             renderer.drawText("PAUSED", {445.0f, panelY + 50.0f}, 38, {240, 200, 80, static_cast<std::uint8_t>(m_pauseTransitionProgress * 255)});
             renderer.drawText("Press SPACE or Resume", {390.0f, panelY + 110.0f}, 14, {180, 180, 190, static_cast<std::uint8_t>(m_pauseTransitionProgress * 255)});
         }
+         // ספירה לאחור במקרה של ניתוק יריב במשחק רשת
+    if (m_isNetworkMode && m_networkPlayer && m_networkPlayer->isOpponentDisconnectedWithCountdown()) {
+        int seconds = m_networkPlayer->opponentDisconnectCountdown();
+        
+        // ציור חלונית אזהרה במרכז
+        renderer.drawRectangle({150.0f, 350.0f}, {500.0f, 150.0f}, {20, 20, 25, 230}, true);
+        renderer.drawRectangle({150.0f, 350.0f}, {500.0f, 150.0f}, {220, 60, 60, 255}, false);
+        
+        renderer.drawText("OPPONENT DISCONNECTED", {230.0f, 400.0f}, 24, {220, 60, 60, 255});
+        renderer.drawText("Auto-Resign in: " + std::to_string(seconds) + " seconds", {280.0f, 450.0f}, 16, {255, 255, 255, 255});
+    }
+
         if (snapshot.isGameOver) {
             renderer.drawRectangle({m_boardStartX, m_boardStartY}, {m_boardRangeX, m_boardRangeY}, {10, 10, 15, 150}, true);
             renderer.drawRectangle({150.0f, 350.0f}, {500.0f, 300.0f}, {20, 20, 25, 240}, true);
@@ -232,11 +278,9 @@ private:
     }
 
     void handleJump(const kungfu::Position& pos) {
-        if (m_gameEngine->requestMove(pos, pos).isAccepted) {
-            addHistoryLog(m_gameEngine->getPieceColorAt(pos).value_or(kungfu::PlayerColor::White), getMoveNotationString(getPieceTypeAt(pos), {pos.row(), pos.col()}, {pos.row(), pos.col()}));
-        }
-        m_humanPlayer->clearSelection();
-    }
+    m_gameEngine->requestMove(pos, pos); // תיעוד המהלך יתבצע אוטומטית דרך ה-EventBus
+    m_humanPlayer->clearSelection();
+}
 
     void handleBoardClick(int row, int col) {
         BoardPos clickedTile{row, col};
@@ -293,17 +337,12 @@ private:
                 }
 
                 auto result = m_humanPlayer->handleClick(col * 100 + 50, row * 100 + 50);
-                auto selectedAfter = m_humanPlayer->selectedPosition();
+auto selectedAfter = m_humanPlayer->selectedPosition();
 
-                m_selectedPieceAnim.isJumping = (!selectedBefore && selectedAfter);
-                m_isHovering = false;
-                m_selectedPieceAnim.jumpTimer = 0.0f;
+m_selectedPieceAnim.isJumping = (!selectedBefore && selectedAfter);
+m_isHovering = false;
+m_selectedPieceAnim.jumpTimer = 0.0f;
 
-                if (result.actionTaken && result.from && result.to && selectedBefore) {
-                    if (result.description.rfind("Move requested:", 0) == 0) {
-                        addHistoryLog(activeColor, getMoveNotationString(movingPieceType, {selectedBefore->row(), selectedBefore->col()}, {row, col}));
-                    }
-                }
             }
         }
     }
@@ -335,21 +374,19 @@ private:
         }
 
         if (m_aiThinking && m_aiFuture.valid()) {
-            if (m_aiFuture.wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
-                auto aiRequests = m_aiFuture.get();
-                m_aiThinking = m_aiActionPending = false;
+    if (m_aiFuture.wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
+        auto aiRequests = m_aiFuture.get();
+        m_aiThinking = m_aiActionPending = false;
 
-                if (!aiRequests.empty()) {
-                    auto aiResults = m_gameEngine->processActionRequests(aiRequests);
-                    if (!aiResults.empty() && aiResults.front().status == kungfu::ActionStatus::Accepted) {
-                        for (const auto& req : aiRequests) {
-                            addHistoryLog(kungfu::PlayerColor::Black, getMoveNotationString(getPieceTypeAt(req.action.from), {req.action.from.row(), req.action.from.col()}, {req.action.to.row(), req.action.to.col()}));
-                        }
-                        if (!m_config.allowSimultaneousMovement) m_gameEngine->wait(1000);
-                    }
-                }
+        if (!aiRequests.empty()) {
+            auto aiResults = m_gameEngine->processActionRequests(aiRequests);
+            // קריאות התיאור הידניות הוסרו – המנוע מייצר אירועים והם נרשמים לבד
+            if (!aiResults.empty() && aiResults.front().status == kungfu::ActionStatus::Accepted) {
+                if (!m_config.allowSimultaneousMovement) m_gameEngine->wait(1000);
             }
         }
+    }
+}
     }
 
 protected:
@@ -436,12 +473,10 @@ public:
             }
 
             auto snapshot = kungfu::view::SnapshotBuilder::build(*m_gameEngine->getBoard(), m_gameEngine->getArbiter(), m_gameEngine->getCurrentTimeMs(), m_gameEngine->isGameOver(), std::nullopt, m_boardRangeX / 8);
-            auto networkActions = m_networkPlayer->decideActions(snapshot);
-            for (const auto& req : networkActions) {
-                if (m_gameEngine->requestMove(req.action.from, req.action.to).isAccepted) {
-                    addHistoryLog(req.playerColor, getMoveNotationString(getPieceTypeAt(req.action.to), {req.action.from.row(), req.action.from.col()}, {req.action.to.row(), req.action.to.col()}));
-                }
-            }
+auto networkActions = m_networkPlayer->decideActions(snapshot);
+for (const auto& req : networkActions) {
+    m_gameEngine->requestMove(req.action.from, req.action.to); 
+}
         } else {
             processAiTurn(deltaTime);
         }

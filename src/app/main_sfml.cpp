@@ -1,18 +1,26 @@
+// app/main_sfml.cpp
 #include "graphics/sfml/SfmlRenderer.hpp"
 #include "graphics/sfml/SfmlInputTranslator.hpp"
 #include "ui/framework/ScreenManager.hpp"
 #include "ui/framework/IRenderer.hpp"
 #include "ui/framework/IInputTranslator.hpp"
 #include "graphics/sfml/SfmlSoundPlayer.hpp"
-#include "ui/screens/StartScreen.hpp"
+#include "ui/screens/LoginScreen.hpp" // ייבוא מסך ההתחברות החדש
+#include "server/NetworkMessages.hpp"
+#include "server/Serializer.hpp"
+#include "server/ClientAuth.hpp"
 #include <chrono>
 #include <memory>
 #include <iostream>
+#include <string>
 
 int main()
 {
     try
     {
+        // הערה: תהליך החיבור והאימות הסינכרוני הישן הוסר מה-Console!
+        // כעת המשחק עולה מיידית לתוך ממשק ויזואלי ומבצע את החיבור ברקע.
+
         const std::string windowName = "Kung-Fu Chess Game (SFML 3 Edition)";
         const unsigned int windowWidth = 800;
         const unsigned int windowHeight = 800;
@@ -20,15 +28,14 @@ int main()
         sf::ContextSettings settings;
         settings.antiAliasingLevel = 4;
 
-        // ב-SFML 3 הבנאי של VideoMode מקבל את הממדים כוקטור יחיד, ויש להגדיר State מפורש (כמו Windowed או Fullscreen)
         sf::RenderWindow window(
             sf::VideoMode({windowWidth, windowHeight}),
             windowName,
-            sf::Style::Default, // שינוי כאן
+            sf::Style::Default, 
             sf::State::Windowed,
             settings);
 
-         std::string defaultFontId = "default_font";
+        std::string defaultFontId = "default_font";
         SfmlRenderer sfmlRenderer(window, defaultFontId);
         SfmlInputTranslator sfmlInputTranslator(window);
         ScreenManager screenManager;
@@ -36,7 +43,6 @@ int main()
         IRenderer &renderer = sfmlRenderer;
         IInputTranslator &inputTranslator = sfmlInputTranslator;
 
-        // --- יצירה וטעינה של נגן הסאונד של SFML ---
         auto soundPlayer = std::make_shared<SfmlSoundPlayer>();
         soundPlayer->loadSound("move", "assets/sounds/move.wav");
         soundPlayer->loadSound("capture", "assets/sounds/capture.wav");
@@ -52,7 +58,6 @@ int main()
             std::cerr << "Warning: Could not load default font: " << e.what() << std::endl;
         }
 
-  // טעינת תמונות הכלים לתוך ה-AssetManager בצורה מקוצרת
         for (const std::string& color : {"w", "b"}) {
             for (const std::string& type : {"K", "Q", "R", "B", "N", "P"}) {
                 std::string assetId = color + type;
@@ -62,7 +67,8 @@ int main()
             }
         }
 
-        screenManager.changeScreen(std::make_unique<StartScreen>(screenManager, soundPlayer));
+        // טעינת מסך הלוגין הויזואלי החדש (במעבר SFML, נסמן true עבור דגל ה-SFML)
+        screenManager.changeScreen(std::make_unique<LoginScreen>(screenManager, soundPlayer, true));
 
         auto previousTime = std::chrono::high_resolution_clock::now();
         bool running = true;
