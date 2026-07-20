@@ -23,7 +23,7 @@ TEST_CASE("AIPlayer can produce an action that GameEngine executes", "[integrati
     auto ruleEngine = std::make_shared<kungfu::RuleEngine>(board);
     auto gameEngine = std::make_shared<kungfu::GameEngine>(board, ruleEngine);
     
-    // יצירת הבוט הקל באמצעות הטיפוסים הקונקרטיים בפרויקט שלך
+    // Create the easy bot using the concrete types in your project
     kungfu::GenericAIPlayer aiPlayer(
         kungfu::PlayerColor::Black, 
         std::make_unique<kungfu::RealTimeEasyStrategy>()

@@ -11,19 +11,19 @@ namespace kungfu {
 
 class EventBus {
 private:
-    // מחלקת בסיס לצורך מחיקת טיפוסים (Type Erasure) של המנויים
+    // Base class for type erasure of subscribers
     struct SubscriptionBase {
         virtual ~SubscriptionBase() = default;
     };
 
-    // מימוש קונקרטי המחזיק את ה-Callback הטיפוסי
+    // Concrete implementation holding the typed callback
     template <typename EventType>
     struct Subscription : public SubscriptionBase {
         std::function<void(const EventType&)> callback;
         Subscription(std::function<void(const EventType&)> cb) : callback(std::move(cb)) {}
     };
 
-    // מפה המקשרת בין מזהה טיפוס האירוע לבין רשימת המנויים הרשומים אליו
+    // Map linking event type identifiers to the list of registered subscribers
     std::unordered_map<std::type_index, std::vector<std::shared_ptr<SubscriptionBase>>> subscribers_;
     mutable std::mutex mutex_;
 
@@ -31,14 +31,14 @@ public:
     EventBus() = default;
     ~EventBus() = default;
 
-    // מניעת העתקה לשמירה על שלמות היישות
+    // Prevent copying to preserve object integrity
     EventBus(const EventBus&) = delete;
     EventBus& operator=(const EventBus&) = delete;
 
     /**
-     * הרשמה (Subscribe) לקבלת אירועים מטיפוס מסוים.
-     * @tparam EventType מבנה הנתונים (struct) של האירוע המבוקש.
-     * @param callback פונקציה אנונימית (או מתודה) שתופעל עם קבלת האירוע.
+     * Subscribe to receive events of a given type.
+     * @tparam EventType The event data structure (struct).
+     * @param callback An anonymous function (or method) that will be invoked when the event is received.
      */
     template <typename EventType>
     void subscribe(std::function<void(const EventType&)> callback) {
@@ -59,8 +59,8 @@ public:
             std::lock_guard<std::mutex> lock(mutex_);
             auto it = subscribers_.find(std::type_index(typeid(EventType)));
             if (it != subscribers_.end()) {
-                // העתקה מהירה של המצביעים כדי לשחרר את ה-Mutex בהקדם.
-                // מונע Deadlocks במקרה שמנוי מנסה להירשם/לבטל רישום מתוך ה-Callback עצמו.
+                // Quickly copy the pointers to release the mutex promptly.
+                // Prevents deadlocks if a subscriber tries to subscribe/unsubscribe from inside the callback itself.
                 subs_to_notify = it->second;
             }
         }

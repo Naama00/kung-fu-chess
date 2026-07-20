@@ -40,21 +40,21 @@ public:
     explicit SfmlInputTranslator(sf::RenderWindow& window) : m_window(window) {}
 
     void pollEvents(std::vector<InputEvent>& outEvents) override {
-        // ב-SFML 3 פונקציית pollEvent מחזירה std::optional<sf::Event>
+        // In SFML 3, pollEvent returns std::optional<sf::Event>
         while (const std::optional<sf::Event> event = m_window.pollEvent()) {
             
-            // 1. טיפול בסגירת חלון
+            // 1. Handle window closing
             if (event->is<sf::Event::Closed>()) {
                 m_window.close();
                 continue;
             }
 
-            // 2. טיפול בשינוי גודל חלון (ה-Viewport מנוהל אוטומטית ובאופן דינמי ב-Renderer)
+            // 2. Handle window resizing (the viewport is managed automatically and dynamically by the Renderer)
             if (const auto* resized = event->getIf<sf::Event::Resized>()) {
                 continue;
             }
 
-            // 3. אירועי עכבר - לחיצה ושחרור כפתור
+            // 3. Mouse events — button press and release
             if (const auto* mouseButtonPressed = event->getIf<sf::Event::MouseButtonPressed>()) {
                 InputEvent ie;
                 ie.type = InputEvent::Type::Mouse;
@@ -81,7 +81,7 @@ public:
 
                 outEvents.push_back(ie);
             }
-            // אירוע תנועת עכבר
+            // Mouse movement event
             else if (const auto* mouseMoved = event->getIf<sf::Event::MouseMoved>()) {
                 InputEvent ie;
                 ie.type = InputEvent::Type::Mouse;
@@ -96,7 +96,7 @@ public:
                 outEvents.push_back(ie);
             }
 
-            // 4. אירועי מקלדת
+            // 4. Keyboard events
             if (const auto* keyPressed = event->getIf<sf::Event::KeyPressed>()) {
                 InputEvent ie;
                 ie.type = InputEvent::Type::Keyboard;

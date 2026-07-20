@@ -5,13 +5,13 @@
 
 namespace kungfu {
 
-// מייצג כוונת שחקן בלבד, אינו משנה מצב משחק.
-// PlayerAction מתאר בקשה להזיז כלי ממיקום מקור למיקום יעד.
-// האימות (חוקיות, cooldown, סמכות) מתבצע אך ורק ב-GameEngine
-// בעת קבלת ה-ActionRequest שעוטף את הפעולה הזו.
+// Represents only a player intent; it does not change the game state.
+// PlayerAction describes a request to move a piece from a source position to a target position.
+// validation (legality, cooldown, authority) is performed only by the GameEngine
+// when receiving the ActionRequest that wraps this action.
 struct PlayerAction {
-    Position from; // מיקום הכלי בעת הגשת הבקשה
-    Position to;   // מיקום היעד המבוקש
+    Position from; // piece position when the request is submitted
+    Position to;   // requested destination position
 
     PlayerAction(Position from, Position to)
         : from(from), to(to) {}

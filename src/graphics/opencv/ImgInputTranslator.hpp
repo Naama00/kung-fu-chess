@@ -13,11 +13,11 @@ private:
     std::string m_windowName;
     Vector2D m_contentSize{1000.0f, 1000.0f};
 
-    // התור הפך להיות משתנה חבר מופע (instance member) רגיל ולא סטטי!
+    // The queue is now a normal instance member rather than a static one!
     std::vector<InputEvent> m_pendingMouseEvents;
     std::mutex m_eventsMutex;
 
-    // ה-Callback הסטטי של OpenCV מקבל את ה-this כ-userdata ומנתב ישירות למופע המתאים
+    // The static OpenCV callback receives this as userdata and forwards it directly to the appropriate instance
     static void onMouse(int event, int x, int y, int flags, void* userdata) {
         (void)flags;
         auto* translator = static_cast<ImgInputTranslator*>(userdata);
@@ -118,7 +118,7 @@ public:
         m_windowName = windowName;
         m_windowSize = windowSize;
         m_contentSize = contentSize;
-        // העברת ה-this מצביע כארגומנט האחרון
+        // Pass the this pointer as the last argument
         cv::setMouseCallback(windowName, onMouse, this);
     }
 

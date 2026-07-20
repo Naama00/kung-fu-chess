@@ -7,23 +7,23 @@
 
 namespace kungfu {
 
-// 1. אירוע סיום מהלך פיזי בלוח
+// 1. Event for the end of physical movement on the board
 struct MoveCompletedEvent {
     ArrivalEvent detail;
 };
 
-// 2. אירוע שינוי ניקוד המשחק
+// 2. Event for changing the game score
 struct ScoreChangedEvent {
     int whiteScore;
     int blackScore;
 };
 
-// 3. אירוע בקשה לניגון קול (מפריד לחלוטין בין הלוגיקה למימוש ה-Sound Player)
+// 3. Event requesting sound playback (completely separating logic from Sound Player implementation)
 struct PlaySoundEvent {
     std::string soundId;
 };
 
-// 4. אירוע תנועת מעבר משחק (אנימציות התחלה / סיום)
+// 4. Game transition movement event (start/end animations)
 enum class GameTransitionType {
     Started,
     Ended
@@ -31,7 +31,7 @@ enum class GameTransitionType {
 
 struct GameTransitionEvent {
     GameTransitionType type;
-    PlayerColor winnerColor; // רלוונטי ל-Ended
+    PlayerColor winnerColor; // relevant to Ended
     bool isDraw = false;
 };
 

@@ -6,10 +6,10 @@
 namespace kungfu
 {
 
-    // הצהרה קדימה — מוגדרת ב-CollisionDetector.cpp
+    // Forward declaration — defined in CollisionDetector.cpp
     std::vector<Position> getDetailedPath(const Position &from, const Position &to);
 
-    // מוצא את המשבצת האחרונה הפנויה בנתיב מ-from לכיוון to (הליכה קדימה).
+    // Finds the last free square along the path from from toward to (forward movement).
     Position findLastVacantPositionOnPath(
         const Position &from,
         const Position &to,
@@ -75,12 +75,12 @@ namespace kungfu
         {
             Position collisionPos = loser.piece()->position();
 
-            // המפסיד (loser) נלכד, מסומן כ-Captured ומוסר מהלוח
+            // The loser is captured, marked as Captured, and removed from the board
             loser.piece()->setState(PieceState::Captured);
             cooldownTracker_.clear(loser.piece()->id());
             board_->removePiece(loser.piece());
 
-            // המנצח (winner) שורד וממשיך בדרכו
+            // The winner survives and continues its path
             bool capturedKing = (loser.piece()->type() == PieceType::King);
             events.push_back({loser.from(), collisionPos, loser.piece(), capturedKing, false, true});
         }
@@ -107,7 +107,7 @@ namespace kungfu
         Position to = motion.to();
         auto piece = motion.piece();
 
-        // טיפול בנחיתת קפיצה עצמית (from == to)
+        // Handling self-jump landing (from == to)
         if (from == to)
         {
             auto landingTarget = board_->pieceAt(to);
@@ -131,7 +131,7 @@ namespace kungfu
 
             auto targetPiece = landingTarget.value();
             
-            // פרש מבצע Self-Kill (לכידה ידידותית) גם בנחיתה מקפיצה עצמית
+            // A knight performs self-kill (friendly capture) also when landing from a self-jump
             if (targetPiece->color() != piece->color() || piece->type() == PieceType::Knight)
             {
                 bool capturedKing = (targetPiece->type() == PieceType::King);
@@ -195,7 +195,7 @@ namespace kungfu
             auto targetPiece = targetPieceOpt.value();
             if (targetPiece->color() == piece->color())
             {
-                // פרש אינו נחסם על ידי כלי ידידותי ביעד - הוא מבצע Self-Kill
+                // A knight is not blocked by a friendly piece at the destination — it performs a self-kill
                 if (piece->type() == PieceType::Knight)
                 {
                     isFriendlyBlock = false;
@@ -224,7 +224,7 @@ namespace kungfu
 
         if (isFriendlyBlock)
         {
-            // כלים מחליקים שנחסמים ביעד על ידי ידיד עוצרים פשוט במשבצת הפנויה האחרונה בנתיב
+            // Sliding pieces that are blocked at the destination by a friendly piece simply stop on the last free square along the path
             finalDestination = findLastVacantPositionOnPath(from, to, board_);
 
             piece->setState(PieceState::Idle);

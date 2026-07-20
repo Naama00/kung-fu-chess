@@ -1,3 +1,4 @@
+// ui/screens/ChessGameScreen.hpp
 #pragma once
 
 #include "ui/screens/BaseScreen.hpp"
@@ -32,6 +33,7 @@
 #include <algorithm>
 #include <thread>
 #include <mutex>
+#include <optional>
 
 class ChessGameScreen : public BaseScreen {
 public:
@@ -44,7 +46,7 @@ private:
     kungfu::GameConfig m_config;
     std::shared_ptr<ISoundPlayer> m_soundPlayer;
     std::shared_ptr<kungfu::EventBus> m_eventBus;
-    // ניהול הניקוד ישירות דרך הבוס
+
     int m_whiteScore = 39;
     int m_blackScore = 39;
 
@@ -96,9 +98,31 @@ private:
         return kungfu::PieceType::Pawn;
     }
 
-    int calculatePlayerScore(kungfu::PlayerColor color) const {
-    return (color == kungfu::PlayerColor::White) ? m_whiteScore : m_blackScore;
-}
+    // Precise absolute calculation of the total value of all living pieces for each side out of 39
+    int calculateAbsoluteMaterialScore(const kungfu::view::GameSnapshot& snapshot, kungfu::PlayerColor color) const {
+        int total = 0;
+        for (const auto& piece : snapshot.pieces) {
+            if (piece.color == color && piece.state != kungfu::PieceState::Captured) {
+                total += kungfu::PieceValues::getStandardValue(piece.type);
+            }
+        }
+        return total;
+    }
+
+    // Identify the winning player based on the presence of kings on the board
+    std::optional<kungfu::PlayerColor> determineWinnerColor(const kungfu::view::GameSnapshot& snapshot) const {
+        bool hasWhiteKing = false;
+        bool hasBlackKing = false;
+        for (const auto& piece : snapshot.pieces) {
+            if (piece.type == kungfu::PieceType::King && piece.state != kungfu::PieceState::Captured) {
+                if (piece.color == kungfu::PlayerColor::White) hasWhiteKing = true;
+                if (piece.color == kungfu::PlayerColor::Black) hasBlackKing = true;
+            }
+        }
+        if (hasWhiteKing && !hasBlackKing) return kungfu::PlayerColor::White;
+        if (!hasWhiteKing && hasBlackKing) return kungfu::PlayerColor::Black;
+        return std::nullopt;
+    }
 
     std::string getMoveNotationString(kungfu::PieceType type, const BoardPos &from, const BoardPos &to) const {
         char pieceChar = kungfu::PieceTokenCodec::toChar(type);
@@ -124,88 +148,70 @@ private:
     }
 
     void resetGame() {
-    std::string startBoard =
-        "bR bN bB bQ bK bB bN bR\n"
-        "bP bP bP bP bP bP bP bP\n"
-        ". . . . . . . .\n"
-        ". . . . . . . .\n"
-        ". . . . . . . .\n"
-        ". . . . . . . .\n"
-        "wP wP wP wP wP wP wP wP\n"
-        "wR wN wB wQ wK wB wN wR\n";
+        std::string startBoard =
+            "bR bN bB bQ bK bB bN bR\n"
+            "bP bP bP bP bP bP bP bP\n"
+            ". . . . . . . .\n"
+            ". . . . . . . .\n"
+            ". . . . . . . .\n"
+            ". . . . . . . .\n"
+            "wP wP wP wP wP wP wP wP\n"
+            "wR wN wB wQ wK wB wN wR\n";
 
-    // 1. אתחול ה-Event Bus
-    m_eventBus = std::make_shared<kungfu::EventBus>();
-
-    auto board = kungfu::BoardParser::parse(startBoard);
-    
-    // 2. העברת ה-Event Bus למנוע המשחק (מתאים לבנאי החדש שלו)
-    m_gameEngine = std::make_shared<kungfu::GameEngine>(
-        board, 
-        std::make_shared<kungfu::RuleEngine>(board), 
-        m_config,
-        std::make_shared<kungfu::ChessPromotionRule>(),
-        m_eventBus
-    );
-    
-    m_humanPlayer = std::make_shared<kungfu::HumanPlayer>(m_gameEngine);
-    m_aiPlayer = m_isAiOpponent ? std::make_shared<kungfu::GenericAIPlayer>(kungfu::PlayerColor::Black, createAiStrategy()) : nullptr;
-    m_humanPlayer->setCellSize(kungfu::InputConfig::kDefaultCellSize);
-
-    // 3. רישום מנויים ב-Event Bus (Pub/Sub)
-    // א. עדכון ניקוד (Update Scores)
-    m_eventBus->subscribe<kungfu::ScoreChangedEvent>([this](const kungfu::ScoreChangedEvent& ev) {
-        m_whiteScore = ev.whiteScore;
-        m_blackScore = ev.blackScore;
-    });
-
-    // ב. עדכון לוג מהלכים + פיצוץ חלקיקים (Update Move Logs)
-    m_eventBus->subscribe<kungfu::MoveCompletedEvent>([this](const kungfu::MoveCompletedEvent& ev) {
-        if (ev.detail.cancelled || !ev.detail.piece) return;
+        m_eventBus = std::make_shared<kungfu::EventBus>();
+        auto board = kungfu::BoardParser::parse(startBoard);
         
-        // יצירת מחרוזת התיעוד בצורה אוטומטית ועקבית
-        std::string notation = getMoveNotationString(
-            ev.detail.piece->type(), 
-            {ev.detail.from.row(), ev.detail.from.col()}, 
-            {ev.detail.to.row(), ev.detail.to.col()}
+        m_gameEngine = std::make_shared<kungfu::GameEngine>(
+            board, 
+            std::make_shared<kungfu::RuleEngine>(board), 
+            m_config,
+            std::make_shared<kungfu::ChessPromotionRule>(),
+            m_eventBus
         );
-        addHistoryLog(ev.detail.piece->color(), notation);
+        
+        m_humanPlayer = std::make_shared<kungfu::HumanPlayer>(m_gameEngine);
+        m_aiPlayer = m_isAiOpponent ? std::make_shared<kungfu::GenericAIPlayer>(kungfu::PlayerColor::Black, createAiStrategy()) : nullptr;
+        m_humanPlayer->setCellSize(kungfu::InputConfig::kDefaultCellSize);
 
-        // הפעלת פיצוץ החלקיקים בעת אכילה
-        if (ev.detail.isCapture) {
-            spawnCaptureExplosion(ev.detail.to, ev.detail.piece->color());
-        }
-    });
+        m_eventBus->subscribe<kungfu::MoveCompletedEvent>([this](const kungfu::MoveCompletedEvent& ev) {
+            if (ev.detail.cancelled || !ev.detail.piece) return;
+            
+            std::string notation = getMoveNotationString(
+                ev.detail.piece->type(), 
+                {ev.detail.from.row(), ev.detail.from.col()}, 
+                {ev.detail.to.row(), ev.detail.to.col()}
+            );
+            addHistoryLog(ev.detail.piece->color(), notation);
 
-    // ג. הוספת שמע (Adding Sound)
-    m_eventBus->subscribe<kungfu::PlaySoundEvent>([this](const kungfu::PlaySoundEvent& ev) {
-        if (m_soundPlayer) {
-            m_soundPlayer->playSound(ev.soundId);
-        }
-    });
+            if (ev.detail.isCapture) {
+                spawnCaptureExplosion(ev.detail.to, ev.detail.piece->color());
+            }
+        });
 
-    // ד. אנימציות תחילת/סיום משחק (Game Start/End Animations)
-    m_eventBus->subscribe<kungfu::GameTransitionEvent>([this](const kungfu::GameTransitionEvent& ev) {
-        if (ev.type == kungfu::GameTransitionType::Ended) {
-            // הפעלת אפקט חגיגי במרכז הלוח בעת סיום
-            m_particleSystem.spawnExplosion({400.0f, 500.0f}, Color{255, 215, 0, 255}); // זהב
-        }
-    });
+        m_eventBus->subscribe<kungfu::PlaySoundEvent>([this](const kungfu::PlaySoundEvent& ev) {
+            if (m_soundPlayer) {
+                m_soundPlayer->playSound(ev.soundId);
+            }
+        });
 
-    // איפוס משתני עזר
-    m_whiteScore = 39;
-    m_blackScore = 39;
-    m_isPaused = m_isHovering = m_selectedPieceAnim.isJumping = m_aiThinking = false;
-    m_selectedPieceAnim.jumpTimer = m_pauseTransitionProgress = 0.0f;
-    m_particleSystem.clear();
-    m_whiteHistory = m_blackHistory = {"Connected"};
+        m_eventBus->subscribe<kungfu::GameTransitionEvent>([this](const kungfu::GameTransitionEvent& ev) {
+            if (ev.type == kungfu::GameTransitionType::Ended) {
+                m_particleSystem.spawnExplosion({400.0f, 500.0f}, Color{255, 215, 0, 255}); 
+            }
+        });
 
-    m_pauseButton = std::make_unique<Button>(Vector2D{500.0f, 25.0f}, Vector2D{140.0f, 50.0f}, "Pause", [this]() { togglePause(); });
-    m_pauseButton->setColors(m_theme.buttonNormal, m_theme.buttonHover, {255, 255, 255, 255});
+        m_whiteScore = 39;
+        m_blackScore = 39;
+        m_isPaused = m_isHovering = m_selectedPieceAnim.isJumping = m_aiThinking = false;
+        m_selectedPieceAnim.jumpTimer = m_pauseTransitionProgress = 0.0f;
+        m_particleSystem.clear();
+        m_whiteHistory = m_blackHistory = {"Connected"};
 
-    // פרסום אירוע שהמשחק החל (לצורך מנגנונים חיצוניים עתידיים)
-    m_eventBus->publish(kungfu::GameTransitionEvent{kungfu::GameTransitionType::Started, kungfu::PlayerColor::White});
-}
+        m_pauseButton = std::make_unique<Button>(Vector2D{500.0f, 25.0f}, Vector2D{140.0f, 50.0f}, "Pause", [this]() { togglePause(); });
+        m_pauseButton->setColors(m_theme.buttonNormal, m_theme.buttonHover, {255, 255, 255, 255});
+
+        m_eventBus->publish(kungfu::GameTransitionEvent{kungfu::GameTransitionType::Started, kungfu::PlayerColor::White});
+    }
 
     void spawnCaptureExplosion(const kungfu::Position &boardPos, kungfu::PlayerColor attackerColor) {
         float cellWidth = m_boardRangeX / 8.0f, cellHeight = m_boardRangeY / 8.0f;
@@ -255,32 +261,77 @@ private:
             renderer.drawText("PAUSED", {445.0f, panelY + 50.0f}, 38, {240, 200, 80, static_cast<std::uint8_t>(m_pauseTransitionProgress * 255)});
             renderer.drawText("Press SPACE or Resume", {390.0f, panelY + 110.0f}, 14, {180, 180, 190, static_cast<std::uint8_t>(m_pauseTransitionProgress * 255)});
         }
-         // ספירה לאחור במקרה של ניתוק יריב במשחק רשת
-    if (m_isNetworkMode && m_networkPlayer && m_networkPlayer->isOpponentDisconnectedWithCountdown()) {
-        int seconds = m_networkPlayer->opponentDisconnectCountdown();
-        
-        // ציור חלונית אזהרה במרכז
-        renderer.drawRectangle({150.0f, 350.0f}, {500.0f, 150.0f}, {20, 20, 25, 230}, true);
-        renderer.drawRectangle({150.0f, 350.0f}, {500.0f, 150.0f}, {220, 60, 60, 255}, false);
-        
-        renderer.drawText("OPPONENT DISCONNECTED", {230.0f, 400.0f}, 24, {220, 60, 60, 255});
-        renderer.drawText("Auto-Resign in: " + std::to_string(seconds) + " seconds", {280.0f, 450.0f}, 16, {255, 255, 255, 255});
-    }
 
+        if (m_isNetworkMode && m_networkPlayer && m_networkPlayer->isOpponentDisconnectedWithCountdown()) {
+            int seconds = m_networkPlayer->opponentDisconnectCountdown();
+            renderer.drawRectangle({150.0f, 350.0f}, {500.0f, 150.0f}, {20, 20, 25, 230}, true);
+            renderer.drawRectangle({150.0f, 350.0f}, {500.0f, 150.0f}, {220, 60, 60, 255}, false);
+            renderer.drawText("OPPONENT DISCONNECTED", {230.0f, 400.0f}, 24, {220, 60, 60, 255});
+            renderer.drawText("Auto-Resign in: " + std::to_string(seconds) + " seconds", {280.0f, 450.0f}, 16, {255, 255, 255, 255});
+        }
+
+        // ====================================================
+        // Draw an advanced and visually impressive feedback window for game over
+        // ====================================================
         if (snapshot.isGameOver) {
-            renderer.drawRectangle({m_boardStartX, m_boardStartY}, {m_boardRangeX, m_boardRangeY}, {10, 10, 15, 150}, true);
-            renderer.drawRectangle({150.0f, 350.0f}, {500.0f, 300.0f}, {20, 20, 25, 240}, true);
-            renderer.drawRectangle({150.0f, 350.0f}, {500.0f, 300.0f}, {200, 60, 60, 255}, false);
-            renderer.drawText("GAME OVER", {250.0f, 440.0f}, 50, {255, 60, 60, 255});
+            renderer.drawRectangle({m_boardStartX, m_boardStartY}, {m_boardRangeX, m_boardRangeY}, {10, 10, 15, 160}, true);
+            
+            // Identify the winner
+            auto winnerOpt = determineWinnerColor(snapshot);
+            bool drawVictoryText = false;
+            bool drawDefeatText = false;
+            std::string neutralResultText = "MATCH ENDED";
+
+            if (winnerOpt.has_value()) {
+                if (m_isNetworkMode && m_networkPlayer) {
+                    if (winnerOpt.value() == m_networkPlayer->assignedColor()) drawVictoryText = true;
+                    else drawDefeatText = true;
+                } else if (m_isAiOpponent) {
+                    if (winnerOpt.value() == kungfu::PlayerColor::White) drawVictoryText = true;
+                    else drawDefeatText = true;
+                } else {
+                    neutralResultText = (winnerOpt.value() == kungfu::PlayerColor::White) ? "WHITE WINS!" : "BLACK WINS!";
+                }
+            } else {
+                neutralResultText = "IT'S A DRAW!";
+            }
+
+            // The announcement panel styled in the center
+            Vector2D panelPos{150.0f, 320.0f};
+            Vector2D panelSize{500.0f, 320.0f};
+
+            // Bottom shadow
+            renderer.drawRectangle({panelPos.x + 8.0f, panelPos.y + 8.0f}, panelSize, {0, 0, 0, 120}, true);
+
+            if (drawVictoryText) {
+                // Glowing gold background for victory
+                renderer.drawRectangle(panelPos, panelSize, {30, 35, 45, 245}, true);
+                renderer.drawRectangle(panelPos, panelSize, {240, 200, 80, 255}, false);
+                renderer.drawText("VICTORY!", {panelPos.x + 130.0f, panelPos.y + 110.0f}, 52, {240, 200, 80, 255});
+                renderer.drawText("An epic real-time match!", {panelPos.x + 155.0f, panelPos.y + 160.0f}, 14, {180, 185, 200, 255});
+            } else if (drawDefeatText) {
+                // Maroon background for defeat
+                renderer.drawRectangle(panelPos, panelSize, {25, 20, 25, 245}, true);
+                renderer.drawRectangle(panelPos, panelSize, {210, 60, 60, 255}, false);
+                renderer.drawText("DEFEAT", {panelPos.x + 155.0f, panelPos.y + 110.0f}, 52, {210, 60, 60, 255});
+                renderer.drawText("Defeat is a step to mastery.", {panelPos.x + 145.0f, panelPos.y + 160.0f}, 14, {160, 160, 170, 255});
+            } else {
+                // Neutral metallic gray background for local play or draw
+                renderer.drawRectangle(panelPos, panelSize, {25, 27, 35, 245}, true);
+                renderer.drawRectangle(panelPos, panelSize, {100, 105, 120, 255}, false);
+                renderer.drawText(neutralResultText, {panelPos.x + 110.0f, panelPos.y + 110.0f}, 42, {220, 225, 235, 255});
+                renderer.drawText("Good game!", {panelPos.x + 205.0f, panelPos.y + 160.0f}, 14, {160, 165, 175, 255});
+            }
+
             m_rematchButton->draw(renderer);
             m_menuButton->draw(renderer);
         }
     }
 
     void handleJump(const kungfu::Position& pos) {
-    m_gameEngine->requestMove(pos, pos); // תיעוד המהלך יתבצע אוטומטית דרך ה-EventBus
-    m_humanPlayer->clearSelection();
-}
+        m_gameEngine->requestMove(pos, pos); 
+        m_humanPlayer->clearSelection();
+    }
 
     void handleBoardClick(int row, int col) {
         BoardPos clickedTile{row, col};
@@ -337,12 +388,11 @@ private:
                 }
 
                 auto result = m_humanPlayer->handleClick(col * 100 + 50, row * 100 + 50);
-auto selectedAfter = m_humanPlayer->selectedPosition();
+                auto selectedAfter = m_humanPlayer->selectedPosition();
 
-m_selectedPieceAnim.isJumping = (!selectedBefore && selectedAfter);
-m_isHovering = false;
-m_selectedPieceAnim.jumpTimer = 0.0f;
-
+                m_selectedPieceAnim.isJumping = (!selectedBefore && selectedAfter);
+                m_isHovering = false;
+                m_selectedPieceAnim.jumpTimer = 0.0f;
             }
         }
     }
@@ -374,19 +424,18 @@ m_selectedPieceAnim.jumpTimer = 0.0f;
         }
 
         if (m_aiThinking && m_aiFuture.valid()) {
-    if (m_aiFuture.wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
-        auto aiRequests = m_aiFuture.get();
-        m_aiThinking = m_aiActionPending = false;
+            if (m_aiFuture.wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
+                auto aiRequests = m_aiFuture.get();
+                m_aiThinking = m_aiActionPending = false;
 
-        if (!aiRequests.empty()) {
-            auto aiResults = m_gameEngine->processActionRequests(aiRequests);
-            // קריאות התיאור הידניות הוסרו – המנוע מייצר אירועים והם נרשמים לבד
-            if (!aiResults.empty() && aiResults.front().status == kungfu::ActionStatus::Accepted) {
-                if (!m_config.allowSimultaneousMovement) m_gameEngine->wait(1000);
+                if (!aiRequests.empty()) {
+                    auto aiResults = m_gameEngine->processActionRequests(aiRequests);
+                    if (!aiResults.empty() && aiResults.front().status == kungfu::ActionStatus::Accepted) {
+                        if (!m_config.allowSimultaneousMovement) m_gameEngine->wait(1000);
+                    }
+                }
             }
         }
-    }
-}
     }
 
 protected:
@@ -398,7 +447,12 @@ protected:
         m_particleSystem.draw(renderer);
         m_headerView.draw(renderer, "KUNG-FU CHESS", m_theme.background, m_theme.border, m_theme.titleText, *m_pauseButton, *m_sidebarRestartButton, *m_sidebarMenuButton);
         m_sidebarView.draw(renderer, m_whiteHistory, m_blackHistory, m_theme.background, m_theme.border);
-        m_footerView.draw(renderer, calculatePlayerScore(kungfu::PlayerColor::White), calculatePlayerScore(kungfu::PlayerColor::Black), m_gameEngine->isGameOver(), m_isPaused, m_config.allowSimultaneousMovement, m_gameEngine->currentTurn(), m_theme.background, m_theme.border);
+        
+        // Calculate and inject the absolute score (number of living material points out of 39) into the bottom panel
+        int whiteAbsolute = calculateAbsoluteMaterialScore(snapshot, kungfu::PlayerColor::White);
+        int blackAbsolute = calculateAbsoluteMaterialScore(snapshot, kungfu::PlayerColor::Black);
+
+        m_footerView.draw(renderer, whiteAbsolute, blackAbsolute, m_gameEngine->isGameOver(), m_isPaused, m_config.allowSimultaneousMovement, m_gameEngine->currentTurn(), m_theme.background, m_theme.border);
         drawOverlays(renderer, snapshot);
     }
 
@@ -459,9 +513,36 @@ public:
             else m_soundPlayer->stopSound("walk");
         }
 
+        // ====================================================
+        // Upgrade: launch dynamic, celebratory gold sparkles during victory
+        // ====================================================
         if (m_gameEngine->isGameOver()) {
             m_rematchButton->update(deltaTime);
             m_menuButton->update(deltaTime);
+
+            auto board = m_gameEngine->getBoard();
+            auto snapshot = kungfu::view::SnapshotBuilder::build(*board, m_gameEngine->getArbiter(), m_gameEngine->getCurrentTimeMs(), m_gameEngine->isGameOver(), std::nullopt, m_boardRangeX / board->cols());
+            auto winner = determineWinnerColor(snapshot);
+            
+            if (winner.has_value()) {
+                bool isLocalWinner = false;
+                if (m_isNetworkMode && m_networkPlayer) {
+                    isLocalWinner = (winner.value() == m_networkPlayer->assignedColor());
+                } else if (m_isAiOpponent) {
+                    isLocalWinner = (winner.value() == kungfu::PlayerColor::White); // the local user is always white against the computer
+                } else {
+                    isLocalWinner = true; // in local mode we always celebrate
+                }
+
+                if (isLocalWinner) {
+                    // Launch floating gold particles at a gentle pace above the victory card
+                    if (std::rand() % 6 == 0) {
+                        float px = 200.0f + (static_cast<float>(std::rand()) / RAND_MAX) * 400.0f;
+                        float py = 350.0f + (static_cast<float>(std::rand()) / RAND_MAX) * 150.0f;
+                        m_particleSystem.spawnExplosion({px, py}, Color{255, 215, 0, 180}); // Festive gold sparkle
+                    }
+                }
+            }
         }
 
         if (m_isNetworkMode && m_networkPlayer) {
@@ -473,10 +554,10 @@ public:
             }
 
             auto snapshot = kungfu::view::SnapshotBuilder::build(*m_gameEngine->getBoard(), m_gameEngine->getArbiter(), m_gameEngine->getCurrentTimeMs(), m_gameEngine->isGameOver(), std::nullopt, m_boardRangeX / 8);
-auto networkActions = m_networkPlayer->decideActions(snapshot);
-for (const auto& req : networkActions) {
-    m_gameEngine->requestMove(req.action.from, req.action.to); 
-}
+            auto networkActions = m_networkPlayer->decideActions(snapshot);
+            for (const auto& req : networkActions) {
+                m_gameEngine->requestMove(req.action.from, req.action.to); 
+            }
         } else {
             processAiTurn(deltaTime);
         }

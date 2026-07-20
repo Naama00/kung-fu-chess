@@ -11,17 +11,17 @@ class RealTimeBaseStrategy : public IAIDecisionStrategy {
 protected:
     MoveGenerator moveGenerator_;
 
-    // הערכת המהלך המיידי (מבוסס על שווי הכלי הנלכד)
+    // Immediate move evaluation (based on the value of the captured piece)
     int evaluateImmediateCapture(const view::GameSnapshot& snapshot, const Position& targetPos) const {
         for (const auto& piece : snapshot.pieces) {
             if (piece.logicalPosition == targetPos && piece.state != PieceState::Captured) {
                 return PieceValues::getCentipawnValue(piece.type);
             }
         }
-        return 0; // תנועה רגילה
+        return 0; // normal move
     }
 
-    // בדיקה האם משבצת מסוימת מאוימת על ידי היריב
+    // Check whether a given square is threatened by the opponent
     bool isSquareThreatened(const view::GameSnapshot& snapshot, const Position& pos, PlayerColor defenderColor) const {
         PlayerColor attackerColor = (defenderColor == PlayerColor::White) ? PlayerColor::Black : PlayerColor::White;
         auto opponentMoves = moveGenerator_.generateForPlayer(snapshot, attackerColor);

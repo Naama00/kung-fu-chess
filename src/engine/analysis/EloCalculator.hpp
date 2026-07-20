@@ -7,18 +7,18 @@ namespace kungfu {
 class EloCalculator {
 public:
     /**
-     * מחשב את הדירוג החדש של שחקן A לאחר משחק מול שחקן B.
-     * @param ratingA הדירוג הנוכחי של שחקן A.
-     * @param ratingB הדירוג הנוכחי של שחקן B.
-     * @param scoreA תוצאת המשחק עבור שחקן A (1.0 = ניצחון, 0.5 = תיקו, 0.0 = הפסד).
+     * Computes the new rating of player A after a match against player B.
+     * @param ratingA the current rating of player A.
+     * @param ratingB the current rating of player B.
+     * @param scoreA the game result for player A (1.0 = win, 0.5 = draw, 0.0 = loss).
      * @param kFactor מקדם השינוי המרבי (בד"כ 32).
      * @return הדירוג החדש המעוגל.
      */
     static int calculateNewRating(int ratingA, int ratingB, double scoreA, int kFactor = 32) {
-        // חישוב סיכויי הזכייה הצפויים של שחקן A
+        // compute player A's expected win probabilities
         double expectedScoreA = 1.0 / (1.0 + std::pow(10.0, (ratingB - ratingA) / 400.0));
         
-        // עדכון הדירוג
+        // update the rating
         double newRating = ratingA + kFactor * (scoreA - expectedScoreA);
         return static_cast<int>(std::round(newRating));
     }

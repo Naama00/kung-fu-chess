@@ -5,20 +5,20 @@
 
 namespace kungfu {
 
-/// תוצאת עיבוד ActionRequest על ידי GameEngine.
+/// Result of processing an ActionRequest by the GameEngine.
 enum class ActionStatus {
-    Accepted,       // הבקשה התקבלה ובוצעה
-    Rejected,       // הבקשה נדחתה (למשל מהלך לא חוקי, כלי בתנועה, כלי בצינון, יעד לא חוקי)
-    StoredAsPending // הבקשה נשמרה כ-premove לביצוע עתידי
+    Accepted,       // the request was accepted and executed
+    Rejected,       // the request was rejected (for example, illegal move, piece in motion, piece in cooldown, invalid destination)
+    StoredAsPending // the request was stored as a premove for future execution
 };
 
-// תוצאה מלאה הכוללת סטטוס ומזהה הבקשה המקורית.
-//   - IllegalMove      : המהלך אינו חוקי לפי חוקי השחמט
-//   - PieceMoving      : הכלי כבר נמצא בתנועה
-//   - PieceCoolingDown : הכלי נמצא בצינון
-//   - InvalidTarget    : מיקום יעד מחוץ לגבולות הלוח
+// full result containing the status and the original request identifier.
+//   - IllegalMove      : the move is illegal according to chess rules
+//   - PieceMoving      : the piece is already in motion
+//   - PieceCoolingDown : the piece is in cooldown
+//   - InvalidTarget    : target position outside the board boundaries
 struct ActionResult {
-    std::uint64_t requestId; // מזהה הבקשה המקורית
+    std::uint64_t requestId; // original request identifier
     ActionStatus  status;
 
     ActionResult(std::uint64_t requestId, ActionStatus status)

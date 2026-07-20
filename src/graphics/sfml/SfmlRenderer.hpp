@@ -1,3 +1,4 @@
+// graphics/sfml/SfmlRenderer.hpp
 #pragma once
 #include "ui/framework/IRenderer.hpp"
 #include "ui/framework/AssetManager.hpp"
@@ -27,18 +28,24 @@ public:
     SfmlRenderer(sf::RenderWindow& window, std::string defaultFontId = "default_font")
         : m_window(window), m_defaultFontId(std::move(defaultFontId)) {
         
-        // הגדרות View מעודכנות לשימוש בוקטורים ב-SFML 3
         m_view.setSize({m_logicalRange.x, m_logicalRange.y});
         m_view.setCenter({m_logicalRange.x / 2.0f, m_logicalRange.y / 2.0f});
     }
 
     void beginFrame() override {
-        // 1. שליפת הגודל הפיזי הנוכחי של החלון
+        // ----------------------------------------------------
+        // Fix for the ghosting issue when stretching the screen (Pillarbox Ghosting)
+        // ----------------------------------------------------
+        // 1. Reset the View to default to clear the entire physical window area (including borders)
+        m_window.setView(m_window.getDefaultView());
+        m_window.clear(sf::Color::Black); // Completely clear the entire buffer
+
+        // 2. Retrieve the current physical window size
         sf::Vector2u windowSize = m_window.getSize();
         float windowWidth = static_cast<float>(windowSize.x);
         float windowHeight = static_cast<float>(windowSize.y);
 
-        // 2. חישוב יחס הגובה-רוחב המושלם (1:1) עבור הלוח הריבועי
+        // 3. Calculate the perfect aspect ratio (1:1) for the square board
         float targetAspectRatio = 1.0f; 
         float windowAspectRatio = windowWidth / windowHeight;
 
@@ -48,19 +55,19 @@ public:
         float viewportHeight = 1.0f;
 
         if (windowAspectRatio > targetAspectRatio) {
-            // החלון רחב מדי -> נוסיף שוליים שחורים בצדדים
+            // The window is too wide -> add black borders on the sides
             viewportWidth = targetAspectRatio / windowAspectRatio;
             viewportX = (1.0f - viewportWidth) / 2.0f;
         } else {
-            // החלון גבוה מדי -> נוסיף שוליים שחורים למעלה ולמטה
+            // The window is too tall -> add black borders on the top and bottom
             viewportHeight = windowAspectRatio / targetAspectRatio;
             viewportY = (1.0f - viewportHeight) / 2.0f;
         }
 
-        // 3. עדכון ה-Viewport של מופע ה-View הנוכחי ב-Renderer (תואם SFML 3)
+        // 4. Update the viewport of the current View instance in the Renderer (SFML 3 compatible)
         m_view.setViewport(sf::FloatRect({viewportX, viewportY}, {viewportWidth, viewportHeight}));
 
-        // 4. הגדרת ה-View המעודכן בחלון
+        // 5. Set the updated and scaled View in the window for the next draw
         m_window.setView(m_view);
     }
 
@@ -107,7 +114,6 @@ public:
         line.setFillColor(toSfColor(color));
         
         float angle = std::atan2(direction.y, direction.x) * 180.0f / 3.14159265f;
-        // SFML 3 דורשת סוג זווית sf::Angle שנוצר באמצעות sf::degrees
         line.setRotation(sf::degrees(angle));
 
         m_window.draw(line);
@@ -131,8 +137,8 @@ public:
         m_window.draw(circle);
     }
 
-     void drawSector(Vector2D center, float radius, float startAngle, float endAngle, Color color, bool fill) override {
-        unsigned int points = 30; // רזולוציית העיגול
+    void drawSector(Vector2D center, float radius, float startAngle, float endAngle, Color color, bool fill) override {
+        unsigned int points = 30; 
         sf::Color sfCol = toSfColor(color);
 
         float startRad = startAngle * 3.14159265f / 180.0f;
@@ -141,7 +147,6 @@ public:
 
         if (fill) {
             sf::VertexArray fan(sf::PrimitiveType::TriangleFan, points + 2);
-            // קודקוד המרכז של המאוורר
             fan[0].position = toSfVec(center);
             fan[0].color = sfCol;
 
@@ -193,6 +198,22 @@ public:
                 sprite.setScale({size.x / bounds.size.x, size.y / bounds.size.y});
             }
 
+            // Create a dynamic three-dimensional shadow beneath the pieces
+            if (assetId.length() == 2) {
+                sf::Sprite shadowSprite = sprite;
+                shadowSprite.setColor(sf::Color(0, 0, 0, 90)); 
+                
+                float shadowOffset = size.x * 0.08f; 
+                shadowSprite.setPosition({position.x + shadowOffset, position.y + shadowOffset});
+                
+                if (std::abs(rotationDegrees) > 0.01f) {
+                    shadowSprite.setOrigin({bounds.size.x / 2.0f, bounds.size.y / 2.0f});
+                    shadowSprite.move({size.x / 2.0f, size.y / 2.0f});
+                    shadowSprite.setRotation(sf::degrees(rotationDegrees));
+                }
+                m_window.draw(shadowSprite);
+            }
+
             sprite.setPosition(toSfVec(position));
             if (std::abs(rotationDegrees) > 0.01f) {
                 sprite.setOrigin({bounds.size.x / 2.0f, bounds.size.y / 2.0f});
@@ -209,7 +230,6 @@ public:
     void drawText(std::string_view text, Vector2D position, int fontSize, Color color) override {
         try {
             auto& fontAsset = m_assetManager.getAsset<SfmlFontAsset>(m_defaultFontId);
-            // ב-SFML 3 יש חובה לקשר פונט ישירות בבנאי של sf::Text
             sf::Text sfText(fontAsset.font);
             sfText.setString(std::string(text));
             sfText.setCharacterSize(static_cast<unsigned int>(fontSize));

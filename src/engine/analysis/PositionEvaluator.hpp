@@ -5,7 +5,7 @@
 
 namespace kungfu {
 
-// Forward declarations למניעת תלויות הדדיות כבדות
+// Forward declarations to avoid heavy circular dependencies
 namespace view {
     struct GameSnapshot;
 }

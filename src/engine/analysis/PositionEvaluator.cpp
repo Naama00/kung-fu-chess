@@ -21,7 +21,7 @@ int PositionEvaluator::evaluate(const view::GameSnapshot& snapshot, PlayerColor 
 
     MoveGenerator generator;
     
-    // הפקת המהלכים פעם אחת בלבד
+    // Generate the moves only once
     auto whiteMoves = generator.generateForPlayer(snapshot, PlayerColor::White);
     auto blackMoves = generator.generateForPlayer(snapshot, PlayerColor::Black);
 

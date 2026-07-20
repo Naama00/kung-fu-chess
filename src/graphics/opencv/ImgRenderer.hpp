@@ -28,8 +28,8 @@ private:
     Vector2D m_logicalRange{1000.0f, 1000.0f};
     AssetManager m_assetManager;
 
-    // שיפור מפתח המטמון: שימוש בכתובת המצביע (pointer address) של ה-Asset.
-    // זה מונע הקצאות והשוואת מחרוזות יקרה בכל פריים עבור כל כלי שחמט!
+    // Cache key improvement: using the Asset pointer address.
+    // This avoids allocations and string comparisons on every frame for every chess piece!
     std::unordered_map<const IAsset*, std::pair<Vector2D, Img>> m_spriteScaleCache;
 
     struct LetterboxTransform {
@@ -66,7 +66,7 @@ public:
     explicit ImgRenderer(Img &screenCanvas, std::string windowName)
         : m_screenCanvas(screenCanvas), m_windowName(std::move(windowName)) {}
 
-    // פונקציה לניקוי יזום של ה-cache בעת מעבר בין מסכים
+    // Function for proactive cache cleanup when switching between screens
     void clearCache() {
         m_spriteScaleCache.clear();
     }
@@ -173,7 +173,7 @@ public:
 
         int thickness = fill ? cv::FILLED : 1;
 
-        // cv::ellipse ב-OpenCV מקבלת זוויות במעלות ומציירת סקטור/קשת בצורה חלקה
+        // cv::ellipse in OpenCV takes angles in degrees and draws a sector/arc smoothly
         cv::ellipse(m_screenCanvas.mat(), physCenter, cv::Size(r, r), 0.0,
                     static_cast<double>(startAngle), static_cast<double>(endAngle),
                     toCvScalar(color), thickness, cv::LINE_AA);
@@ -217,7 +217,7 @@ public:
             {
                 Vector2D requestedSize{static_cast<float>(physSize.width), static_cast<float>(physSize.height)};
                 
-                // שיפור: שימוש בכתובת המצביע של האובייקט בתוך ה-Cache במקום מחרוזת
+                // Improvement: use the object's pointer address in the cache instead of a string
                 const IAsset* cacheKey = &asset;
 
                 auto cacheIt = m_spriteScaleCache.find(cacheKey);

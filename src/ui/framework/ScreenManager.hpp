@@ -1,6 +1,6 @@
-// מנהל המסכים המחזיק את מחסנית המסכים ומבצע את פעולות המעבר בצורה בטוחה
-// בסוף מחזור העדכון באמצעות מנגנון Pending Actions.
-// כך נמנעים ממחיקת מסך בזמן שהוא עדיין מריץ update()/handleInput().
+// Screen manager that holds the screen stack and performs transitions safely
+// At the end of the update cycle using the Pending Actions mechanism.
+// This prevents removing a screen while it is still running update()/handleInput().
 
 #pragma once
 
@@ -30,8 +30,8 @@ private:
 
 private:
 
-    // מסיר את כל המסכים מהמחסנית.
-    // משמש בעת החלפת כל המסכים במסך חדש.
+    // Remove all screens from the stack.
+    // Used when replacing all screens with a new screen.
     void clearScreens() {
         while (!m_screens.empty()) {
             m_screens.back()->onExit();
@@ -74,12 +74,12 @@ private:
         }
     }
 
-    // מבצע את כל הפעולות שנדחו.
-    // onEnter()/onExit() יכולים בעצמם לבצע push/pop/change.
-    // לכן אי אפשר לעבור ישירות על m_pendingActions,
-    // אחרת vector עלול להשתנות בזמן האיטרציה.
-    // הפתרון הוא להעביר (move) את כל הפעולות לרשימה זמנית,
-    // לבצע אותן, ואז לבדוק האם נוספו פעולות חדשות.
+    // Execute all deferred actions.
+    // onEnter()/onExit() may themselves perform push/pop/change.
+    // Therefore, one cannot iterate directly over m_pendingActions,
+    // otherwise the vector may change during iteration.
+    // The solution is to move all actions into a temporary list,
+    // execute them, and then check whether new actions were added.
     void applyPendingActions() {
         while (!m_pendingActions.empty()) {
 
@@ -96,32 +96,32 @@ public:
 
     ScreenManager() = default;
 
-    // אין צורך לקרוא ל-onExit().
-    // ה-unique_ptr ידאג להשמיד את כל המסכים בצורה אוטומטית.
+    // There is no need to call onExit().
+    // The unique_ptr will automatically destroy all screens.
     ~ScreenManager() = default;
 
     ScreenManager(const ScreenManager&) = delete;
     ScreenManager& operator=(const ScreenManager&) = delete;
 
-    // מחליף את כל מחסנית המסכים במסך חדש.
+    // Replaces the entire screen stack with a new screen.
     void changeScreen(std::unique_ptr<IScreen> newScreen) {
         m_pendingActions.push_back(
             { PendingActionType::Change, std::move(newScreen) });
     }
 
-    // מוסיף מסך חדש מעל המסך הפעיל.
+    // Adds a new screen on top of the active screen.
     void pushScreen(std::unique_ptr<IScreen> newScreen) {
         m_pendingActions.push_back(
             { PendingActionType::Push, std::move(newScreen) });
     }
 
-    // מסיר את המסך העליון.
+    // Removes the top screen.
     void popScreen() {
         m_pendingActions.push_back(
             { PendingActionType::Pop, nullptr });
     }
 
-    // מעדכן את המסך הפעיל.
+    // Updates the active screen.
     void update(float deltaTime) {
         applyPendingActions();
 
@@ -130,14 +130,14 @@ public:
         }
     }
 
-    // מצייר את המסך הפעיל.
+    // Draws the active screen.
     void draw(IRenderer& renderer) {
         if (!m_screens.empty()) {
             m_screens.back()->draw(renderer);
         }
     }
 
-    // מעביר את אירועי הקלט למסך הפעיל בלבד.
+    // Routes input events to the active screen only.
     void handleInput(const std::vector<InputEvent>& events) {
         if (!m_screens.empty()) {
             m_screens.back()->handleInput(events);

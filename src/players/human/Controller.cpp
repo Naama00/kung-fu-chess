@@ -18,7 +18,7 @@ ControllerResult Controller::click(int x, int y) {
     int cols = engine_->getBoardCols();
     auto cellOpt = mapper_.pixelToCell(x, y, rows, cols);
 
-    // 1. קליק מחוץ לגבולות הלוח - התעלמות מוחלטת
+    // 1. Click outside the board boundaries — ignore completely
     if (!cellOpt.has_value()) {
         result.description = "Click outside board ignored";
         return result;
@@ -26,7 +26,7 @@ ControllerResult Controller::click(int x, int y) {
 
     Position targetCell = cellOpt.value();
 
-    // 2. קליק בתוך הלוח כאשר כבר קיים כלי מסומן
+    // 2. Click inside the board when a piece is already selected
     if (selectedPosition_.has_value()) {
         Position from = selectedPosition_.value();
 
@@ -55,8 +55,8 @@ ControllerResult Controller::click(int x, int y) {
             return result;
         }
 
-        // ניסיון ראשון: שלח את בקשת התנועה למנוע המשחק.
-        // אם המשבצת פנויה פיזית בלוח (אפילו אם כלי אחר בדרך אליה), המנוע יאשר את התנועה!
+        // First attempt: send the movement request to the game engine.
+        // If the square is physically empty on the board (even if another piece is on its way), the engine will accept the move!
         auto moveResult = engine_->requestMove(from, targetCell);
         
         if (moveResult.isAccepted) {
@@ -71,7 +71,7 @@ ControllerResult Controller::click(int x, int y) {
             return result;
         }
 
-        // ניסיון שני: אם המהלך נדחה, נבדוק אם המשתמש ניסה להחליף סימון לכלי ידידותי אחר
+        // Second attempt: if the move is rejected, check whether the user tried to switch selection to another friendly piece
         if (engine_->hasPieceAt(targetCell)) {
             auto targetColor = engine_->getPieceColorAt(targetCell);
             if (targetColor.has_value() && targetColor.value() == selectedColor_.value()) {
@@ -83,14 +83,14 @@ ControllerResult Controller::click(int x, int y) {
             }
         }
 
-        // אם המהלך נדחה וזו לא הייתה החלפת סימון חוקית, ננקה את הסימון ונחזיר את סיבת הדחייה
+        // If the move is rejected and it was not a legal selection switch, clear the selection and return the rejection reason
         clearSelection();
         result.actionTaken = true;
         result.description = "Move rejected: " + moveResult.reason;
         return result;
     }
 
-    // 3. קליק בתוך הלוח ללא כלי מסומן כרגע (קליק ראשון)
+    // 3. Click inside the board without a piece currently selected (first click)
     if (engine_->hasPieceAt(targetCell)) {
         selectedPosition_ = targetCell;
         selectedColor_ = engine_->getPieceColorAt(targetCell);

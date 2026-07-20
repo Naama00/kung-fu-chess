@@ -16,11 +16,11 @@ TEST_CASE("Asynchronous Network Matchmaking and Move Relay Integration Test", "[
     
     const std::uint16_t testPort = 8086;
 
-    // 1. הגדרת מנהל המשחקים והשוער בשרת
+    // 1. Define the game manager and the server lobby
     auto matchManager = std::make_shared<MatchManager>(serverIo);
     auto server = std::make_unique<NetworkServer>(serverIo, testPort, *matchManager);
 
-    // 2. הרצת לולאת האירועים של השרת ב-thread נפרד
+    // 2. Run the server event loop in a separate thread
     std::thread serverThread([&]() {
         serverIo.run();
     });
@@ -31,55 +31,55 @@ TEST_CASE("Asynchronous Network Matchmaking and Move Relay Integration Test", "[
         clientIo.run();
     });
 
-    // 4. אתחול של שני שחקני רשת עצמאיים
+    // 4. Initialize two independent network players
     auto player1 = std::make_shared<NetworkPlayer>(clientIo, "127.0.0.1", "8086");
     auto player2 = std::make_shared<NetworkPlayer>(clientIo, "127.0.0.1", "8086");
 
-    // 5. התחברות לשרת בצורה אסינכרונית (שיגור בקשת JOIN)
+    // 5. Connect to the server asynchronously (send a JOIN request)
     player1->connectAndJoin();
     player2->connectAndJoin();
 
-    // המתנה חכמה ודינמית של עד 3 שניות לסיום השידוך בשרת
+    // Smart, dynamic wait of up to 3 seconds for matchmaking to finish on the server
     int retries = 30;
     while (retries > 0 && player1->matchId() == 0) {
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
         retries--;
     }
 
-    // וידוא שהלקוחות מחוברים היטב
+    // Verify that the clients are connected properly
     REQUIRE(player1->isConnected() == true);
     REQUIRE(player2->isConnected() == true);
 
-    // וידוא שהשידוך הצליח והם שויכו לאותו משחק
+    // Verify that matchmaking succeeded and they were assigned to the same game
     REQUIRE(player1->matchId() == player2->matchId());
     REQUIRE(player1->matchId() != 0);
     
-    // וידוא שהשרת הקצה להם צבעים שונים
+    // Verify that the server assigned them different colors
     REQUIRE(player1->assignedColor() != player2->assignedColor());
 
-    // 6. שליחת מהלך בדיקה משחקן 1 (e2 -> e4)
+    // 6. Send a test move from player 1 (e2 -> e4)
     PlayerAction testAction({6, 4}, {4, 4});
     player1->sendMoveToServer(testAction);
 
-   // המתנה חכמה ודינמית של עד 3 שניות לסיום השידוך בשרת
+   // Smart, dynamic wait of up to 3 seconds for matchmaking to finish on the server
     retries = 30;
     while (retries > 0 && player1->matchId() == 0) {
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
         retries--;
     }
 
-    // דגימת המהלכים שהתקבלו אצל שחקן 2
+    // Sample the moves received by player 2
     view::GameSnapshot dummySnapshot{};
     auto receivedActions = player2->decideActions(dummySnapshot);
 
-    // וידוא מלא ששחקן 2 קיבל בדיוק את אותו המהלך שהשני ביצע!
+    // Fully verify that player 2 received exactly the same move that the other player made!
     REQUIRE(receivedActions.size() == 1);
     REQUIRE(receivedActions[0].action.from == testAction.from);
     REQUIRE(receivedActions[0].action.to == testAction.to);
 
     std::cout << "[Catch2 Test] Matchmaking and move relay verified successfully!" << std::endl;
 
-    // 7. ניקוי ועצירה אטומיים של הלולאות לטובת סיום הטסט בצורה נקייה
+    // 7. Atomically clean up and stop the loops to end the test cleanly
     serverIo.stop();
     clientIo.stop();
 

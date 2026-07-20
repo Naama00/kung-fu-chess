@@ -51,7 +51,7 @@ public:
             }
         }
 
-        // יצירה דינמית מנוהלת של ה-Sound באמצעות הבנאי של SFML 3 המחייב קבלת Buffer
+        // Dynamically managed creation of the Sound using the SFML 3 constructor that requires a Buffer
         auto sound = std::make_unique<sf::Sound>(it->second);
         sound->setLooping(true);
         sound->play();

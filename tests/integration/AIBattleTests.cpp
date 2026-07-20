@@ -23,7 +23,7 @@ TEST_CASE("Integration match between EasyAI and HardAI does not crash or hang", 
     auto ruleEngine = std::make_shared<kungfu::RuleEngine>(board);
     auto gameEngine = std::make_shared<kungfu::GameEngine>(board, ruleEngine);
 
-    // יצירת הבוטים באמצעות הטיפוסים הקונקרטיים בפרויקט שלך
+    // Create the bots using the concrete project-specific types
     kungfu::GenericAIPlayer easyAI(
         kungfu::PlayerColor::White, 
         std::make_unique<kungfu::RealTimeEasyStrategy>()

@@ -7,7 +7,7 @@ namespace kungfu {
 
 class PieceValues {
 public:
-    // ערכים מסורתיים (למשל, עבור הצגת מאזן כוחות ב-UI)
+    // Traditional values (for example, for displaying a material balance in the UI)
     static int getStandardValue(PieceType type) noexcept {
         switch (type) {
             case PieceType::Pawn:   return 1;
@@ -15,12 +15,12 @@ public:
             case PieceType::Bishop: return 3;
             case PieceType::Rook:   return 5;
             case PieceType::Queen:  return 9;
-            case PieceType::King:   return 0; // המלך אינו נספר בחישוב הניקוד החומרי הסטנדרטי (מקסימום 39)
+            case PieceType::King:   return 0; // the king is not counted in the standard material scoring calculation (maximum 39)
             default:                return 0;
         }
     }
 
-    // ערכים ב-Centipawns (עבור הערכות מנוע, AI וטקטיקה)
+    // Values in centipawns (for engine, AI, and tactical evaluation)
     static int getCentipawnValue(PieceType type) noexcept {
         switch (type) {
             case PieceType::Pawn:   return 100;

@@ -1,5 +1,5 @@
-// תפקיד: ממשק מופשט המגדיר את הדרכים להעריך "כמה טוב" המצב הנוכחי של הלוח עבור שחקן מסוים 
-// (החזרת ניקוד מספרי – Score).
+// Role: abstract interface defining how to evaluate how good the current board state is for a specific player 
+// (return a numeric score).
 #pragma once
 
 #include "engine/snapshot/GameSnapshot.hpp"

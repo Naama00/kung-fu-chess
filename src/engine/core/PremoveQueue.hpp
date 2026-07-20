@@ -13,12 +13,12 @@ using MoveExecutor = std::function<MoveResult(const Position& from, const Positi
 
 class PremoveQueue {
 public:
-    // רושמת premove חדש, או מעדכנת premove קיים לאותו כלי.
-    // רק היעד (to) נשמר - הביצוע תמיד ישתמש במיקום החי של הכלי כ-from,
-    // כי הכלי עשוי לזוז בינתיים (למשל אחרי שהמהלך הקודם שלו נחת).
+    // Registers a new premove, or updates an existing premove for the same piece.
+    // Only the destination (to) is stored — execution always uses the piece's current live position as from,
+    // because the piece may move in the meantime (for example after its previous move has landed).
     void registerOrUpdate(const PiecePtr& piece, const Position& to);
-    // מבטלת premove קיים לכלי נתון (אם קיים).
-    // נקראת כאשר השחקן מבצע מהלך לא חוקי – הכוונה לדרוס ולבטל את ה-premove.
+    // Cancels an existing premove for a given piece (if one exists).
+    // Called when the player makes an illegal move — intended to override and cancel the premove.
     void cancel(const PiecePtr& piece) noexcept;
     void replacePiece(const PiecePtr& oldPiece, const PiecePtr& newPiece) noexcept;
     void processReady(const PieceBusyPredicate& isBusy, const MoveExecutor& execute);

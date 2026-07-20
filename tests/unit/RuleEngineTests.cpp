@@ -25,25 +25,25 @@ TEST_CASE("Piece Specific Rules Integration", "[rules]") {
     SECTION("Rook sliding and blocking") {
         std::string boardStr =
             ". . . . .\n"
-            ". wR . bP .\n" // הצריח ב-(1,1) חסום על ידי כלי עוין ב-(1,3) ויכול לאכול אותו
+            ". wR . bP .\n" // The rook at (1,1) is blocked by an enemy piece at (1,3) and can capture it
             ". . . . .\n"
-            ". wP . . .\n" // הצריח חסום על ידי כלי ידידותי ב-(3,1) ואינו יכול להגיע אליו או לעבור אותו
+            ". wP . . .\n" // The rook is blocked by a friendly piece at (3,1) and cannot reach it or pass through it
             ". . . . .\n";
 
         auto board = kungfu::BoardParser::parse(boardStr);
         REQUIRE(board != nullptr);
         kungfu::RuleEngine engine(board);
 
-        // תנועה ימינה פנויה
+        // Clear move to the right
         REQUIRE(engine.validateMove(kungfu::Position(1, 1), kungfu::Position(1, 2)).isValid);
 
-        // אכילה של כלי עוין ביעד מותרת
+        // Capturing an enemy piece at the target is allowed
         REQUIRE(engine.validateMove(kungfu::Position(1, 1), kungfu::Position(1, 3)).isValid);
 
-        // מעבר מעבר לכלי עוין חסום אסור
+        // Passing through an enemy piece is forbidden
         REQUIRE_FALSE(engine.validateMove(kungfu::Position(1, 1), kungfu::Position(1, 4)).isValid);
 
-        // חסימה על ידי כלי ידידותי
+        // Blocked by a friendly piece
         auto blockResult = engine.validateMove(kungfu::Position(1, 1), kungfu::Position(3, 1));
         REQUIRE_FALSE(blockResult.isValid);
         REQUIRE(blockResult.reason == "friendly_destination");

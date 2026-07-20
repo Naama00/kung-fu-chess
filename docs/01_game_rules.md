@@ -1,26 +1,26 @@
-# חוקי המשחק ותנועת הכלים (Game Rules)
+# Game rules and piece movement
 
-קובץ זה מתעד את חוקי השחמט הבסיסיים המיושמים בפרויקט. חוקים אלו מהווים את התשתית הלוגית הסטטית שאינה תלויה בזמן אמת, והם נאכפים על ידי רכיב ה-`RuleEngine`.
+This file documents the basic chess rules implemented in the project. These rules form the static logical foundation that does not depend on real time, and they are enforced by the `RuleEngine` component.
 
-## 1. תנאי הניצחון והסיום
-* **לכידה פיזית של המלך:** במשחק זה אין מושג של "שח" או "מט" (מכיוון שהמשחק סימולטני ושחקן יכול להפקיר את המלך שלו או לנוע איתו לתוך איום).
-* **סיום המשחק:** המשחק מסתיים באופן מיידי ברגע שאחד השחקנים מצליח להגיע פיזית למשבצת המלך של היריב וללכוד אותו (`capturedKing = true`).
+## 1. Victory and game-end conditions
+* **Physical capture of the king:** in this game there is no concept of "check" or "checkmate" (because the game is simultaneous and a player can abandon their king or move it into danger).
+* **Game end:** the game ends immediately once one player reaches the opponent king's square physically and captures it (`capturedKing = true`).
 
-## 2. חוקי התנועה של הכלים (Piece Movements)
-התנועות הגיאומטריות הסטנדרטיות מיושמות באמצעות המחלקות היורשות מ-`IPieceRule`:
+## 2. Piece movement rules
+Standard geometric movements are implemented using classes inheriting from `IPieceRule`:
 
-* **צריח (Rook):** נע בקו ישר (אופקית ואנכית) לכל מרחק, כל עוד הנתיב פנוי. נחסם על ידי הכלי הראשון בדרכו (אם מדובר בכלי אויב - יכול ללכוד אותו).
-* **רץ (Bishop):** נע באלכסון לכל מרחק, כל עוד הנתיב פנוי. נחסם על ידי הכלי הראשון בדרכו.
-* **מלכה (Queen):** משלבת את חוקי התנועה של הצריח והרץ.
-* **מלך (King):** נע משבצת אחת לכל כיוון (אנכית, אופקית או אלכסונית).
-* **רגלי (Pawn):**
-  * צעד אחד קדימה (בהתאם לצבע: לבן נע מעלה בשורות, שחור נע מטה).
-  * צעד כפול קדימה כצעד ראשון בלבד, בתנאי ששתי המשבצות בדרך פנויות.
-  * הכאה אלכסונית של משבצת אחת קדימה-ימינה או קדימה-שמאלה, רק אם נמצא שם כלי אויב.
-* **פרש (Knight):** נע בתנועת "L" (שתי משבצות לכיוון אחד ומשבצת אחת הצידה). 
-  * *תכונה מיוחדת:* הפרש מדלג מעל כלים אחרים הנמצאים במסלולו, ואינו נחסם על ידיהם במהלך התנועה.
+* **Rook:** moves in a straight line (horizontally or vertically) any distance, as long as the path is clear. It is blocked by the first piece encountered (if it is an enemy piece, it can capture it).
+* **Bishop:** moves diagonally any distance, as long as the path is clear. It is blocked by the first piece encountered.
+* **Queen:** combines the movement rules of the rook and bishop.
+* **King:** moves one square in any direction (vertical, horizontal, or diagonal).
+* **Pawn:**
+   * One step forward (depending on color: white moves upward through the ranks, black moves downward).
+  * Two steps forward only as the first move, provided both squares along the way are empty.
+  * Captures one square diagonally forward-right or forward-left, but only if an enemy piece is there.
+* **Knight:** moves in an "L" shape (two squares in one direction and one square sideways). 
+  * *Special feature:* the knight jumps over other pieces on its path and is not blocked by them during movement.
 
-## 3. הכתרת רגלי (Pawn Promotion)
-מיושם באמצעות המחלקה `ChessPromotionRule`:
-* כאשר רגלי מגיע לשורה האחרונה של הלוח (השורה הגבוהה ביותר עבור לבן, או שורה 0 עבור שחור), הוא מוחלף אוטומטית במלכה באותה קואורדינטת יעד.
+## 3. Pawn promotion
+Implemented using the `ChessPromotionRule` class:
+* When a pawn reaches the last rank of the board (the highest rank for white, or rank 0 for black), it is automatically replaced by a queen at the same target coordinate.
 * תהליך זה מתבצע באופן סינכרוני עם נחיתת הכלי, והכלי החדש (המלכה) מקבל את מזהה הצינון של המהלך.

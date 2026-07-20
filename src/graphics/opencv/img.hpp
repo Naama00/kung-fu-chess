@@ -10,7 +10,7 @@ class Img {
 public:
     Img();
     
-    // קבלת נתיב בצורה יעילה ללא העתקות מיותרות
+    // Retrieve a path efficiently without unnecessary copies
     Img& read(const std::filesystem::path& path,
               const std::pair<int, int>& size = {},
               bool keep_aspect = false,
@@ -31,7 +31,7 @@ public:
 private:
     cv::Mat img;
 
-    // משתני עזר (Buffers) למניעת הקצאות דינמיות בכל פריים מחדש
+    // Helper variables (buffers) to avoid dynamic allocations every frame
     std::vector<cv::Mat> m_srcPlanes;
     std::vector<cv::Mat> m_dstPlanes;
     cv::Mat m_alphaMask;

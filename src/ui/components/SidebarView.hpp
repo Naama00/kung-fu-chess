@@ -7,7 +7,7 @@
 
 class SidebarView {
 private:
-    // מבנה נתונים להגדרת סגנון עיצובי ייחודי לכל פאנל
+    // Data structure for defining a unique visual style for each panel
     struct PanelStyle {
         Color headerText;
         Color defaultText;
@@ -18,8 +18,8 @@ private:
     };
 
     /**
-     * פונקציית עזר פרטית המונעת כפילות קוד (DRY).
-     * מציירת פאנל היסטוריית מהלכים יחיד על בסיס מיקום אנכי וסגנון נתון.
+     * Private helper function that prevents code duplication (DRY).
+     * Draws a single move-history panel based on a vertical position and style.
      */
     void drawHistoryPanel(IRenderer& renderer,
                           const std::string& title,
@@ -28,15 +28,15 @@ private:
                           Color borderThemeColor,
                           const PanelStyle& style) const
     {
-        // 1. רקע הפאנל והגבול החיצוני
+        // 1. Panel background and outer border
         renderer.drawRectangle({810.0f, startY}, {180.0f, 360.0f}, {30, 30, 40, 255}, true);
         renderer.drawRectangle({810.0f, startY}, {180.0f, 360.0f}, borderThemeColor, false);
         
-        // 2. כותרת הפאנל וקו הפרדה
+        // 2. Panel title and separator line
         renderer.drawText(title, {825.0f, startY + 35.0f}, 13, style.headerText);
         renderer.drawLine({815.0f, startY + 50.0f}, {985.0f, startY + 50.0f}, {50, 50, 65, 255}, 1.0f);
 
-        // 3. ריצה על רשימת המהלכים וציורם
+        // 3. Iterate over the move list and draw them
         float logY = startY + 85.0f;
         for (std::size_t i = 0; i < history.size(); ++i)
         {
@@ -44,17 +44,17 @@ private:
             bool isLatest = (i == history.size() - 1);
             Color textColor = style.defaultText;
 
-            // קביעת צבע בסיס לפי תוכן השורה
+            // Determine the base color from the row content
             if (logEntry.find("rejected") != std::string::npos || logEntry.find("failed") != std::string::npos)
             {
-                textColor = {240, 100, 100, 255}; // אדום לכישלון
+                textColor = {240, 100, 100, 255}; // red for failure
             }
             else if (logEntry.find("ok") != std::string::npos || logEntry.find("Connected") != std::string::npos || logEntry.find(":") != std::string::npos)
             {
-                textColor = {100, 210, 130, 255}; // ירוק להצלחה
+                textColor = {100, 210, 130, 255}; // green for success
             }
 
-            // הדגשה ויזואלית מיוחדת עבור המהלך האחרון ברשימה
+            // Special visual emphasis for the last move in the list
             if (isLatest && history.size() > 1)
             {
                 renderer.drawRectangle({816.0f, logY - 5.0f}, {176.0f, 22.0f}, style.highlightFill, true);
@@ -81,7 +81,7 @@ public:
     SidebarView() = default;
     ~SidebarView() = default;
 
-    // מניעת העתקה מטעמי יעילות
+    // Prevent copying for efficiency
     SidebarView(const SidebarView&) = delete;
     SidebarView& operator=(const SidebarView&) = delete;
     SidebarView(SidebarView&&) noexcept = default;
@@ -96,11 +96,11 @@ public:
               Color bgThemeColor,
               Color borderThemeColor) const 
     {
-        // 1. רקע הפאנל הראשי הכללי וקו הגבול השמאלי
+        // 1. Main panel background and left border line
         renderer.drawRectangle({800.0f, 100.0f}, {200.0f, 800.0f}, bgThemeColor, true);
         renderer.drawLine({800.0f, 100.0f}, {800.0f, 900.0f}, borderThemeColor, 2.0f);
 
-        // 2. הגדרת ערכות העיצוב (Styles) המדויקות לכל צד
+        // 2. Define the precise style sets for each side
         PanelStyle blackStyle{
             {160, 160, 175, 255}, // headerText
             {170, 170, 185, 255}, // defaultText
@@ -119,7 +119,7 @@ public:
             {160, 255, 160, 255}  // latestSuccessText
         };
 
-        // 3. קריאה לפונקציית העזר המשותפת לשני הפאנלים במקומות הנדרשים
+        // 3. Call the shared helper function for both panels where needed
         drawHistoryPanel(renderer, "BLACK MOVES", blackHistory, 110.0f, borderThemeColor, blackStyle);
         drawHistoryPanel(renderer, "WHITE MOVES", whiteHistory, 490.0f, borderThemeColor, whiteStyle);
     }

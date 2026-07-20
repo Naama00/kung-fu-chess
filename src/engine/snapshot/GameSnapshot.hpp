@@ -15,13 +15,13 @@ struct PieceSnapshot {
     PieceState state;
     bool hasMoved = false;
     
-    // מיקומי ציור בפיקסלים לטובת ה-Renderer
+    // Drawing positions in pixels for the Renderer
     float pixelX;
     float pixelY;
 
-    // אחוז התקדמות הצינון (0.0f = מוכן, >0.0f = בטעינה). מחושב מראש כאן,
-    // בזמן בניית ה-Snapshot, כדי שכל צרכן (View) לא יצטרך לבצע חיפוש נוסף
-    // אחר הכלי בלוח כדי לשאול את ה-Arbiter בעצמו.
+    // Cooldown progress percentage (0.0f = ready, >0.0f = charging). Precomputed here,
+    // During snapshot construction, so every consumer (View) does not need to perform an extra search
+    // after the piece on the board to query the Arbiter itself.
     float cooldownProgress = 0.0f;
 };
 

@@ -23,17 +23,17 @@ public:
     ParticleSystem() = default;
     ~ParticleSystem() = default;
 
-    // מניעת העתקה כדי למנוע כפילות מיותרת בזיכרון
+    // Prevent copying to avoid unnecessary duplicate memory usage
     ParticleSystem(const ParticleSystem&) = delete;
     ParticleSystem& operator=(const ParticleSystem&) = delete;
     ParticleSystem(ParticleSystem&&) noexcept = default;
     ParticleSystem& operator=(ParticleSystem&&) noexcept = default;
 
     /**
-     * יצירת פיצוץ חלקיקים במיקום מוגדר ובצבע בסיס נתון.
+     * Create a particle burst at a given position and base color.
      */
     void spawnExplosion(Vector2D center, Color baseColor) {
-        // יצירת 35 חלקיקים בכיוונים אקראיים
+        // Create 35 particles in random directions
         for (int i = 0; i < 35; ++i) {
             Particle p;
             p.position = center;
@@ -43,14 +43,14 @@ public:
 
             p.velocity = {
                 std::cos(angle) * speed,
-                std::sin(angle) * speed - 60.0f // דחיפה קלה מעלה לאפקט מזרקה
+                std::sin(angle) * speed - 60.0f // a gentle upward push for the fountain effect
             };
 
-            // יצירת מגוון ויזואלי עם ניצוצות זהב ואדום
+            // Create a visually varied effect with gold and red sparks
             if (std::rand() % 4 == 0) {
-                p.color = Color{240, 190, 70, 255}; // ניצוץ זהב
+                p.color = Color{240, 190, 70, 255}; // Gold spark
             } else if (std::rand() % 5 == 0) {
-                p.color = Color{215, 60, 60, 255};  // ניצוץ חיכוך אדום
+                p.color = Color{215, 60, 60, 255};  // Red friction spark
             } else {
                 p.color = baseColor;
             }
@@ -64,7 +64,7 @@ public:
     }
 
     /**
-     * עדכון מיקום החלקיקים, הפעלת כוח כבידה והסרת חלקיקים שפג תוקפם.
+     * Update particle positions, apply gravity, and remove expired particles.
      */
     void update(float deltaTime) {
         for (auto it = m_particles.begin(); it != m_particles.end(); ) {
@@ -74,7 +74,7 @@ public:
             } else {
                 it->position.x += it->velocity.x * deltaTime;
                 it->position.y += it->velocity.y * deltaTime;
-                it->velocity.y += 120.0f * deltaTime; // כוח כבידה
+                it->velocity.y += 120.0f * deltaTime; // gravity
                 ++it;
             }
         }

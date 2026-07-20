@@ -18,7 +18,7 @@
 
 namespace kungfu {
 
-// הצהרה מוקדמת (Forward Declaration) בלבד למשקיף
+// Forward declaration only for the observer
 class IGameObserver;
 
 class GameEngine : public IGameEngine {
@@ -63,7 +63,7 @@ private:
     PiecePtr pendingTurnPiece_;   
     std::vector<MoveResult> premoveFailures_;
     std::shared_ptr<EventBus> eventBus_;    
-    std::vector<std::shared_ptr<IGameObserver>> observers_; // רשימת המשקיפים
+    std::vector<std::shared_ptr<IGameObserver>> observers_; // list of observers
 };
 
 }  // namespace kungfu

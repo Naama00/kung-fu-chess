@@ -29,7 +29,7 @@ MoveResult GameEngine::requestMove(const Position& from, const Position& to) {
         return {false, "internal_error"};
     }
 
-    // 1. איתור הכלי (על הלוח או בתנועה)
+    // 1. Locate the piece (on the board or in motion)
     auto sourcePieceOpt = board_->pieceAt(from);
     if (!sourcePieceOpt.has_value() || !sourcePieceOpt.value()) {
         sourcePieceOpt = arbiter_.getPieceInTransitAt(from);
@@ -40,9 +40,9 @@ MoveResult GameEngine::requestMove(const Position& from, const Position& to) {
     }
     auto piece = sourcePieceOpt.value();
 
-    // 2. שאילתת מצב פיזיקלי דרך ה-Arbiter בלבד (DIP)
+    // 2. Query physical state through the Arbiter only (DIP)
 if (arbiter_.isOnCooldown(piece, currentTimeMs_)) {
-    // אם המשחק במצב סימולטני ופרה-מובס מאופשרים, נאפשר לרשום פרה-מוב גם בזמן שהכלי בצינון
+    // If the game is in simultaneous mode and premoves are enabled, allow a premove to be registered even while the piece is in cooldown
     if (config_.allowSimultaneousMovement && config_.enablePremoves && from != to) {
         return handlePremoveRegistration(piece, from, to);
     }
@@ -50,14 +50,14 @@ if (arbiter_.isOnCooldown(piece, currentTimeMs_)) {
 }
 
     if (arbiter_.isPieceBusy(piece, currentTimeMs_)) {
-        // מניעת רישום פרה-מוב של קפיצה עצמית (מניעת קפיצה אוטומטית לאחר צינון)
+        // Prevent registering a premove for a self-jump (to avoid automatic jumping after cooldown)
         if (from == to) {
             return {false, "piece_on_cooldown"};
         }
         return handlePremoveRegistration(piece, from, to);
     }
 
-    // 3. אימות תורות וחוקיות סימולטנית
+    // 3. Validate turns and simultaneous legality
     if (!config_.allowSimultaneousMovement) {
         if (piece->color() != currentTurn_) {
             return {false, "not_your_turn"};
@@ -67,7 +67,7 @@ if (arbiter_.isOnCooldown(piece, currentTimeMs_)) {
         }
     }
 
-    // 4. אימות חוקי תנועה מול ה-RuleEngine הגיאומטרי (מהלך רגיל)
+    // 4. Validate movement rules against the geometric RuleEngine (normal move)
     if (from != to) {
         auto validation = ruleEngine_->validateMove(from, to);
         if (!validation.isValid) {
@@ -82,12 +82,12 @@ if (arbiter_.isOnCooldown(piece, currentTimeMs_)) {
         }
     }
 
-    // 5. האצלת ביצוע התנועה המלאה ל-Arbiter (עקרון ה-SRP)
+    // 5. Delegate the full motion execution to the Arbiter (SRP principle)
     auto result = arbiter_.executeMove(piece, from, to, currentTimeMs_);
 
-    // 6. עדכון מצב משחק עליון (החלפת תורות) במידת הצורך
+    // 6. Update the overall game state (turn change) as needed
     if (result.isAccepted && !config_.allowSimultaneousMovement) {
-        pendingTurnPiece_ = piece; // שמירה לצורך איפוס תור אחרי צינון
+        pendingTurnPiece_ = piece; // Save for resetting the turn after cooldown
         advanceTurn();
     }
 
@@ -108,7 +108,7 @@ std::vector<ActionResult> GameEngine::processActionRequests(const std::vector<Ac
 }
 
 MoveResult GameEngine::handlePremoveRegistration(const PiecePtr& piece, const Position& from, const Position& to) noexcept {
-    // במצב תורות (לא-סימולטני), פרה-מוב אינו נתמך ללא קשר לדגל enablePremoves
+    // In turn-based mode (non-simultaneous), premoves are not supported regardless of the enablePremoves flag
     if (!config_.allowSimultaneousMovement) {
         if (arbiter_.isPieceMoving(piece) || piece->state() == PieceState::Airborne) {
             return {false, "motion_in_progress"};
@@ -153,7 +153,7 @@ void GameEngine::wait(int ms) noexcept {
         if (event.capturedKing) {
             gameOver_ = true;
             
-            // פרסום אירוע סיום משחק ב-Bus
+            // Publish the game-over event on the Bus
             if (eventBus_) {
                 GameTransitionEvent endEvent{
                     GameTransitionType::Ended,
@@ -163,11 +163,11 @@ void GameEngine::wait(int ms) noexcept {
             }
         }
         
-        // הפצת האירוע הגנרי לBUS
+        // Publish the generic event to the BUS
         if (eventBus_) {
-            // 1. פרסום אירוע סיום מהלך
+            // 1. Publish a move-completion event
             eventBus_->publish(MoveCompletedEvent{event}); 
-            // 2. פרסום אוטומטי של אירוע שמע מתאים לפי אופי הפעולה
+            // 2. Automatically publish an appropriate sound event based on the action type
             if (event.capturedKing) {
                 eventBus_->publish(PlaySoundEvent{"game_over"});
             } else if (event.isCapture) {
@@ -176,13 +176,13 @@ void GameEngine::wait(int ms) noexcept {
                 eventBus_->publish(PlaySoundEvent{"move"});
             }
             
-            // 3. חישוב ופרסום שינוי ניקוד מעודכן
-            int whiteScore = PositionEvaluator::evaluateBalance(*board_, arbiter_); // או לוגיקת חישוב חומרי פשוטה
-            int blackScore = -whiteScore; // או החישוב הקיים ב-ChessGameScreen של ניקוד הכלים
+            // 3. Calculate and publish the updated score change
+            int whiteScore = PositionEvaluator::evaluateBalance(*board_, arbiter_); // or simple material-based scoring logic
+            int blackScore = -whiteScore; // or the existing piece-scoring logic in ChessGameScreen
             eventBus_->publish(ScoreChangedEvent{whiteScore, blackScore});
         }
 
-        // השארת מנגנון ה-Observers הקיים כדי לא לשבור תלויות קודמות במכה אחת:
+        // Keep the existing observer mechanism so as not to break prior dependencies in one shot:
         for (auto& observer : observers_) {
             observer->onMoveCompleted(event, currentTimeMs_);
         }

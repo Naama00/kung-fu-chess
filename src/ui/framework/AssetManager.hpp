@@ -1,6 +1,6 @@
-// רכיב זה משתמש בטכניקה של מחיקת טיפוסים (Type Erasure) על ידי החזקת מצביעים למחלקת בסיס ריקה IAsset
-// ה-AssetManager מאפשר לטעון כל משאב גרפי (כמו תמונות, גופנים או קטעי שמע) בצורה מנותקת,
-// ומספק גישה אליהם באמצעות ביצוע המרה דינמית (dynamic_cast) לטיפוס הקונקרטי רק בזמן הציור ב-Backend
+// This component uses type erasure by holding pointers to the empty base class IAsset
+// The AssetManager can load any graphical resource (such as images, fonts, or sound clips) in a decoupled way,
+// and provide access to them through dynamic_cast to the concrete type only when drawing in the Backend
 #pragma once
 #include <string>
 #include <unordered_map>
@@ -10,7 +10,7 @@
 #include <utility>
 #include <type_traits>
 
-// מחלקת בסיס ריקה לייצוג משאב מופשט בזיכרון
+// Empty base class for representing an abstract resource in memory
 class IAsset {
 public:
     virtual ~IAsset() = default;
@@ -18,14 +18,14 @@ public:
 
 class AssetManager {
 private:
-    // מיפוי בין מזהה טקסטואלי ייחודי לבין המשאב המופשט שלו בזיכרון
+    // Mapping from a unique textual identifier to its abstract resource in memory
     std::unordered_map<std::string, std::unique_ptr<IAsset>> m_assets;
 
 public:
     AssetManager() = default;
     ~AssetManager() = default;
 
-    // מניעת העתקה של מנהל הנכסים כדי למנוע כפילויות משאבים ובעיות בעלות על זיכרון
+    // Prevent copying the asset manager to avoid duplicate resources and memory ownership issues
     AssetManager(const AssetManager&) = delete;
     AssetManager& operator=(const AssetManager&) = delete;
     
@@ -33,25 +33,25 @@ public:
     AssetManager& operator=(AssetManager&&) noexcept = default;
 
     /**
-     * טעינה ורישום של משאב חדש במערכת.
-     * @tparam T סוג המשאב הקונקרטי (חייב לרשת מ-IAsset).
-     * @param assetId המזהה הטקסטואלי הייחודי שנשתמש בו לגישה למשאב.
-     * @param args הפרמטרים שיועברו לבנאי של המשאב הקונקרטי (למשל נתיב לקובץ).
+     * Load and register a new resource in the system.
+     * @tparam T The concrete resource type (must inherit from IAsset).
+     * @param assetId The unique textual identifier used to access the resource.
+     * @param args Parameters passed to the concrete resource constructor (for example a file path).
      */
     template <typename T, typename... Args>
     void loadAsset(const std::string& assetId, Args&&... args) {
         static_assert(std::is_base_of_v<IAsset, T>, "T must derive from IAsset");
         
         if (m_assets.find(assetId) != m_assets.end()) {
-            return; // המשאב כבר קיים בזיכרון, אין צורך לטעון שוב
+            return; // The resource already exists in memory, no need to load it again
         }
 
-        // בונים את האובייקט לפני ההכנסה למפה, במקום
+        // Construct the object before inserting it into the map, instead of
         // m_assets[assetId] = std::make_unique<T>(...).
-        // אם הבנייה זורקת חריגה (למשל קובץ תמונה חסר), חשוב שהמפה לא תכיל
-        // entry ריק עבור assetId זה - אחרת הבדיקה למעלה תחשוב שהנכס "כבר
-        // נטען" בכל קריאה עתידית, והנכס לא ייטען לעולם שוב באותה ריצה,
-        // אפילו אם התיקון בפועל (למשל הוספת הקובץ החסר) כבר בוצע.
+        // If construction throws an exception (for example a missing image file), it is important that the map does not contain
+        // an empty entry for this assetId — otherwise the check above will think the asset "already
+        // loaded" on every future call, and the asset will never be loaded again in the same run,
+        // even if the actual fix (for example adding the missing file) has already been done.
         auto asset = std::make_unique<T>(std::forward<Args>(args)...);
         m_assets.emplace(assetId, std::move(asset));
     }
@@ -78,12 +78,12 @@ public:
         return *casted;
     }
 
-    // הסרת משאב ספציפי מהזיכרון
+    // Remove a specific resource from memory
     void unloadAsset(std::string_view assetId) {
         m_assets.erase(std::string(assetId));
     }
 
-    // ניקוי מוחלט של כל המשאבים הטעונים
+    // Completely clear all loaded resources
     void clear() {
         m_assets.clear();
     }

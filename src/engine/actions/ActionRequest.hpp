@@ -7,13 +7,13 @@
 
 namespace kungfu {
 
-// עוטף PlayerAction עם הקשר זיהוי: מי שלח ואיזה בקשה.
-// requestId מיועד למעקב ודיבוג — מאפשר לקשר בין בקשה לתוצאתה
-// גם כשמספר שחקנים שולחים פעולות בו-זמנית.
+// Wraps PlayerAction with identity context: who sent it and what request it is.
+// requestId is intended for tracking and debugging — it allows linking a request to its result
+// even when multiple players submit actions simultaneously.
 struct ActionRequest {
-    std::uint64_t requestId;    // מזהה ייחודי לבקשה (לצורך מעקב/דיבוג)
-    PlayerColor   playerColor;  // צבע השחקן שהגיש את הבקשה
-    PlayerAction  action;       // הפעולה המבוקשת
+    std::uint64_t requestId;    // unique request identifier (for tracking/debugging)
+    PlayerColor   playerColor;  // color of the player who submitted the request
+    PlayerAction  action;       // requested action
 
     ActionRequest(std::uint64_t requestId, PlayerColor playerColor, PlayerAction action)
         : requestId(requestId), playerColor(playerColor), action(action) {}

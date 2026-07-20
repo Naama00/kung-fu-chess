@@ -15,7 +15,7 @@ public:
     std::vector<ActionRequest> computeActions(const view::GameSnapshot& snapshot, PlayerColor aiColor) override {
         std::vector<IMoveGenerator::MoveCandidate> availableMoves;
 
-        // איסוף מהלכים מכל הכלים שאינם בצינון
+        // Collect moves from all pieces that are not in cooldown
         for (const auto& piece : snapshot.pieces) {
             if (piece.color != aiColor || piece.state == PieceState::Captured) continue;
             if (piece.cooldownProgress > 0.0f || piece.state == PieceState::Moving || piece.state == PieceState::Airborne) continue;
@@ -26,7 +26,7 @@ public:
 
         if (availableMoves.empty()) return {};
 
-        // הרמה הקלה מזיזה רק כלי אחד אקראי לחלוטין ללא שום בדיקה טקטית
+        // The easy level moves only one completely random piece without any tactical checks
         std::uniform_int_distribution<std::size_t> dist(0, availableMoves.size() - 1);
         auto selected = availableMoves[dist(rng_)];
 
@@ -50,7 +50,7 @@ public:
             auto moves = moveGenerator_.generateForPiece(snapshot, piece.logicalPosition);
             if (moves.empty()) continue;
 
-            // בדיקה האם הכלי עצמו מאוים במיקומו הנוכחי
+            // Check whether the piece itself is threatened in its current position
             bool threatened = isSquareThreatened(snapshot, piece.logicalPosition, aiColor);
 
             IMoveGenerator::MoveCandidate bestMove = moves[0];
@@ -59,7 +59,7 @@ public:
             for (const auto& m : moves) {
                 int score = evaluateImmediateCapture(snapshot, m.to);
 
-                // אם הכלי מאוים, עדיפות למהלכי בריחה למשבצת שאינה מאוימת
+                // If the piece is threatened, prefer escape moves to an unthreatened square
                 if (threatened && !isSquareThreatened(snapshot, m.to, aiColor)) {
                     score += PieceValues::getCentipawnValue(piece.type) / 2;
                 }
@@ -70,10 +70,10 @@ public:
                 }
             }
 
-            // הוספת המהלך של כלי זה
+            // Add this piece's move
             selectedActions.emplace_back(0, aiColor, PlayerAction(bestMove.from, bestMove.to));
 
-            // מגבלה סימולטנית: רמת Medium מזיזה עד 2 כלים במקביל
+            // Simultaneous limit: Medium moves up to 2 pieces in parallel
             if (selectedActions.size() >= 2) {
                 break;
             }
@@ -104,17 +104,17 @@ public:
             for (const auto& m : moves) {
                 int score = evaluateImmediateCapture(snapshot, m.to);
 
-                // מניעת כניסה של כלי למשבצת מאוימת
+                // Prevent moving a piece into a threatened square
                 if (isSquareThreatened(snapshot, m.to, aiColor)) {
                     score -= PieceValues::getCentipawnValue(piece.type);
                 }
 
-                // עדיפות עליונה לבריחה מאיומים
+                // Highest priority is to escape threats
                 if (threatened && !isSquareThreatened(snapshot, m.to, aiColor)) {
                     score += PieceValues::getCentipawnValue(piece.type);
                 }
 
-                // עדיפות מוגברת לתקיפת המלך היריב
+                // Increased priority for attacking the opponent king
                 for (const auto& target : snapshot.pieces) {
                     if (target.logicalPosition == m.to && target.type == PieceType::King) {
                         score += 50000;
@@ -128,7 +128,7 @@ public:
             }
 
             selectedActions.emplace_back(0, aiColor, PlayerAction(bestMove.from, bestMove.to));
-            // אין מגבלת סימולטניות ל-Hard (מזיז את כל צבא הכלים בתיאום מושלם!)
+            // There is no simultaneous limit in Hard mode (it moves the entire army of pieces in perfect coordination!)
         }
 
         return selectedActions;

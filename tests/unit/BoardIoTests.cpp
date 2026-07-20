@@ -22,7 +22,7 @@ TEST_CASE("Board Parser and Printer Integration", "[io]") {
     SECTION("Parser rejects non-rectangular boards") {
         std::string invalidBoard = 
             "wK . .\n"
-            ". wP . . .\n"  // שורה ארוכה מדי
+            ". wP . . .\n"  // line too long
             ". . bK\n";
             
         auto board = kungfu::BoardParser::parse(invalidBoard);
@@ -32,7 +32,7 @@ TEST_CASE("Board Parser and Printer Integration", "[io]") {
     SECTION("Parser rejects invalid tokens") {
         std::string invalidTokenBoard = 
             "wK . .\n"
-            ". wX .\n"  // X אינו כלי חוקי בשחמט
+            ". wX .\n"  // X is not a legal chess piece
             ". . bK\n";
             
         auto board = kungfu::BoardParser::parse(invalidTokenBoard);

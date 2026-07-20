@@ -67,19 +67,19 @@ void Img::draw_on(Img& other_img, int x, int y) {
     cv::Mat roi = target_img(cv::Rect(x, y, w, h));
 
     if (source_img.channels() == 4) {
-        // פיצול ערוצי מקור (עושה שימוש חוזר בוקטור קיים למניעת הקצאה חדשה)
+        // Split source channels (reusing the existing vector to avoid reallocation)
         cv::split(source_img, m_srcPlanes);
 
-        // יצירת מסכת אלפא בטווח [0, 1]
+        // Create an alpha mask in the range [0, 1]
         m_srcPlanes[3].convertTo(m_alphaF, CV_32F, 1.0 / 255.0);
         
-        // יצירת המסכה ההפוכה (1.0f - alpha) באמצעות אופטימיזציה מובנית
+        // Create the inverted mask (1.0f - alpha) using built-in optimization
         cv::subtract(1.0f, m_alphaF, m_invAlphaF);
 
-        // פיצול ערוצי היעד
+        // Split target channels
         cv::split(roi, m_dstPlanes);
 
-        // blending ממוטב לכל ערוץ
+        // blending optimized per channel
         for (int c = 0; c < 3; ++c) {
             cv::Mat srcF, dstF;
             m_srcPlanes[c].convertTo(srcF, CV_32F);

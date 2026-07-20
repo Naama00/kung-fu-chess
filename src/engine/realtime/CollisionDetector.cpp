@@ -6,7 +6,7 @@ namespace kungfu
     namespace
     {
 
-        // בדיקת חפיפת זמנים פשוטה
+        // Simple time-overlap check
         bool hasTimeOverlap(const kungfu::Motion &m1, const kungfu::Motion &m2) noexcept
         {
             int maxStart = std::max(m1.startTime(), m2.startTime());
@@ -14,7 +14,7 @@ namespace kungfu
             return maxStart < minArrival;
         }
 
-        // בדיקת חפיפת קופסה חוסמת (Bounding Box) במרחב הלוח
+        // Bounding box overlap check in board space
         bool hasBoundingBoxOverlap(const kungfu::Motion &m1, const kungfu::Motion &m2) noexcept
         {
             int minRow1 = std::min(m1.from().row(), m1.to().row());
@@ -32,7 +32,7 @@ namespace kungfu
 
     } // namespace
 
-    // פונקציית עזר שמחזירה את רשימת המשבצות שבהן הכלי עובר (כולל start ו-end)
+    // Helper function returning the list of cells the piece passes through (including start and end)
     std::vector<Position> getDetailedPath(const Position &from, const Position &to)
     {
         std::vector<Position> path;
@@ -76,7 +76,7 @@ namespace kungfu
                 const auto &m1 = activeMotions[i];
                 const auto &m2 = activeMotions[j];
 
-                // 1. סינון לפי סוג כלי (פרשים) ולפי מצב (Airborne = "לא שם")
+                // 1. Filter by piece type (knights) and state (Airborne = "not present")
                 if (m1.piece()->type() == PieceType::Knight || m2.piece()->type() == PieceType::Knight)
                 {
                     continue;
@@ -86,19 +86,19 @@ namespace kungfu
                     continue;
                 }
 
-                // 2. סינון מהיר (Broad Phase): בדיקת חפיפת זמנים כוללת
+                // 2. Fast broad-phase filter: check for overall time overlap
                 if (!hasTimeOverlap(m1, m2))
                 {
                     continue;
                 }
 
-                // 3. סינון מהיר (Broad Phase): בדיקת קופסה חוסמת מרחבית
+                // 3. Fast broad-phase filter: check for spatial bounding box overlap
                 if (!hasBoundingBoxOverlap(m1, m2))
                 {
                     continue;
                 }
 
-                // 4. בדיקה מעמיקה (Narrow Phase) רק עבור זוגות רלוונטיים
+                // 4. Detailed narrow-phase check only for relevant pairs
                 if (auto collision = checkDetailedCollision(m1, m2))
                 {
                     collisions.push_back(*collision);
@@ -126,9 +126,9 @@ namespace kungfu
             {
                 if (path1[idx1] == path2[idx2])
                 {
-                    // ה-from של כל כלי (idx==0) אינו נקודת התנגשות —
-                    // הכלי כבר עוזב אותה. רק מצב בו שני הכלים "בגוף" הנתיב
-                    // (idx>0 לשניהם) הוא התנגשות אמיתית.
+                    // The from of each piece (idx==0) is not a collision point —
+                    // the piece has already left it. The only case that is a real collision is when both pieces are "in the body" of the path
+                    // (idx>0 for both) is a real collision.
                     if (idx1 == 0 || idx2 == 0) {
                         continue;
                     }
@@ -142,25 +142,25 @@ namespace kungfu
                   
                     if (std::max(t1_enter, t2_enter) < std::min(t1_exit, t2_exit))
                     {
-                        // אם נקודת המפגש היא היעד של שני הכלים — זהו "מירוץ ליעד",
-                        // לא התנגשות אמיתית בדרך. resolveArrival יטפל בזה כשמישהו מגיע.
+                        // If the meeting point is the destination of both pieces — this is a "race to the destination",
+                        // not a real collision along the path. resolveArrival will handle it when someone arrives.
                         bool isDestinationCollision = (path1[idx1] == m1.to() && path2[idx2] == m2.to());
                         if (isDestinationCollision) {
                             continue;
                         }
 
-                        // 1. מי שיצא לדרך מוקדם יותר (startTime נמוך יותר) הוא המנצח
+                        // 1. The one who started earlier (lower startTime) is the winner
                         if (m1.startTime() < m2.startTime())
                         {
-                            return MidRouteCollision{m1, m2}; // m1 הוא winner, m2 הוא loser
+                            return MidRouteCollision{m1, m2}; // m1 is the winner, m2 is the loser
                         }
                         else if (m2.startTime() < m1.startTime())
                         {
-                            return MidRouteCollision{m2, m1}; // m2 הוא winner, m1 הוא loser
+                            return MidRouteCollision{m2, m1}; // m2 is the winner, m1 is the loser
                         }
                         else
                         {
-                            // 2. שובר שוויון: אם הם יצאו בדיוק באותו זמן, מי שהגיע פיזית ראשון למשבצת המפגש מנצח
+                            // 2. Tie-breaker: if they started at exactly the same time, the one who physically reached the meeting square first wins
                             if (t1_enter <= t2_enter)
                             {
                                 return MidRouteCollision{m1, m2};

@@ -1,6 +1,6 @@
 
-// תפקיד: המימוש הקונקרטי של הממשק. הוא בונה באופן דינמי אובייקט לוח (Board)
-// מתוך תמונת מצב (GameSnapshot) ומשתמש ב-RuleEngine הגיאומטרי כדי לחשב אילו מהלכים חוקיים.
+// Role: concrete implementation of the interface. It dynamically builds a board object (Board)
+// Based on a game snapshot (GameSnapshot) and using the geometric RuleEngine to compute which moves are legal.
 #pragma once
 
 #include <vector>

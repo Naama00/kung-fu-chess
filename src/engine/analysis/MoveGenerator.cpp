@@ -84,11 +84,11 @@ std::vector<IMoveGenerator::MoveCandidate> MoveGenerator::generateForPlayer(
             continue;
         }
         
-        // 1. שליפת היעדים הגיאומטריים הפוטנציאליים של הכלי פעם אחת בלבד!
+        // 1. Retrieve the piece's potential geometric targets only once!
         const auto& rule = PieceRuleFactory::getRule(piece->type());
         auto legalDestinations = rule.getLegalDestinations(*board, *piece);
         
-        // 2. ריצה אך ורק על היעדים הרלוונטיים במקום על כל 64 המשבצות
+        // 2. Iterate only over the relevant targets instead of all 64 squares
         for (const auto& target : legalDestinations) {
             if (engine.validateMove(piece->position(), target).isValid) {
                 result.push_back({piece->position(), target});

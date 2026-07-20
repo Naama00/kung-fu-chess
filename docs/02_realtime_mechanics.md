@@ -1,28 +1,28 @@
-# מכניקת זמן אמת, צינון והתנגשויות (Real-Time Physics)
+# Real-time mechanics, cooldowns, and collisions
 
 קובץ זה מתעד את חוקי הפיזיקה וזמן האמת הייחודיים המיושמים בפרויקט. חוקים אלו נאכפים על ידי ה-`RealTimeArbiter` בשיתוף עם ה-`CollisionDetector` וה-`CollisionResolver`.
 
-## 1. תנועה רציפה (Continuous Motion)
-* **מהירות תנועה:** כלים נעים לאורך זמן ולא מדלגים מיידית ליעדם. משך התנועה מחושב לפי מרחק המסלול כפול המהירות (`msPerCellSpeed`, ברירת מחדל: 1000ms למשבצת).
-* **אינטרפולציה:** מיקום הכלי מתעדכן באופן רציף על ידי חישוב מבוסס זמן שעבר (`interpolatePosition`), מה שמאפשר ל-UI בעתיד להציג תנועה חלקה (Smooth Animation).
+## 1. Continuous motion
+* **Movement speed:** pieces move over time rather than jumping immediately to their destination. The movement duration is calculated from the path distance multiplied by the speed (`msPerCellSpeed`, default: 1000ms per square).
+* **Interpolation:** the piece position is updated continuously by a time-based calculation (`interpolatePosition`), which allows the UI in the future to display smooth animation.
 
-## 2. זמני צינון (Cooldowns)
-* **Cooldown Tracker:** לאחר ביצוע מהלך, הכלי נכנס לתקופת צינון (`cooldownDurationMs`, ברירת מחדל: 2000ms).
-* **כלי עסוק (Busy Piece):** כלי שנמצא בתנועה או בצינון מוגדר כעסוק ולא ניתן לשלוח עבורו בקשת תנועה חדשה ישירות (אלא אם מדובר ב-Premove).
+## 2. Cooldown timing
+* **Cooldown Tracker:** after a move is made, the piece enters a cooldown period (`cooldownDurationMs`, default: 2000ms).
+* **Busy piece:** a piece that is moving or in cooldown is considered busy and cannot receive a new movement request directly (unless it is a premove).
 
-## 3. קפיצה במקום (Airborne State)
-* **הפעלה:** שליחת בקשת תנועה של כלי אל המשבצת שבה הוא עומד כעת (`from == to`) מפעילה קפיצה במקום.
-* **חסינות זמנית:** הכלי עובר למצב `PieceState::Airborne` ומוסר לוגית מהלוח למשך `jumpDurationMs` (ברירת מחדל: 1000ms). בזמן זה הוא אינו יכול להיפגע מהתנגשויות מסלול.
-* **נחיתה חסומה:** אם בזמן שהיה באוויר נכנס כלי ידידותי (שאינו פרש) למשבצת שלו, הכלי ינחת במשבצת פנויה סמוכה (או יישאר במקומו המקורי אם אין משבצת פנויה).
+## 3. Jump in place (airborne state)
+* **Activation:** sending a movement request for a piece to the square it is currently on (`from == to`) triggers a jump in place.
+* **Temporary immunity:** the piece transitions to the `PieceState::Airborne` state and is removed logically from the board for `jumpDurationMs` (default: 1000ms). During this time it cannot be affected by route collisions.
+* **Blocked landing:** if a friendly piece (not a knight) enters its square while it is in the air, the piece will land on a nearby empty square (or remain in its original place if no empty square is available).
 
-## 4. מנגנון התנגשויות (Collisions)
+## 4. Collision mechanics
 
-### א. התנגשות באמצע מסלול (Mid-Route Collision)
-מתרחשת כאשר שני כלים נעים בו-זמנית ומסלוליהם נחתכים באותה משבצת ובאותו זמן.
-* **חסינות:** פרשים וכלים במצב קפיצה באוויר (`Airborne`) חסינים לחלוטין מהתנגשויות מסלול.
-* **בין אויבים (יוזמה מוקדמת):**
-  * המנוע מזהה מי מהכלים יצא לדרך מוקדם יותר (`startTime` נמוך יותר) [1]. כלי זה מסווג כ-`winner` (השורד) והכלי שיצא מאוחר יותר מסווג כ-`loser` (המובס) [1].
-  * הכלי שיצא ראשון (`winner`) **אוכל** את הכלי שיצא שני (`loser`) [1]. 
+### A. Mid-route collision
+This occurs when two pieces move simultaneously and their paths intersect at the same square and the same time.
+* **Immunity:** knights and pieces in the airborne jump state (`Airborne`) are completely immune to route collisions.
+* **Between enemies (early initiative):**
+  * The engine identifies which piece started earlier (`startTime` lower) [1]. That piece is classified as the `winner` (survivor), and the piece that started later is classified as the `loser` (defeated) [1].
+  * The piece that started first (`winner`) **captures** the piece that started second (`loser`) [1]. 
   * הכלי המפסיד מסומן כנלכד (`Captured`) ומוסר מהלוח לפי הזהות הפיזית שלו (`PiecePtr`) [1]. מחיקה מבוססת זהות זו מונעת עמימות ומבטיחה שהלוח לא ימחק בטעות את הכלי המנצח כאשר שניהם נמצאים זמנית באותה משבצת מפגש [1].
 * **בין ידידים:**
   * הכלי שהגיע מאוחר יותר (`loser`) נחסם, נעצר במשבצת הפנויה האחרונה במסלולו, וזמן צינון מוחל עליו.

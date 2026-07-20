@@ -4,7 +4,7 @@
 #include <string>
 #include <stdexcept>
 
-// נכס תמונה/טקסטורה עבור ספריטים
+// Image/texture asset for sprites
 class SfmlTextureAsset : public IAsset {
 public:
     sf::Texture texture;
@@ -17,7 +17,7 @@ public:
     }
 };
 
-// נכס פונט עבור כתיבת טקסט
+// Font asset for text rendering
 class SfmlFontAsset : public IAsset {
 public:
     sf::Font font;

@@ -25,7 +25,7 @@ public:
 
         auto actions = strategy_->computeActions(snapshot, playerColor_);
         
-        // הגדרת מזהה בקשה ייחודי וסמכות צבע אחידה לכל מהלך המוחזר
+        // Define a unique request identifier and uniform color authority for each returned move
         for (auto& req : actions) {
             req.requestId = nextRequestId_++;
             req.playerColor = playerColor_;

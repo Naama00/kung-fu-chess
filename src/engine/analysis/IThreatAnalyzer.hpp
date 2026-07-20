@@ -1,4 +1,4 @@
-// תפקיד: ממשק מופשט המגדיר פונקציות לזיהוי איומים על משבצות ספציפיות בלוח.
+// Role: abstract interface defining functions for identifying threats to specific board cells.
 #pragma once
 
 #include <vector>

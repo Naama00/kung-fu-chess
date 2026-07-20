@@ -1,5 +1,5 @@
-// תפקיד: ממשק מופשט המגדיר את החוזה לייצור מהלכים. 
-// מצהיר על מתודות לייצור מהלכים עבור כלי בודד או עבור שחקן שלם על בסיס תמונת מצב.
+// Role: abstract interface defining the contract for generating moves. 
+// Declares methods for generating moves for a single piece or for an entire player based on a game snapshot.
 #pragma once
 
 #include <vector>

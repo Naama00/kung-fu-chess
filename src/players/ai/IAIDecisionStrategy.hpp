@@ -11,7 +11,7 @@ class IAIDecisionStrategy {
 public:
     virtual ~IAIDecisionStrategy() = default;
 
-    // מחשב ומחזיר רשימת מהלכים רצויים בהתאם למצב הלוח
+    // Computes and returns a list of preferred moves based on the board state
     virtual std::vector<ActionRequest> computeActions(
         const view::GameSnapshot& snapshot, 
         PlayerColor aiColor) = 0;

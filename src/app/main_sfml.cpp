@@ -18,9 +18,6 @@ int main()
 {
     try
     {
-        // הערה: תהליך החיבור והאימות הסינכרוני הישן הוסר מה-Console!
-        // כעת המשחק עולה מיידית לתוך ממשק ויזואלי ומבצע את החיבור ברקע.
-
         const std::string windowName = "Kung-Fu Chess Game (SFML 3 Edition)";
         const unsigned int windowWidth = 800;
         const unsigned int windowHeight = 800;
@@ -58,6 +55,7 @@ int main()
             std::cerr << "Warning: Could not load default font: " << e.what() << std::endl;
         }
 
+        // Loading 12 three-dimensional (3D) pieces from assets/images/
         for (const std::string& color : {"w", "b"}) {
             for (const std::string& type : {"K", "Q", "R", "B", "N", "P"}) {
                 std::string assetId = color + type;
@@ -67,7 +65,18 @@ int main()
             }
         }
 
-        // טעינת מסך הלוגין הויזואלי החדש (במעבר SFML, נסמן true עבור דגל ה-SFML)
+        // Loading board textures (wood/marble) when available to prevent a crash if a file is missing
+        try
+        {
+            sfmlRenderer.getAssetManager().loadAsset<SfmlTextureAsset>("tile_light", "assets/images/wood_light.png");
+            sfmlRenderer.getAssetManager().loadAsset<SfmlTextureAsset>("tile_dark", "assets/images/wood_dark.png");
+        }
+        catch (const std::exception &e)
+        {
+            std::cerr << "Note: Board tiles wood_light/dark not loaded, using programmatic 3D tiles: " << e.what() << std::endl;
+        }
+
+        // Load the new visual login screen
         screenManager.changeScreen(std::make_unique<LoginScreen>(screenManager, soundPlayer, true));
 
         auto previousTime = std::chrono::high_resolution_clock::now();

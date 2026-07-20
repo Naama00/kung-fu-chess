@@ -4,7 +4,7 @@
 #include "ui/framework/ScreenManager.hpp"
 #include "ui/framework/IRenderer.hpp"
 #include "ui/framework/IInputTranslator.hpp"
-#include "ui/screens/LoginScreen.hpp" // ייבוא מסך ההתחברות החדש
+#include "ui/screens/LoginScreen.hpp" 
 #include "graphics/opencv/img.hpp"
 #include <chrono>
 #include <memory>
@@ -49,9 +49,10 @@ int main() {
         int windowY = (screenHeight - windowHeight) / 2;
         cv::moveWindow(windowName, windowX, windowY);
 
-        // טעינת מסך הלוגין הויזואלי החדש (במעבר OpenCV, נסמן false)
+        // Loading the login screen (for the OpenCV path we set false)
         screenManager.changeScreen(std::make_unique<LoginScreen>(screenManager, nullptr, false));
 
+        // Loading 12 three-dimensional (3D) pieces from assets/images/
         for (const std::string& color : {"w", "b"}) {
             for (const std::string& type : {"K", "Q", "R", "B", "N", "P"}) {
                 std::string assetId = color + type;
@@ -59,6 +60,17 @@ int main() {
                     assetId, "assets/images/" + assetId + ".png"
                 );
             }
+        }
+
+        // Load board textures when available for OpenCV - prevent a crash
+        try
+        {
+            imgRenderer.getAssetManager().loadAsset<ImgTextureAsset>("tile_light", "assets/images/wood_light.png");
+            imgRenderer.getAssetManager().loadAsset<ImgTextureAsset>("tile_dark", "assets/images/wood_dark.png");
+        }
+        catch (const std::exception &e)
+        {
+            std::cerr << "Note: Board tiles wood_light/dark not loaded for OpenCV: " << e.what() << std::endl;
         }
 
         renderer.presentFrame();

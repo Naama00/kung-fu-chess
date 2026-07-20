@@ -12,7 +12,7 @@
 
 class BoardView {
 private:
-    CooldownBar m_cooldownBar; // מד הצינון מנוהל כעת פנימית ברכיב הלוח
+    CooldownBar m_cooldownBar; // The cooldown bar is now managed internally by the board component
 
     static int positionKey(const kungfu::Position &pos, int cols) {
         return pos.row() * cols + pos.col();
@@ -26,7 +26,7 @@ public:
     BoardView& operator=(const BoardView&) = delete;
 
     /**
-     * פונקציית הציור הראשית של לוח המשחק.
+     * Main drawing function for the game board.
      */
     void draw(IRenderer& renderer,
               const kungfu::view::GameSnapshot& snapshot,
@@ -49,7 +49,7 @@ public:
         float cellWidth = boardRangeX / cols;
         float cellHeight = boardRangeY / rows;
 
-        // --- 1. ציור רקע הלוח והמסגרות הקישוטיות ---
+        // --- 1. Draw the board background and decorative frames ---
         Color boardFrameBg{35, 36, 43, 255};
         Color boardFrameBorder{65, 68, 85, 255};
 
@@ -60,7 +60,7 @@ public:
                                {boardRangeX + 16.0f, boardRangeY + 16.0f},
                                boardFrameBorder, false);
 
-        // --- 2. ציור הרשת (Grid), בחירה (Selection) וריחוף (Hover) ---
+        // --- 2. Draw the grid, selection, and hover states ---
         Color lightTile{238, 238, 210, 255};
         Color darkTile{118, 150, 86, 255};
         Color hoverBorderColor{0, 229, 255, 200};
@@ -72,17 +72,17 @@ public:
                 Vector2D pos{boardStartX + c * cellWidth, boardStartY + r * cellHeight};
                 Vector2D size{cellWidth, cellHeight};
 
-                Color tileColor = ((r + c) % 2 == 0) ? lightTile : darkTile;
-                renderer.drawRectangle(pos, size, tileColor, true);
+                bool isLight = ((r + c) % 2 == 0);
+renderer.drawSprite(isLight ? "tile_light" : "tile_dark", pos, size);
 
-                // סימון ריחוף עכבר מעל משבצת
+                // Highlight the tile under the cursor
                 if (hoveredRow == r && hoveredCol == c) {
                     renderer.drawRectangle({pos.x + 1.0f, pos.y + 1.0f}, {size.x - 2.0f, size.y - 2.0f}, hoverBorderColor, false);
                 }
             }
         }
 
-        // סימון משבצת שנבחרה
+        // Highlight the selected tile
         auto selectedOpt = snapshot.selectedCell;
         if (selectedOpt.has_value() && !isPaused && !snapshot.isGameOver) {
             Vector2D pos{selectedOpt->col() * cellWidth, boardStartY + selectedOpt->row() * cellHeight};
@@ -91,8 +91,8 @@ public:
             renderer.drawRectangle(pos, size, selectedBorderColor, false);
         }
 
-        // --- 3. ציור הכלים, אפקטי קפיצה וצינונים (Cooldowns) ---
-        std::unordered_map<int, Vector2D> piecePositions; // מעקב אחר המיקום הפיזי של הכלים לצורך ציור חיצי ה-Premoves
+        // --- 3. Draw pieces, jump effects, and cooldowns ---
+        std::unordered_map<int, Vector2D> piecePositions; // Track the physical positions of pieces for drawing premove arrows
 
         for (const auto &pieceSnap : snapshot.pieces) {
             std::string assetId = (pieceSnap.color == kungfu::PlayerColor::White) ? "w" : "b";
@@ -101,7 +101,7 @@ public:
             float animatedX = pieceSnap.pixelX;
             float animatedY = boardStartY + pieceSnap.pixelY;
 
-            // אנימציות ריחוף וקפיצה של כלי מסומן
+            // Hover and jump animations for the selected piece
             if (selectedOpt.has_value() &&
                 pieceSnap.logicalPosition.row() == selectedOpt->row() &&
                 pieceSnap.logicalPosition.col() == selectedOpt->col())
@@ -121,7 +121,7 @@ public:
             float padding = cellWidth * 0.10f;
             renderer.drawSprite(assetId, {spritePos.x + padding, spritePos.y + padding}, {spriteSize.x - (padding * 2), spriteSize.y - (padding * 2)});
 
-            // רינדור אפקטים חזותיים של צינון
+            // Render visual cooldown effects
             if (allowSimultaneous && pieceSnap.cooldownProgress > 0.0f) {
                 Vector2D center{animatedX + cellWidth / 2.0f, animatedY + cellHeight / 2.0f};
                 float radius = cellWidth * 0.42f;
@@ -139,7 +139,7 @@ public:
             piecePositions[positionKey(pieceSnap.logicalPosition, cols)] = spritePos;
         }
 
-        // --- 4. ציור מהלכי Premoves וחיבור קווים מנחים ---
+        // --- 4. Draw premove paths and guiding lines ---
         if (!isPaused && !snapshot.isGameOver) {
             for (const auto &entry : premoveQueue.entries()) {
                 auto piece = entry.first;

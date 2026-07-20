@@ -10,7 +10,7 @@ class MockGameEngine : public kungfu::IGameEngine {
 public:
     MockGameEngine(int rows, int cols) : rows_(rows), cols_(cols) {}
 
-    // שינוי ה-Mock כדי לתמוך בצבעי הכלים
+    // Update the mock to support piece colors
     void setHasPiece(const kungfu::Position& pos, bool hasPiece, kungfu::PlayerColor color = kungfu::PlayerColor::White) {
         if (hasPiece) {
             if (std::find(occupiedPositions_.begin(), occupiedPositions_.end(), pos) == occupiedPositions_.end()) {
@@ -99,7 +99,7 @@ TEST_CASE("Controller Selection State and Clicks Flow", "[input]") {
     auto mockEngine = std::make_shared<MockGameEngine>(8, 8);
     kungfu::Controller controller(mockEngine, 100);
 
-    // נמקם כלי לבן במיקום (1, 1)
+    // Place a white piece at position (1, 1)
     mockEngine->setHasPiece(kungfu::Position(1, 1), true, kungfu::PlayerColor::White);
 
     SECTION("Initial state has no selection") {
@@ -120,27 +120,27 @@ TEST_CASE("Controller Selection State and Clicks Flow", "[input]") {
     }
 
     SECTION("Clicking outside the board with selection is ignored (does not cancel selection)") {
-        // נבצע בחירה
+        // Perform a selection
         controller.click(150, 150);
         REQUIRE(controller.selectedPosition().has_value());
 
-        // קליק מחוץ ללוח
+        // Click outside the board
         auto result = controller.click(900, 50);
         REQUIRE_FALSE(result.actionTaken);
-        // הבחירה צריכה להישאר פעילה
+        // The selection should remain active
         REQUIRE(controller.selectedPosition().has_value());
         REQUIRE(controller.selectedPosition().value() == kungfu::Position(1, 1));
     }
 
     SECTION("Clicking another friendly piece replaces the selection") {
-        // נמקם כלי ידידותי נוסף (לבן) ב-(2, 2)
+        // Place an additional friendly piece (white) at (2, 2)
         mockEngine->setHasPiece(kungfu::Position(2, 2), true, kungfu::PlayerColor::White);
 
-        // בחירת הכלי הראשון ב-(1, 1)
+        // Select the first piece at (1, 1)
         controller.click(150, 150);
         REQUIRE(controller.selectedPosition().value() == kungfu::Position(1, 1));
 
-        // קליק על הכלי השני מחליף את הבחירה אליו
+        // Clicking the second piece switches the selection to it
         auto result = controller.click(250, 250);
         REQUIRE(result.actionTaken);
         REQUIRE(result.description == "Piece selection replaced");

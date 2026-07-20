@@ -14,7 +14,7 @@ MoveValidation RuleEngine::validateMove(const Position& from, const Position& to
     int maxRows = board_->rows();
     int maxCols = board_->cols();
 
-    // 1. בדיקת גבולות לוח
+    // 1. Check board boundaries
     auto isOutOfBounds = [maxRows, maxCols](const Position& pos) noexcept {
         return pos.row() < 0 || pos.row() >= maxRows || pos.col() < 0 || pos.col() >= maxCols;
     };
@@ -23,7 +23,7 @@ MoveValidation RuleEngine::validateMove(const Position& from, const Position& to
         return {false, "outside_board"};
     }
 
-    // 2. בדיקה שיש כלי במיקום המוצא
+    // 2. Check that a piece exists at the source position
     auto sourcePieceOpt = board_->pieceAt(from);
     if (!sourcePieceOpt.has_value() || !sourcePieceOpt.value()) {
         return {false, "empty_source"};
@@ -31,12 +31,12 @@ MoveValidation RuleEngine::validateMove(const Position& from, const Position& to
 
     auto piece = sourcePieceOpt.value();
 
-    // 3. מניעת תנועה לאותה משבצת בדיוק
+    // 3. Prevent movement to the exact same square
     if (from == to) {
         return {false, "illegal_piece_move"};
     }
 
-    // 4. מניעת פגיעה בכלי ידידותי ביעד
+    // 4. Prevent capturing a friendly piece at the target
     auto targetPieceOpt = board_->pieceAt(to);
     if (targetPieceOpt.has_value()) {
         auto targetPiece = targetPieceOpt.value();
@@ -48,7 +48,7 @@ MoveValidation RuleEngine::validateMove(const Position& from, const Position& to
         }
     }
 
-    // 5. שאילתת חוקיות גיאומטרית מול ה-Strategy המתאים
+    // 5. Query geometric legality against the appropriate strategy
     const auto& rule = PieceRuleFactory::getRule(piece->type());
     auto legalDestinations = rule.getLegalDestinations(*board_, *piece);
 
@@ -60,7 +60,7 @@ MoveValidation RuleEngine::validateMove(const Position& from, const Position& to
     return {false, "illegal_piece_move"};
 }
 
-// מימוש האימות ההיפותטי שמבצע את המניפולציה הזמנית בלוח ומנקה אחריו
+// Implementation of the hypothetical verification that temporarily manipulates the board and then cleans up afterward
 MoveValidation RuleEngine::validateHypotheticalMove(const PiecePtr& piece, const Position& from, const Position& to) const {
     if (!board_ || !piece) {
         return {false, "internal_error"};
@@ -81,7 +81,7 @@ MoveValidation RuleEngine::validateHypotheticalMove(const PiecePtr& piece, const
     bool temporaryReposition = (originalPos != from);
     bool placedTemporarily = false;
 
-    // אם הכלי לא ממוקם פיזית במשבצת שממנה רוצים לבצע את ה-Premove, נציב אותו שם זמנית
+    // If the piece is not physically located on the square from which we want to perform the premove, place it there temporarily
     if (temporaryReposition) {
         if (board_->pieceAt(from).has_value()) {
             return {false, "source_occupied"};
@@ -95,10 +95,10 @@ MoveValidation RuleEngine::validateHypotheticalMove(const PiecePtr& piece, const
         }
     }
 
-    // הרצת האימות הסטנדרטי
+    // Run the standard validation
     MoveValidation validation = validateMove(from, to);
 
-    // ניקוי והחזרת הלוח והכלי למצבם המקורי המדויק
+    // Clean up and restore the board and piece to their exact original state
     if (temporaryReposition) {
         if (placedTemporarily) {
             board_->removePiece(piece);

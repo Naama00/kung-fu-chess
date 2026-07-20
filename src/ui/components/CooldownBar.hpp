@@ -1,5 +1,5 @@
-// מד צינון ויזואלי המיועד להצגה מעל או מתחת לכלי השחמט הפעילים. 
-// הוא מקבל את אחוז ההתקדמות ומצייר מלבן שמתמלא או מתרוקן בהתאם
+// A visual cooldown bar intended to be shown above or below active chess pieces. 
+// It receives the progress percentage and draws a rectangle that fills or empties accordingly
 #pragma once
 #include "ui/framework/InputEvents.hpp"
 #include "ui/framework/IRenderer.hpp"

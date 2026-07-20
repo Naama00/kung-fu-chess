@@ -32,17 +32,17 @@ void PremoveQueue::replacePiece(const PiecePtr& oldPiece, const PiecePtr& newPie
     }
 }
 
-// מימוש בטוח המונע לחלוטין Iterator Invalidation
+// Safe implementation that completely prevents iterator invalidation
 void PremoveQueue::processReady(const PieceBusyPredicate& isBusy, const MoveExecutor& execute) {
     std::vector<std::pair<PiecePtr, Position>> readyToExecute;
     std::vector<std::pair<PiecePtr, Position>> remainingEntries;
 
-    // 1. סינון ראשוני של האיברים ללא מניפולציה ישירה של האיטרטורים בזמן הריצה
+    // 1. Initial filtering of elements without directly manipulating iterators during runtime
     for (const auto& entry : entries_) {
         auto piece = entry.first;
 
         if (!piece || piece->state() == PieceState::Captured) {
-            // כלי שנלכד - נמחק אוטומטית (לא נכנס לאף אחד מהמערכים)
+            // A captured piece is removed automatically (it does not enter either array)
             continue;
         }
 
@@ -53,10 +53,10 @@ void PremoveQueue::processReady(const PieceBusyPredicate& isBusy, const MoveExec
         }
     }
 
-    // 2. עדכון התור המרכזי למצב היציב החדש שלו
+    // 2. Update the main turn state to its new stable state
     entries_ = std::move(remainingEntries);
 
-    // 3. ביצוע המהלכים מתוך מערך מקומי יציב. 
+    // 3. Execute moves from a stable local array. 
     // גם אם execute יגרור רישום של pre-move חדש, הוא יתווסף בצורה בטוחה ל-entries_ החדש
     for (const auto& entry : readyToExecute) {
         if (entry.first && entry.first->state() != PieceState::Captured) {

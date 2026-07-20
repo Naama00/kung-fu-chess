@@ -18,8 +18,8 @@ public:
     PieceState state() const { return state_; }
     bool hasMoved() const { return hasMoved_; }
 
-    // מזהה יציב וייחודי לכל אובייקט Piece, לאורך כל חייו - בלתי תלוי בכתובת הזיכרון שלו.
-    // משמש כמפתח בטוח למבני נתונים חיצוניים (למשל cooldowns ב-RealTimeArbiter),
+    // Stable and unique identifier for each Piece object throughout its lifetime — independent of its memory address.
+    // Used as a safe key for external data structures (for example cooldowns in RealTimeArbiter),
     // כדי למנוע התנגשות עם כלים חדשים שנוצרים לאחר שחרור זיכרון של כלי קודם.
     std::uint64_t id() const noexcept { return id_; }
 

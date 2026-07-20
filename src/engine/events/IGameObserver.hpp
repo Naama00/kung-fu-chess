@@ -7,7 +7,7 @@ namespace kungfu {
 class IGameObserver {
 public:
     virtual ~IGameObserver() = default;
-    // נקרא בכל פעם שמהלך מסתיים פיזית על הלוח
+    // Called each time a move physically completes on the board
     virtual void onMoveCompleted(const ArrivalEvent& event, int currentTimeMs) = 0;
 };
 

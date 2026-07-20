@@ -14,7 +14,7 @@ public:
     HeaderView& operator=(const HeaderView&) = delete;
 
     /**
-     * ציור הפאנל העליון וכפתורי השליטה המשויכים אליו.
+     * Draw the top panel and its associated control buttons.
      */
     void draw(IRenderer& renderer,
               const std::string& title,
@@ -25,14 +25,14 @@ public:
               const Button& restartBtn,
               const Button& menuBtn) const
     {
-        // ציור פאנל עליון וקו גבול תחתון
+        // Draw the top panel and bottom border line
         renderer.drawRectangle({0.0f, 0.0f}, {1000.0f, 95.0f}, bgColor, true);
         renderer.drawLine({0.0f, 95.0f}, {1000.0f, 95.0f}, borderColor, 2.0f);
 
-        // ציור כותרת ראשית
+        // Draw the main title
         renderer.drawText(title, {30.0f, 60.0f}, 24, titleColor);
 
-        // ציור כפתורי הבקרה
+        // Draw the control buttons
         pauseBtn.draw(renderer);
         restartBtn.draw(renderer);
         menuBtn.draw(renderer);

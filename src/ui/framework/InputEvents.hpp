@@ -2,13 +2,13 @@
 #pragma once
 #include <cstdint>
 
-// קואורדינטות דו-מימדיות גנריות
+// Generic two-dimensional coordinates
 struct Vector2D {
     float x = 0.0f;
     float y = 0.0f;
 };
 
-// צבע גנרי בפורמט RGBA
+// Generic color in RGBA format
 struct Color {
     std::uint8_t r = 255;
     std::uint8_t g = 255;
@@ -16,7 +16,7 @@ struct Color {
     std::uint8_t a = 255;
 };
 
-// הגדרת מקשים גנריים מורחבת לתמיכה בהקלדה
+// Definition of generic keys extended to support typing
 enum class Key {
     Unknown,
     Escape,
@@ -28,7 +28,7 @@ enum class Key {
     Tab
 };
 
-// הגדרת כפתורי עכבר
+// Definition of mouse buttons
 enum class MouseButton {
     None,
     Left,
@@ -36,13 +36,13 @@ enum class MouseButton {
     Middle
 };
 
-// נתונים עבור אירועי מקלדת
+// Data for keyboard events
 struct KeyEvent {
     Key key = Key::Unknown;
     int rawCode = 0; 
 };
 
-// נתונים עבור אירועי עכבר
+// Data for mouse events
 struct MouseEvent {
     enum class Action { Press, Release, Move };
     Action action;
@@ -51,7 +51,7 @@ struct MouseEvent {
     float logicalY;
 };
 
-// אירוע קלט מאוחד
+// Unified input event
 struct InputEvent {
     enum class Type { Mouse, Keyboard };
     Type type;

@@ -7,14 +7,14 @@
 
 namespace kungfu {
 
-// פונקציית עזר פנימית ומהירה להערכת שווי חומרי בלבד ללא הקצאות זיכרון כלל!
+// Fast internal helper function for evaluating material-only, without any memory allocations at all!
 int evaluateMaterialOnly(const view::GameSnapshot& snapshot, PlayerColor aiColor) {
     int score = 0;
 
     for (const auto& piece : snapshot.pieces) {
         if (piece.state == PieceState::Captured) continue;
         
-        // שימוש במחלקה המרכזית החדשה במקום ב-lambda המקומית שהייתה משוכפלת
+        // Use the new central class instead of the duplicated local lambda
         int val = PieceValues::getCentipawnValue(piece.type);
         if (piece.color == aiColor) {
             score += val;
@@ -89,7 +89,7 @@ void ClassicMinimaxStrategy::undoMove(view::GameSnapshot& snapshot, const PieceU
 int ClassicMinimaxStrategy::minimax(
     view::GameSnapshot& snapshot, int depth, int alpha, int beta, bool maximizingPlayer, PlayerColor aiColor) const {
     
-    // בנקודת הקצה - אנו קוראים לפונקציית הערכת החומר המהירה שלנו
+    // At the leaf node — we call our fast material evaluation function
     if (depth == 0 || snapshot.isGameOver) {
         return evaluateMaterialOnly(snapshot, aiColor);
     }
@@ -111,7 +111,7 @@ int ClassicMinimaxStrategy::minimax(
 
             maxEval = std::max(maxEval, eval);
             alpha = std::max(alpha, eval);
-            if (beta <= alpha) break; // קיצוץ אלפא-בטא
+            if (beta <= alpha) break; // alpha-beta pruning
         }
         return maxEval;
     } else {
@@ -123,7 +123,7 @@ int ClassicMinimaxStrategy::minimax(
 
             minEval = std::min(minEval, eval);
             beta = std::min(beta, eval);
-            if (beta <= alpha) break; // קיצוץ אלפא-בטא
+            if (beta <= alpha) break; // alpha-beta pruning
         }
         return minEval;
     }

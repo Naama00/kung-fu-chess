@@ -35,21 +35,23 @@ private:
     std::string m_statusMessage = "";
     Color m_statusColor{210, 215, 225, 255}; 
 
-    // הגדרות גיאומטריות של ממשק המשתמש
-    const Vector2D m_inputSize{300.0f, 45.0f};
-    const Vector2D m_usernamePos{350.0f, 350.0f};
-    const Vector2D m_passwordPos{350.0f, 450.0f};
+    // Geometric settings for the user interface (aligned within the central card)
+    const Vector2D m_panelPos{270.0f, 240.0f};
+    const Vector2D m_panelSize{460.0f, 510.0f};
 
-    const Vector2D m_btnSize{140.0f, 50.0f};
-    const Vector2D m_loginBtnPos{350.0f, 540.0f};
-    const Vector2D m_registerBtnPos{510.0f, 540.0f};
+    const Vector2D m_inputSize{340.0f, 45.0f};
+    const Vector2D m_usernamePos{330.0f, 370.0f};
+    const Vector2D m_passwordPos{330.0f, 470.0f};
+
+    const Vector2D m_btnSize{160.0f, 50.0f};
+    const Vector2D m_loginBtnPos{330.0f, 560.0f};
+    const Vector2D m_registerBtnPos{510.0f, 560.0f};
     
-    const Vector2D m_offlineBtnSize{300.0f, 50.0f};
-    const Vector2D m_offlineBtnPos{350.0f, 610.0f};
+    const Vector2D m_offlineBtnSize{340.0f, 50.0f};
+    const Vector2D m_offlineBtnPos{330.0f, 630.0f};
 
     Vector2D m_mousePos{0.0f, 0.0f};
 
-    // ביצוע קריאת הרשת בצורה אסינכרונית כדי לא לעצור את לולאת המשחק הראשית
     static AuthResult performNetworkAuth(const std::string& username, const std::string& password, bool isRegister) {
         AuthResult res{false, "Connection error", 1200};
         try {
@@ -70,7 +72,6 @@ private:
                 return res;
             }
 
-            // חיבור לוגי של סוקט ה-UDP לנקודת הקצה של השרת
             socket.connect(*endpoints.begin(), ec);
             if (ec) {
                 res.message = "Server is offline";
@@ -81,14 +82,12 @@ private:
             auto type = isRegister ? kungfu::NetworkMessageType::REGISTER_REQUEST : kungfu::NetworkMessageType::LOGIN_REQUEST;
             auto frame = kungfu::Serializer::buildFrame(type, payload);
 
-            // שליחת חבילת UDP
             socket.send(boost::asio::buffer(frame), 0, ec);
             if (ec) {
                 res.message = "Failed to send credentials";
                 return res;
             }
 
-            // קבלת תשובה ב-UDP (מכיוון שזה קורה על Thread נפרד, קריאה חוסמת לא תפריע לתצוגה)
             std::vector<std::uint8_t> recvBuf(kungfu::kMaxPayloadSize);
             std::size_t bytesRecvd = socket.receive(boost::asio::buffer(recvBuf), 0, ec);
             if (ec || bytesRecvd < kungfu::kHeaderSize) {
@@ -137,15 +136,9 @@ private:
     char translateKeyToChar(const KeyEvent& keyEvent) const {
         int code = keyEvent.rawCode;
         if (m_isSfml) {
-            if (code >= 0 && code <= 25) {
-                return 'a' + code;
-            }
-            if (code >= 26 && code <= 35) {
-                return '0' + (code - 26);
-            }
-            if (code == 57) {
-                return ' ';
-            }
+            if (code >= 0 && code <= 25) return 'a' + code;
+            if (code >= 26 && code <= 35) return '0' + (code - 26);
+            if (code == 57) return ' ';
             return '\0';
         } else {
             char c = static_cast<char>(code & 0xFF);
@@ -175,16 +168,23 @@ private:
 
 protected:
     void drawContent(IRenderer& renderer) override {
-        renderer.drawText("KUNG-FU CHESS", {280.0f, 200.0f}, 42, m_theme.titleText);
-        renderer.drawText("Account Authentication Screen", {330.0f, 260.0f}, 16, m_theme.bodyText);
+        // Draw styled central headings
+        renderer.drawText("KUNG-FU CHESS", {280.0f, 130.0f}, 42, m_theme.titleText);
+        renderer.drawText("The Real-Time Chess Experience", {340.0f, 190.0f}, 14, m_theme.bodyText);
 
-        Color activeBorder{240, 200, 80, 255};
-        Color inactiveBorder{80, 80, 90, 255};
+        // Draw the central glass panel that centers the login form
+        drawGlassPanel(renderer, m_panelPos, m_panelSize);
 
-        // תיבת שם משתמש
-        renderer.drawText("Username:", {350.0f, 335.0f}, 14, m_theme.bodyText);
+        renderer.drawText("Account Authentication", {m_panelPos.x + 30.0f, m_panelPos.y + 40.0f}, 20, m_theme.titleText);
+        renderer.drawLine({m_panelPos.x + 30.0f, m_panelPos.y + 60.0f}, {m_panelPos.x + 430.0f, m_panelPos.y + 60.0f}, {65, 68, 85, 120}, 1.0f);
+
+        Color activeBorder{240, 200, 80, 255};      // Active gold
+        Color inactiveBorder{50, 52, 65, 255};     // Faded gray
+
+        // Username field
+        renderer.drawText("Username:", {m_usernamePos.x, m_usernamePos.y - 25.0f}, 13, m_theme.bodyText);
         Color userBorder = (m_activeField == ActiveField::Username) ? activeBorder : inactiveBorder;
-        renderer.drawRectangle(m_usernamePos, m_inputSize, {30, 31, 38, 255}, true);
+        renderer.drawRectangle(m_usernamePos, m_inputSize, {18, 19, 23, 255}, true);
         renderer.drawRectangle(m_usernamePos, m_inputSize, userBorder, false);
         
         std::string userDisplay = m_usernameText;
@@ -193,10 +193,10 @@ protected:
         }
         renderer.drawText(userDisplay, {m_usernamePos.x + 12.0f, m_usernamePos.y + 28.0f}, 15, {255, 255, 255, 255});
 
-        // תיבת סיסמה
-        renderer.drawText("Password:", {350.0f, 435.0f}, 14, m_theme.bodyText);
+        // Password field
+        renderer.drawText("Password:", {m_passwordPos.x, m_passwordPos.y - 25.0f}, 13, m_theme.bodyText);
         Color passBorder = (m_activeField == ActiveField::Password) ? activeBorder : inactiveBorder;
-        renderer.drawRectangle(m_passwordPos, m_inputSize, {30, 31, 38, 255}, true);
+        renderer.drawRectangle(m_passwordPos, m_inputSize, {18, 19, 23, 255}, true);
         renderer.drawRectangle(m_passwordPos, m_inputSize, passBorder, false);
 
         std::string passDisplay(m_passwordText.length(), '*');
@@ -205,28 +205,30 @@ protected:
         }
         renderer.drawText(passDisplay, {m_passwordPos.x + 12.0f, m_passwordPos.y + 28.0f}, 15, {255, 255, 255, 255});
 
+        // Detect hovering the mouse over buttons
         bool loginHovered = isPointInRect(m_mousePos, m_loginBtnPos, m_btnSize);
         bool registerHovered = isPointInRect(m_mousePos, m_registerBtnPos, m_btnSize);
         bool offlineHovered = isPointInRect(m_mousePos, m_offlineBtnPos, m_offlineBtnSize);
 
-        // ציור הכפתורים
-        drawButton(renderer, "Login", m_loginBtnPos, m_btnSize, loginHovered);
-        drawButton(renderer, "Register", m_registerBtnPos, m_btnSize, registerHovered);
+        // Draw the buttons inside the card
+        drawButton(renderer, "   Login", m_loginBtnPos, m_btnSize, loginHovered);
+        drawButton(renderer, "  Register", m_registerBtnPos, m_btnSize, registerHovered);
 
-        Color offlineColor = offlineHovered ? Color{70, 75, 85, 255} : Color{45, 48, 56, 255};
+        Color offlineColor = offlineHovered ? Color{48, 120, 192, 180} : Color{45, 48, 56, 255};
         renderer.drawRectangle(m_offlineBtnPos, m_offlineBtnSize, offlineColor, true);
         renderer.drawRectangle(m_offlineBtnPos, m_offlineBtnSize, m_theme.border, false);
-        renderer.drawText("Play Offline", {m_offlineBtnPos.x + 95.0f, m_offlineBtnPos.y + 31.0f}, 16, m_theme.bodyText);
+        renderer.drawText("Play Offline", {m_offlineBtnPos.x + 120.0f, m_offlineBtnPos.y + 31.0f}, 15, m_theme.bodyText);
 
+        // Display status messages
         if (!m_statusMessage.empty()) {
-            renderer.drawText(m_statusMessage, {350.0f, 720.0f}, 13, m_statusColor);
+            renderer.drawText(m_statusMessage, {m_panelPos.x + 30.0f, m_panelPos.y + 490.0f}, 12, m_statusColor);
         }
     }
 
 public:
     LoginScreen(ScreenManager& manager, std::shared_ptr<ISoundPlayer> soundPlayer = nullptr, bool isSfml = false)
-        : BaseScreen(manager, "Secure Login"), m_soundPlayer(soundPlayer), m_isSfml(isSfml) {
-        m_theme.background = Color{18, 19, 23, 255};
+        : BaseScreen(manager, ""), m_soundPlayer(soundPlayer), m_isSfml(isSfml) {
+        m_theme.background = Color{12, 13, 17, 255};
         m_theme.titleText = Color{240, 200, 80, 255};
         m_theme.buttonNormal = Color{35, 37, 45, 255};
         m_theme.buttonHover = Color{48, 120, 192, 255};
@@ -247,7 +249,7 @@ public:
                 m_statusMessage = result.message;
 
                 if (result.success) {
-                    m_statusColor = {100, 210, 130, 255}; // Green
+                    m_statusColor = {100, 210, 130, 255}; // ירוק להצלחה
                     
                     kungfu::ClientAuth::username = m_usernameText;
                     kungfu::ClientAuth::password = m_passwordText;
@@ -256,7 +258,7 @@ public:
 
                     m_screenManager.changeScreen(std::make_unique<StartScreen>(m_screenManager, m_soundPlayer));
                 } else {
-                    m_statusColor = {240, 100, 100, 255}; // Red
+                    m_statusColor = {240, 100, 100, 255}; // אדום לכישלון
                 }
             }
         }
