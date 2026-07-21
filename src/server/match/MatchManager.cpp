@@ -4,6 +4,7 @@
 #include "LiveMatch.hpp"
 #include "MatchFactory.hpp"
 #include "../network/Serializer.hpp"
+#include "server/ServerConfig.hpp"
 #include <algorithm>
 #include <iostream>
 #include <memory>
@@ -16,7 +17,7 @@ MatchManager::MatchManager(boost::asio::io_context& ioContext)
 }
 
 void MatchManager::scheduleMatchmakingTick() {
-    m_matchmakingTimer.expires_after(std::chrono::seconds(1));
+    m_matchmakingTimer.expires_after(ServerConfig::kMatchmakingTickInterval);
     m_matchmakingTimer.async_wait([this](const boost::system::error_code& ec) {
         if (!ec) {
             runMatchmakingCycle();
@@ -41,17 +42,14 @@ void MatchManager::registerPlayer(std::shared_ptr<NetworkSession> session, std::
 
 void MatchManager::unregisterPlayer(std::shared_ptr<NetworkSession> session) {
     std::shared_ptr<LiveMatch> activeMatch;
-
     {
         std::lock_guard<std::mutex> lock(m_mutex);
-
         for (auto it = m_waitingPool.begin(); it != m_waitingPool.end(); ++it) {
             if (it->session == session) {
                 m_waitingPool.erase(it);
                 break;
             }
         }
-
         std::uint64_t matchId = session->matchId();
         if (matchId != 0) {
             auto it = m_matches.find(matchId);
@@ -60,10 +58,49 @@ void MatchManager::unregisterPlayer(std::shared_ptr<NetworkSession> session) {
             }
         }
     }
-
     if (activeMatch) {
         activeMatch->handlePlayerDisconnect(session);
     }
+}
+
+void MatchManager::removeTimedOutPlayers(std::chrono::steady_clock::time_point now) {
+    auto it = std::remove_if(m_waitingPool.begin(), m_waitingPool.end(),
+        [now](const WaitingPlayer& player) {
+            auto waitDuration = std::chrono::duration_cast<std::chrono::seconds>(now - player.joinTime);
+            if (waitDuration >= ServerConfig::kMatchmakingTimeout) {
+                std::cout << "[Lobby] Matchmaking timeout for " << player.session->username() << std::endl;
+                player.session->sendPacket(NetworkMessageType::MATCH_TIMEOUT, {});
+                return true;
+            }
+            return false;
+        });
+
+    m_waitingPool.erase(it, m_waitingPool.end());
+}
+
+bool MatchManager::isPrivateRoomMatch(const WaitingPlayer& p1, const WaitingPlayer& p2) const {
+    if (p1.roomCode != 0 || p2.roomCode != 0) {
+        return p1.roomCode == p2.roomCode;
+    }
+    return false;
+}
+
+bool MatchManager::isRatedMatch(const WaitingPlayer& p1, const WaitingPlayer& p2, int waitDurationSec) const {
+    if (p1.roomCode != 0 || p2.roomCode != 0) {
+        return false;
+    }
+
+    int eloDiff = std::abs(p1.rating - p2.rating);
+    int maxAllowedDiff = ServerConfig::kBaseEloDiff + (waitDurationSec * ServerConfig::kEloDiffExpansionPerSec);
+
+    return eloDiff <= maxAllowedDiff;
+}
+
+bool MatchManager::canPairPlayers(const WaitingPlayer& p1, const WaitingPlayer& p2, int waitDurationSec) const {
+    if (p1.roomCode != 0 || p2.roomCode != 0) {
+        return isPrivateRoomMatch(p1, p2);
+    }
+    return isRatedMatch(p1, p2, waitDurationSec);
 }
 
 void MatchManager::runMatchmakingCycle() {
@@ -71,63 +108,41 @@ void MatchManager::runMatchmakingCycle() {
     if (m_waitingPool.empty()) return;
 
     auto now = std::chrono::steady_clock::now();
-    std::vector<WaitingPlayer> remainingPlayers;
 
+    // 1. Remove players who have waited too long
+    removeTimedOutPlayers(now);
+
+    std::vector<WaitingPlayer> remainingPool;
+
+    // 2. Iterate through the remaining waiting pool and pair compatible players
     for (size_t i = 0; i < m_waitingPool.size(); ++i) {
         bool paired = false;
-
-        auto waitDuration = std::chrono::duration_cast<std::chrono::seconds>(now - m_waitingPool[i].joinTime).count();
-        if (waitDuration >= 60) {
-            std::cout << "[Lobby] Matchmaking timeout for " << m_waitingPool[i].session->username() << std::endl;
-            m_waitingPool[i].session->sendPacket(NetworkMessageType::MATCH_TIMEOUT, {});
-            continue;
-        }
+        const auto& player1 = m_waitingPool[i];
+        auto waitDurationSec = std::chrono::duration_cast<std::chrono::seconds>(now - player1.joinTime).count();
 
         for (size_t j = i + 1; j < m_waitingPool.size(); ++j) {
-            // Scenario 1: If at least one of the players requested a private room code (roomCode != 0)
-            // They will only be connected if their room code is exactly the same!
-            if (m_waitingPool[i].roomCode != 0 || m_waitingPool[j].roomCode != 0) {
-                if (m_waitingPool[i].roomCode == m_waitingPool[j].roomCode) {
-                    auto player1 = m_waitingPool[i].session;
-                    auto player2 = m_waitingPool[j].session;
+            const auto& player2 = m_waitingPool[j];
 
-                    m_waitingPool.erase(m_waitingPool.begin() + j);
-                    paired = true;
-
-                    boost::asio::post(m_ioContext, [this, player1, player2]() {
-                        startNewMatch(player1, player2);
-                    });
-                    break;
-                }
-                continue; // Skips regular matchmaking for players with different code
-            }
-
-            // Scenario 2: General network matching (roomCode == 0)
-            // The rating mechanism becomes dynamic. As the player's wait time increases,
-            // the allowed rating gap increases by 10 points per second (fast and fair matching).
-            int eloDiff = std::abs(m_waitingPool[i].rating - m_waitingPool[j].rating);
-            int maxAllowedDiff = 100 + static_cast<int>(waitDuration * 10);
-
-            if (eloDiff <= maxAllowedDiff) {
-                auto player1 = m_waitingPool[i].session;
-                auto player2 = m_waitingPool[j].session;
+            if (canPairPlayers(player1, player2, static_cast<int>(waitDurationSec))) {
+                auto s1 = player1.session;
+                auto s2 = player2.session;
 
                 m_waitingPool.erase(m_waitingPool.begin() + j);
                 paired = true;
 
-                boost::asio::post(m_ioContext, [this, player1, player2]() {
-                    startNewMatch(player1, player2);
+                boost::asio::post(m_ioContext, [this, s1, s2]() {
+                    startNewMatch(s1, s2);
                 });
                 break;
             }
         }
 
         if (!paired) {
-            remainingPlayers.push_back(m_waitingPool[i]);
+            remainingPool.push_back(player1);
         }
     }
 
-    m_waitingPool = std::move(remainingPlayers);
+    m_waitingPool = std::move(remainingPool);
 }
 
 std::shared_ptr<LiveMatch> MatchManager::getMatch(std::uint64_t matchId) {

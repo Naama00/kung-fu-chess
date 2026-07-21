@@ -32,14 +32,9 @@ struct NetworkPosition {
     std::int32_t y;
 };
 
-// In-memory logical representation of a move message.
-// Note: this struct is only a convenient internal representation for working
-// with the data in code. It is *not* sent over the wire via a direct memcpy -
-// actual serialization (byte order, field sizes) is done explicitly in
-// Serializer, so we are not dependent on the compiler's memory layout
-// (padding/ABI), which is not guaranteed to match between the server process
-// and any client process (potentially written in a different language/on a
-// different platform, e.g. a web client).
+// In-memory representation of a move packet.
+// The wire format is serialized explicitly, so it does not depend on
+// compiler-specific struct layout, padding, or endianness.
 struct NetworkMovePacket {
     std::uint64_t matchId;
     std::uint64_t requestId;

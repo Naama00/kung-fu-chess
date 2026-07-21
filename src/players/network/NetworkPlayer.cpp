@@ -1,7 +1,8 @@
 // players/network/NetworkPlayer.cpp
 #include "NetworkPlayer.hpp"
-#include "../../server/network/Serializer.hpp" 
+#include "ClientConfig.hpp"
 #include "ClientAuth.hpp"                       
+#include "../../server/network/Serializer.hpp" 
 #include <iostream>
 
 namespace kungfu
@@ -14,8 +15,8 @@ namespace kungfu
           m_host(host),
           m_port(port),
           m_recvBuffer(kMaxPayloadSize),
-          m_heartbeatTimer(ioContext),
-          m_retryTimer(ioContext),
+          m_heartbeatTimer(m_strand),
+          m_retryTimer(m_strand),
           m_isSpectator(isSpectator),
           m_spectateMatchId(spectateMatchId),
           m_onlineRoomCode(onlineRoomCode) 
@@ -27,7 +28,7 @@ namespace kungfu
         m_opponentDisconnected.store(false);
         m_nextRequestId.store(1);
         m_isOpponentDisconnected.store(false);
-        m_disconnectCountdown.store(20);
+        m_disconnectCountdown.store(ClientConfig::kDefaultDisconnectCountdownSec);
     }
 
     NetworkPlayer::~NetworkPlayer()
@@ -74,8 +75,7 @@ namespace kungfu
         }
     }
 
-    // Directs connection requests between matchmaking search vs. spectate requests
-     void NetworkPlayer::sendJoinRequest()
+    void NetworkPlayer::sendJoinRequest()
     {
         if (ClientAuth::isAuthenticated) {
             auto payload = Serializer::serializeAuthRequest(ClientAuth::username, ClientAuth::password);
@@ -84,7 +84,6 @@ namespace kungfu
             if (m_isSpectator) {
                 sendSpectateRequest();
             } else {
-                // Sending a room code to the server when joining
                 std::vector<std::uint8_t> payload;
                 Serializer::writeU64(payload, m_onlineRoomCode);
                 writePacket(NetworkMessageType::JOIN_MATCH_REQUEST, payload);
@@ -105,6 +104,12 @@ namespace kungfu
         if (!m_connected) return;
         writePacket(NetworkMessageType::ROOM_LIST_REQUEST, {});
     }
+
+    /*
+     * Thread-Safe State Query Methods
+     * These methods bridge the network Asio strand and the main GUI/game loop thread.
+     * They utilize dedicated mutexes to safely transfer updated state without blocking Asio operations.
+     */
 
     std::vector<NetworkPlayer::ClientMatchInfo> NetworkPlayer::getActiveRooms()
     {
@@ -137,6 +142,12 @@ namespace kungfu
             }));
     }
 
+    /*
+     * Central UDP Packet Dispatcher
+     * Parses the generic packet header (type + payload size) and routes the payload to the
+     * appropriate state update logic. Dispatched messages update either thread-safe atomic flags,
+     * thread-bridge mutexes for UI rendering, or internal pending move maps.
+     */
     void NetworkPlayer::processDatagram(std::size_t bytesRecvd)
     {
         std::size_t offset = 0;
@@ -166,7 +177,6 @@ namespace kungfu
                 if (m_isSpectator) {
                     sendSpectateRequest();
                 } else {
-                    // Sending room code in joining request even after successful verification
                     std::vector<std::uint8_t> joinPayload;
                     Serializer::writeU64(joinPayload, m_onlineRoomCode);
                     writePacket(NetworkMessageType::JOIN_MATCH_REQUEST, joinPayload);
@@ -181,20 +191,17 @@ namespace kungfu
         {
             std::size_t readOffset = 0;
             std::uint64_t matchId = 0;
-            std::uint32_t stringLen = 0;
+            std::string boardStr;
 
             if (Serializer::readU64(payload, readOffset, matchId) &&
-                Serializer::readU32(payload, readOffset, stringLen))
+                Serializer::readString(payload, readOffset, boardStr))
             {
-                if (readOffset + stringLen <= payload.size()) {
-                    std::string boardStr(payload.begin() + readOffset, payload.begin() + readOffset + stringLen);
-                    m_matchId.store(matchId);
-                    
-                    std::lock_guard<std::mutex> lock(m_syncMutex);
-                    m_pendingSyncBoard = boardStr;
-                    m_hasPendingSync.store(true);
-                    std::cout << "[Client] Received ROOM_STATE_SYNC for Match ID: " << matchId << std::endl;
-                }
+                m_matchId.store(matchId);
+                
+                std::lock_guard<std::mutex> lock(m_syncMutex);
+                m_pendingSyncBoard = boardStr;
+                m_hasPendingSync.store(true);
+                std::cout << "[Client] Received ROOM_STATE_SYNC for Match ID: " << matchId << std::endl;
             }
             break;
         }
@@ -210,20 +217,8 @@ namespace kungfu
                 for (std::uint32_t i = 0; i < count; ++i) {
                     ClientMatchInfo info{};
                     parseOk &= Serializer::readU64(payload, readOffset, info.matchId);
-                    
-                    std::uint32_t whiteLen = 0;
-                    parseOk &= Serializer::readU32(payload, readOffset, whiteLen);
-                    if (parseOk && readOffset + whiteLen <= payload.size()) {
-                        info.whitePlayer.assign(payload.begin() + readOffset, payload.begin() + readOffset + whiteLen);
-                        readOffset += whiteLen;
-                    } else { parseOk = false; }
-                    
-                    std::uint32_t blackLen = 0;
-                    parseOk &= Serializer::readU32(payload, readOffset, blackLen);
-                    if (parseOk && readOffset + blackLen <= payload.size()) {
-                        info.blackPlayer.assign(payload.begin() + readOffset, payload.begin() + readOffset + blackLen);
-                        readOffset += blackLen;
-                    } else { parseOk = false; }
+                    parseOk &= Serializer::readString(payload, readOffset, info.whitePlayer);
+                    parseOk &= Serializer::readString(payload, readOffset, info.blackPlayer);
                     
                     if (parseOk) {
                         rooms.push_back(info);
@@ -281,11 +276,8 @@ namespace kungfu
                     m_incomingResults.push_back(*result);
                 }
 
-                std::uint64_t reqId = result->requestId;
-                auto self = shared_from_this();
-                boost::asio::post(m_strand, [self, reqId]() {
-                    self->m_pendingMoves.erase(reqId);
-                });
+                // Remove acknowledged move from pending retransmission queue
+                m_pendingMoves.erase(result->requestId);
             }
             break;
         }
@@ -307,6 +299,11 @@ namespace kungfu
         }
     }
 
+    /*
+     * Action Outgoing Pipeline
+     * Assigns a unique request ID, constructs the move packet, stores it inside m_pendingMoves for
+     * reliable retransmission tracking, and dispatches the packet to the server via the strand.
+     */
     void NetworkPlayer::sendMoveToServer(const PlayerAction &action)
     {
         if (!m_connected || m_matchId.load() == 0) return;
@@ -346,7 +343,7 @@ namespace kungfu
     void NetworkPlayer::startHeartbeat()
     {
         auto self = shared_from_this();
-        m_heartbeatTimer.expires_after(std::chrono::seconds(5));
+        m_heartbeatTimer.expires_after(ClientConfig::kHeartbeatInterval);
         m_heartbeatTimer.async_wait(boost::asio::bind_executor(m_strand,
             [self](const boost::system::error_code& ec) {
                 if (!ec && self->m_connected) {
@@ -359,7 +356,7 @@ namespace kungfu
     void NetworkPlayer::startRetryTimer()
     {
         auto self = shared_from_this();
-        m_retryTimer.expires_after(std::chrono::milliseconds(100));
+        m_retryTimer.expires_after(ClientConfig::kMoveRetryCheckInterval);
         m_retryTimer.async_wait(boost::asio::bind_executor(m_strand,
             [self](const boost::system::error_code& ec) {
                 if (!ec && self->m_connected) {
@@ -369,17 +366,24 @@ namespace kungfu
             }));
     }
 
+    /*
+     * Custom Reliable UDP Retransmission Loop
+     * Periodically iterates through unacknowledged move packets in m_pendingMoves.
+     * If a move exceeds kMoveRetryTimeout without receiving a MOVE_RESULT ack, it is retransmitted.
+     * If retries exceed kMaxMoveRetries, the connection is assumed lost and handleDisconnect() is invoked.
+     */
     void NetworkPlayer::checkAndRetryMoves()
     {
         auto now = std::chrono::steady_clock::now();
         for (auto& pair : m_pendingMoves) {
             auto& pm = pair.second;
-            if (now - pm.lastSent >= std::chrono::milliseconds(200)) {
-                if (pm.retries >= 5) {
+            if (now - pm.lastSent >= ClientConfig::kMoveRetryTimeout) {
+                if (pm.retries >= ClientConfig::kMaxMoveRetries) {
                     std::cerr << "[Client] Move request " << pm.packet.requestId 
-                              << " timed out after 5 retries. Simulating disconnect." << std::endl;
+                              << " timed out after " << ClientConfig::kMaxMoveRetries 
+                              << " retries. Simulating disconnect." << std::endl;
                     handleDisconnect();
-                    break;
+                    return; // Return immediately to avoid iterating over cleared/invalidated map
                 }
                 pm.retries++;
                 pm.lastSent = now;
@@ -398,6 +402,11 @@ namespace kungfu
         m_matchId = 0;
         m_isOpponentDisconnected.store(false);
         m_pendingMoves.clear();
+
+        // Safely cancel active timers on disconnect
+        boost::system::error_code ec;
+        m_heartbeatTimer.cancel(ec);
+        m_retryTimer.cancel(ec);
     }
 
     std::vector<ActionRequest> NetworkPlayer::decideActions(const view::GameSnapshot &snapshot)

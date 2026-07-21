@@ -52,7 +52,7 @@ void NetworkServer::processIncomingDatagram(std::size_t bytesRecvd) {
         if (it != m_sessions.end()) {
             session = it->second;
         } else {
-            // Create a new session for this remote endpoint if it doesn't exist yet.
+            // Create a session for a new remote endpoint.
             // Note: This is a simple approach; in a real-world scenario,
             // you might want to implement additional checks (e.g., authentication) before creating a session.
             session = std::make_shared<NetworkSession>(m_socket, m_remoteEndpoint, m_matchManager);
@@ -67,7 +67,7 @@ void NetworkServer::processIncomingDatagram(std::size_t bytesRecvd) {
 }
 
 void NetworkServer::startPruneTimer() {
-    m_pruneTimer.expires_after(std::chrono::seconds(5));
+    m_pruneTimer.expires_after(kungfu::ServerConfig::kSessionPruneInterval);
     m_pruneTimer.async_wait([this](const boost::system::error_code& ec) {
         if (!ec) {
             pruneStaleSessions();
@@ -81,7 +81,7 @@ void NetworkServer::pruneStaleSessions() {
     std::lock_guard<std::mutex> lock(m_sessionsMutex);
     
     for (auto it = m_sessions.begin(); it != m_sessions.end(); ) {
-        if (now - it->second->lastActivity() > std::chrono::seconds(25)) {
+        if (now - it->second->lastActivity() > kungfu::ServerConfig::kSessionTimeout) {
             std::cout << "[Server] Pruning inactive UDP session: " << it->second->username() << std::endl;
             it->second->handleDisconnect();
             it = m_sessions.erase(it);

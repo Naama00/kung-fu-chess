@@ -42,100 +42,122 @@ void NetworkSession::sendPacket(NetworkMessageType type, const std::vector<std::
 void NetworkSession::processMessage(NetworkMessageType type, const std::vector<std::uint8_t>& payload) {
     updateActivity();
 
-    if (type == NetworkMessageType::LOGIN_REQUEST) {
-        std::string username, password;
-        if (Serializer::deserializeAuthRequest(payload, username, password)) {
-            int rating = 1200;
-            bool success = m_matchManager.dbManager().authenticateUser(username, password, rating);
+    switch (type) {
+        case NetworkMessageType::LOGIN_REQUEST: {
+            std::string username, password;
+            if (Serializer::deserializeAuthRequest(payload, username, password)) {
+                int rating = 1200;
+                bool success = m_matchManager.dbManager().authenticateUser(username, password, rating);
 
-            std::vector<std::uint8_t> response;
-            Serializer::writeU8(response, success ? 1 : 0);
-            if (success) {
-                Serializer::writeU32(response, static_cast<std::uint32_t>(rating));
-                m_username = username;
-                m_rating = rating;
-                m_isAuthenticated = true;
+                std::vector<std::uint8_t> response;
+                Serializer::writeU8(response, success ? 1 : 0);
+                if (success) {
+                    Serializer::writeU32(response, static_cast<std::uint32_t>(rating));
+                    m_username = username;
+                    m_rating = rating;
+                    m_isAuthenticated = true;
 
-                std::cout << "[Server] User connected via UDP: " << username << std::endl;
+                    std::cout << "[Server] User connected via UDP: " << username << std::endl;
 
-                auto activeMatch = m_matchManager.findActiveMatchForUser(username);
-                if (activeMatch) {
-                    activeMatch->reconnectPlayer(shared_from_this());
+                    auto activeMatch = m_matchManager.findActiveMatchForUser(username);
+                    if (activeMatch) {
+                        activeMatch->reconnectPlayer(shared_from_this());
 
-                    std::vector<std::uint8_t> matchFoundPayload;
-                    Serializer::writeU64(matchFoundPayload, activeMatch->matchId());
-                    Serializer::writeU8(matchFoundPayload, static_cast<std::uint8_t>(m_color));
-                    sendPacket(NetworkMessageType::MATCH_FOUND, matchFoundPayload);
+                        std::vector<std::uint8_t> matchFoundPayload;
+                        Serializer::writeU64(matchFoundPayload, activeMatch->matchId());
+                        Serializer::writeU8(matchFoundPayload, static_cast<std::uint8_t>(m_color));
+                        sendPacket(NetworkMessageType::MATCH_FOUND, matchFoundPayload);
+                    }
+                }
+                sendPacket(NetworkMessageType::LOGIN_RESPONSE, response);
+            }
+            break;
+        }
+
+        case NetworkMessageType::REGISTER_REQUEST: {
+            std::string username, password;
+            if (Serializer::deserializeAuthRequest(payload, username, password)) {
+                bool success = m_matchManager.dbManager().registerUser(username, password);
+                std::vector<std::uint8_t> response;
+                Serializer::writeU8(response, success ? 1 : 0);
+                sendPacket(NetworkMessageType::REGISTER_RESPONSE, response);
+            }
+            break;
+        }
+
+        case NetworkMessageType::JOIN_MATCH_REQUEST: {
+            if (!m_isAuthenticated) {
+                std::cerr << "[Server] Blocked unauthenticated UDP player from joining match." << std::endl;
+                break;
+            }
+            // Retrieving a designated room code if one exists
+            std::uint64_t roomCode = 0;
+            if (payload.size() >= 8) {
+                std::size_t offset = 0;
+                Serializer::readU64(payload, offset, roomCode);
+            }
+            m_matchManager.registerPlayer(shared_from_this(), roomCode);
+            break;
+        }
+
+        case NetworkMessageType::GAME_MOVE: {
+            if (m_matchId == 0) break;
+
+            auto packet = Serializer::deserializeMovePacket(payload);
+            if (!packet.has_value()) {
+                std::cerr << "[Session] Received malformed GAME_MOVE UDP payload." << std::endl;
+                break;
+            }
+
+            auto match = m_matchManager.getMatch(m_matchId);
+            if (match) {
+                match->handlePlayerMove(shared_from_this(), *packet);
+            }
+            break;
+        }
+
+        case NetworkMessageType::SPECTATE_ROOM_REQUEST: {
+            std::size_t offset = 0;
+            std::uint64_t targetMatchId = 0;
+            if (Serializer::readU64(payload, offset, targetMatchId)) {
+                auto match = m_matchManager.getMatch(targetMatchId);
+                if (match) {
+                    match->addSpectator(shared_from_this());
+                } else {
+                    std::cerr << "[Server] User requested non-existent Match ID to spectate: " << targetMatchId << std::endl;
                 }
             }
-            sendPacket(NetworkMessageType::LOGIN_RESPONSE, response);
+            break;
         }
-    } else if (type == NetworkMessageType::REGISTER_REQUEST) {
-        std::string username, password;
-        if (Serializer::deserializeAuthRequest(payload, username, password)) {
-            bool success = m_matchManager.dbManager().registerUser(username, password);
+
+        case NetworkMessageType::ROOM_LIST_REQUEST: {
+            auto matches = m_matchManager.getActiveMatchesList();
+            
             std::vector<std::uint8_t> response;
-            Serializer::writeU8(response, success ? 1 : 0);
-            sendPacket(NetworkMessageType::REGISTER_RESPONSE, response);
-        }
-    } else if (type == NetworkMessageType::JOIN_MATCH_REQUEST) {
-        if (!m_isAuthenticated) {
-            std::cerr << "[Server] Blocked unauthenticated UDP player from joining match." << std::endl;
-            return;
-        }
-        // Retrieving a designated room code if one exists
-        std::uint64_t roomCode = 0;
-        if (payload.size() >= 8) {
-            std::size_t offset = 0;
-            Serializer::readU64(payload, offset, roomCode);
-        }
-        m_matchManager.registerPlayer(shared_from_this(), roomCode);
-    } 
-    else if (type == NetworkMessageType::GAME_MOVE) {
-        if (m_matchId == 0) return;
-
-        auto packet = Serializer::deserializeMovePacket(payload);
-        if (!packet.has_value()) {
-            std::cerr << "[Session] Received malformed GAME_MOVE UDP payload." << std::endl;
-            return;
-        }
-
-        auto match = m_matchManager.getMatch(m_matchId);
-        if (match) {
-            match->handlePlayerMove(shared_from_this(), *packet);
-        }
-    } else if (type == NetworkMessageType::SPECTATE_ROOM_REQUEST) {
-        std::size_t offset = 0;
-        std::uint64_t targetMatchId = 0;
-        if (Serializer::readU64(payload, offset, targetMatchId)) {
-            auto match = m_matchManager.getMatch(targetMatchId);
-            if (match) {
-                match->addSpectator(shared_from_this());
-            } else {
-                std::cerr << "[Server] User requested non-existent Match ID to spectate: " << targetMatchId << std::endl;
-            }
-        }
-    } else if (type == NetworkMessageType::ROOM_LIST_REQUEST) {
-        auto matches = m_matchManager.getActiveMatchesList();
-        
-        std::vector<std::uint8_t> response;
-        Serializer::writeU32(response, static_cast<std::uint32_t>(matches.size()));
-        
-        for (const auto& match : matches) {
-            Serializer::writeU64(response, match.matchId);
+            Serializer::writeU32(response, static_cast<std::uint32_t>(matches.size()));
             
-            Serializer::writeU32(response, static_cast<std::uint32_t>(match.whitePlayer.size()));
-            for (char c : match.whitePlayer) {
-                response.push_back(static_cast<std::uint8_t>(c));
+            for (const auto& match : matches) {
+                Serializer::writeU64(response, match.matchId);
+                
+                Serializer::writeU32(response, static_cast<std::uint32_t>(match.whitePlayer.size()));
+                for (char c : match.whitePlayer) {
+                    response.push_back(static_cast<std::uint8_t>(c));
+                }
+                
+                Serializer::writeU32(response, static_cast<std::uint32_t>(match.blackPlayer.size()));
+                for (char c : match.blackPlayer) {
+                    response.push_back(static_cast<std::uint8_t>(c));
+                }
             }
             
-            Serializer::writeU32(response, static_cast<std::uint32_t>(match.blackPlayer.size()));
-            for (char c : match.blackPlayer) {
-                response.push_back(static_cast<std::uint8_t>(c));
-            }
+            sendPacket(NetworkMessageType::ROOM_LIST_RESPONSE, response);
+            break;
         }
-        
-        sendPacket(NetworkMessageType::ROOM_LIST_RESPONSE, response);
+
+        default:
+            std::cerr << "[Session] Received unhandled network message type: "
+                      << static_cast<int>(type) << std::endl;
+            break;
     }
 }
 

@@ -23,7 +23,8 @@
 #include "players/ai/ClassicMinimaxStrategy.hpp"
 #include "players/ai/RealTimeStrategies.hpp"
 #include "players/network/NetworkPlayer.hpp"
-#include "engine/common/PieceValues.hpp" 
+#include "engine/common/PieceValues.hpp"
+#include "engine/common/BoardPresets.hpp" 
 #include <future>
 #include <memory>
 #include <iostream>
@@ -159,15 +160,7 @@ private:
     std::cout << "[Spectator] Board successfully synchronized with live room!" << std::endl;
 }
     void resetGame() {
-        std::string startBoard =
-            "bR bN bB bQ bK bB bN bR\n"
-            "bP bP bP bP bP bP bP bP\n"
-            ". . . . . . . .\n"
-            ". . . . . . . .\n"
-            ". . . . . . . .\n"
-            ". . . . . . . .\n"
-            "wP wP wP wP wP wP wP wP\n"
-            "wR wN wB wQ wK wB wN wR\n";
+        auto startBoard = kungfu::BoardParser::parse(kungfu::BoardPresets::kStandardStartBoard);
 
         m_eventBus = std::make_shared<kungfu::EventBus>();
         auto board = kungfu::BoardParser::parse(startBoard);

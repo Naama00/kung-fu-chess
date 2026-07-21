@@ -7,10 +7,11 @@
 
 namespace kungfu {
 
-std::vector<std::string> BoardParser::splitLines(const std::string& text) {
+std::vector<std::string> BoardParser::splitLines(const std::string_view text) {
     std::vector<std::string> lines;
     std::string line;
-    std::istringstream stream(text);
+    std::string textStr(text);
+    std::istringstream stream(textStr);
     while (std::getline(stream, line)) {
         // Trim leading and trailing whitespace from the line
         line.erase(line.begin(), std::find_if(line.begin(), line.end(), [](unsigned char ch) {
@@ -62,7 +63,7 @@ std::shared_ptr<Piece> BoardParser::createPiece(const std::string& token, const 
 }
 
 
-std::shared_ptr<Board> BoardParser::parse(const std::string& text) {
+std::shared_ptr<Board> BoardParser::parse(const std::string_view text) {
     auto lines = splitLines(text);
     if (lines.empty()) {
         return nullptr;

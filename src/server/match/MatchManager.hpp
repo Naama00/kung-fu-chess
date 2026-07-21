@@ -1,4 +1,4 @@
-// src/server/match/MatchManager.hpp
+// server/match/MatchManager.hpp
 #pragma once
 
 #include <boost/asio.hpp>
@@ -27,7 +27,7 @@ public:
         std::shared_ptr<NetworkSession> session;
         std::chrono::steady_clock::time_point joinTime;
         int rating;
-        std::uint64_t roomCode = 0; // Optional room code for private matches; 0 means no specific room requested
+        std::uint64_t roomCode = 0;
     };
 
 private:
@@ -47,16 +47,24 @@ public:
 
     DatabaseManager& dbManager() { return m_dbManager; }
 
-    void registerPlayer(std::shared_ptr<NetworkSession> session, std::uint64_t roomCode = 0); // עדכון חתימה
+    void registerPlayer(std::shared_ptr<NetworkSession> session, std::uint64_t roomCode = 0);
     void unregisterPlayer(std::shared_ptr<NetworkSession> session);
 
     std::shared_ptr<LiveMatch> getMatch(std::uint64_t matchId);
     void removeMatch(std::uint64_t matchId);
     std::shared_ptr<LiveMatch> findActiveMatchForUser(const std::string& username);
     std::vector<MatchInfo> getActiveMatchesList();
+
 private:
     void scheduleMatchmakingTick();
     void runMatchmakingCycle();
+
+    // Helper functions for clean matchmaking flow
+    void removeTimedOutPlayers(std::chrono::steady_clock::time_point now);
+    bool canPairPlayers(const WaitingPlayer& p1, const WaitingPlayer& p2, int waitDurationSec) const;
+    bool isPrivateRoomMatch(const WaitingPlayer& p1, const WaitingPlayer& p2) const;
+    bool isRatedMatch(const WaitingPlayer& p1, const WaitingPlayer& p2, int waitDurationSec) const;
+
     std::shared_ptr<LiveMatch> startNewMatch(std::shared_ptr<NetworkSession> player1,
                                              std::shared_ptr<NetworkSession> player2);
 };
