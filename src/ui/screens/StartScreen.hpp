@@ -163,7 +163,9 @@ public:
     void onEnter() override {}
     void onExit() override {}
 
-    void update(float deltaTime) override { (void)deltaTime; }
+    void update(float deltaTime) override { 
+        tickBackground(deltaTime); 
+        (void)deltaTime; }
 
     void handleInput(const std::vector<InputEvent> &events) override
     {

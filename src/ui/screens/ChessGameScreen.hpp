@@ -419,7 +419,7 @@ private:
 
         if (shouldAiMove && !m_aiThinking) {
             m_aiThinking = true;
-            auto snapshot = kungfu::view::SnapshotBuilder::build(*m_gameEngine->getBoard(), m_gameEngine->getArbiter(), m_gameEngine->getCurrentTimeMs(), m_gameEngine->isGameOver(), std::nullopt, m_boardRangeX / 8);
+            auto snapshot = kungfu::view::SnapshotBuilder::build(*m_gameEngine->getBoard(), m_gameEngine->getArbiter(), m_gameEngine->getCurrentTimeMs(), m_gameEngine->isGameOver(), std::nullopt);
             m_aiFuture = std::async(std::launch::async, [this, snapshot]() { return m_aiPlayer->decideActions(snapshot); });
         }
 
@@ -441,9 +441,9 @@ private:
 protected:
     void drawContent(IRenderer &renderer) override {
         auto board = m_gameEngine->getBoard();
-        auto snapshot = kungfu::view::SnapshotBuilder::build(*board, m_gameEngine->getArbiter(), m_gameEngine->getCurrentTimeMs(), m_gameEngine->isGameOver(), m_humanPlayer->selectedPosition(), m_boardRangeX / board->cols());
+        auto snapshot = kungfu::view::SnapshotBuilder::build(*board, m_gameEngine->getArbiter(), m_gameEngine->getCurrentTimeMs(), m_gameEngine->isGameOver(), m_humanPlayer->selectedPosition());
 
-        m_boardView.draw(renderer, snapshot, m_gameEngine->getPremoveQueue(), m_boardStartX, m_boardStartY, m_boardRangeX, m_boardRangeY, m_hoveredTile.row, m_hoveredTile.col, m_isHovering, m_selectedPieceAnim.isJumping, m_selectedPieceAnim.jumpTimer, m_isPaused, m_config.allowSimultaneousMovement);
+        m_boardView.draw(renderer, snapshot, m_gameEngine->getPremoveQueue(), m_gameEngine->getCurrentTimeMs(), m_boardStartX, m_boardStartY, m_boardRangeX, m_boardRangeY, m_hoveredTile.row, m_hoveredTile.col, m_isHovering, m_selectedPieceAnim.isJumping, m_selectedPieceAnim.jumpTimer, m_isPaused, m_config.allowSimultaneousMovement);
         m_particleSystem.draw(renderer);
         m_headerView.draw(renderer, "KUNG-FU CHESS", m_theme.background, m_theme.border, m_theme.titleText, *m_pauseButton, *m_sidebarRestartButton, *m_sidebarMenuButton);
         m_sidebarView.draw(renderer, m_whiteHistory, m_blackHistory, m_theme.background, m_theme.border);
@@ -493,6 +493,7 @@ public:
     void onExit() override {}
 
     void update(float deltaTime) override {
+        tickBackground(deltaTime);
         m_pauseButton->update(deltaTime);
         m_sidebarRestartButton->update(deltaTime);
         m_sidebarMenuButton->update(deltaTime);
@@ -521,7 +522,7 @@ public:
             m_menuButton->update(deltaTime);
 
             auto board = m_gameEngine->getBoard();
-            auto snapshot = kungfu::view::SnapshotBuilder::build(*board, m_gameEngine->getArbiter(), m_gameEngine->getCurrentTimeMs(), m_gameEngine->isGameOver(), std::nullopt, m_boardRangeX / board->cols());
+            auto snapshot = kungfu::view::SnapshotBuilder::build(*board, m_gameEngine->getArbiter(), m_gameEngine->getCurrentTimeMs(), m_gameEngine->isGameOver(), std::nullopt);
             auto winner = determineWinnerColor(snapshot);
             
             if (winner.has_value()) {
@@ -553,7 +554,7 @@ public:
                 }
             }
 
-            auto snapshot = kungfu::view::SnapshotBuilder::build(*m_gameEngine->getBoard(), m_gameEngine->getArbiter(), m_gameEngine->getCurrentTimeMs(), m_gameEngine->isGameOver(), std::nullopt, m_boardRangeX / 8);
+            auto snapshot = kungfu::view::SnapshotBuilder::build(*m_gameEngine->getBoard(), m_gameEngine->getArbiter(), m_gameEngine->getCurrentTimeMs(), m_gameEngine->isGameOver(), std::nullopt);
             auto networkActions = m_networkPlayer->decideActions(snapshot);
             for (const auto& req : networkActions) {
                 m_gameEngine->requestMove(req.action.from, req.action.to); 

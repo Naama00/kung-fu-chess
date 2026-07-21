@@ -1,3 +1,4 @@
+// ui/components/BoardView.hpp
 #pragma once
 
 #include "ui/framework/IRenderer.hpp"
@@ -6,13 +7,14 @@
 #include "engine/core/PremoveQueue.hpp"
 #include "engine/common/PieceTokenCodec.hpp"
 #include "ui/components/CooldownBar.hpp"
+#include "ui/animations/Animation.hpp"
 #include <unordered_map>
 #include <optional>
 #include <cmath>
 
 class BoardView {
 private:
-    CooldownBar m_cooldownBar; // The cooldown bar is now managed internally by the board component
+    CooldownBar m_cooldownBar;
 
     static int positionKey(const kungfu::Position &pos, int cols) {
         return pos.row() * cols + pos.col();
@@ -26,11 +28,12 @@ public:
     BoardView& operator=(const BoardView&) = delete;
 
     /**
-     * Main drawing function for the game board.
+     * @brief Draws the complete board state using logical snapshots and local metrics.
      */
     void draw(IRenderer& renderer,
               const kungfu::view::GameSnapshot& snapshot,
               const kungfu::PremoveQueue& premoveQueue,
+              int currentTimeMs, // Injected parameter to compute active animations on the fly
               float boardStartX,
               float boardStartY,
               float boardRangeX,
@@ -49,7 +52,7 @@ public:
         float cellWidth = boardRangeX / cols;
         float cellHeight = boardRangeY / rows;
 
-        // --- 1. Draw the board background and decorative frames ---
+        // --- 1. Background Frame Setup ---
         Color boardFrameBg{35, 36, 43, 255};
         Color boardFrameBorder{65, 68, 85, 255};
 
@@ -60,48 +63,64 @@ public:
                                {boardRangeX + 16.0f, boardRangeY + 16.0f},
                                boardFrameBorder, false);
 
-        // --- 2. Draw the grid, selection, and hover states ---
-        Color lightTile{238, 238, 210, 255};
-        Color darkTile{118, 150, 86, 255};
-        Color hoverBorderColor{0, 229, 255, 200};
-        Color selectedTileColor{244, 246, 128, 110};
-        Color selectedBorderColor{244, 246, 128, 255};
-
+        // --- 2. Board Grid Render ---
         for (int r = 0; r < rows; ++r) {
             for (int c = 0; c < cols; ++c) {
                 Vector2D pos{boardStartX + c * cellWidth, boardStartY + r * cellHeight};
                 Vector2D size{cellWidth, cellHeight};
 
                 bool isLight = ((r + c) % 2 == 0);
-renderer.drawSprite(isLight ? "tile_light" : "tile_dark", pos, size);
+                renderer.drawSprite(isLight ? "tile_light" : "tile_dark", pos, size);
 
-                // Highlight the tile under the cursor
                 if (hoveredRow == r && hoveredCol == c) {
-                    renderer.drawRectangle({pos.x + 1.0f, pos.y + 1.0f}, {size.x - 2.0f, size.y - 2.0f}, hoverBorderColor, false);
+                    renderer.drawRectangle({pos.x + 1.0f, pos.y + 1.0f}, {size.x - 2.0f, size.y - 2.0f}, {0, 229, 255, 200}, false);
                 }
             }
         }
 
-        // Highlight the selected tile
+        // Highlight Selected Cell
         auto selectedOpt = snapshot.selectedCell;
         if (selectedOpt.has_value() && !isPaused && !snapshot.isGameOver) {
-            Vector2D pos{selectedOpt->col() * cellWidth, boardStartY + selectedOpt->row() * cellHeight};
+            Vector2D pos{boardStartX + selectedOpt->col() * cellWidth, boardStartY + selectedOpt->row() * cellHeight};
             Vector2D size{cellWidth, cellHeight};
-            renderer.drawRectangle(pos, size, selectedTileColor, true);
-            renderer.drawRectangle(pos, size, selectedBorderColor, false);
+            renderer.drawRectangle(pos, size, {244, 246, 128, 110}, true);
+            renderer.drawRectangle(pos, size, {244, 246, 128, 255}, false);
         }
 
-        // --- 3. Draw pieces, jump effects, and cooldowns ---
-        std::unordered_map<int, Vector2D> piecePositions; // Track the physical positions of pieces for drawing premove arrows
+        // --- 3. Pieces, Easing Motions, and Dynamic Layouts ---
+        std::unordered_map<int, Vector2D> piecePositions;
 
         for (const auto &pieceSnap : snapshot.pieces) {
             std::string assetId = (pieceSnap.color == kungfu::PlayerColor::White) ? "w" : "b";
             assetId += kungfu::PieceTokenCodec::toChar(pieceSnap.type);
 
-            float animatedX = pieceSnap.pixelX;
-            float animatedY = boardStartY + pieceSnap.pixelY;
+            // Calculate starting physical position candidates
+            float animatedX = pieceSnap.logicalPosition.col() * cellWidth;
+            float animatedY = pieceSnap.logicalPosition.row() * cellHeight;
 
-            // Hover and jump animations for the selected piece
+            // Handle active motion interpolation inside presentation layer
+            if (pieceSnap.isMoving) {
+                float startX = pieceSnap.transitFrom.col() * cellWidth;
+                float startY = pieceSnap.transitFrom.row() * cellHeight;
+                float endX = pieceSnap.transitTo.col() * cellWidth;
+                float endY = pieceSnap.transitTo.row() * cellHeight;
+
+                bool isAirborne = (pieceSnap.state == kungfu::PieceState::Airborne);
+                auto interpPos = ui::animation::Interpolator::interpolate(
+                    startX, startY, endX, endY,
+                    pieceSnap.startTimeMs, pieceSnap.arrivalTimeMs, currentTimeMs,
+                    isAirborne, cellWidth
+                );
+                
+                animatedX = interpPos.x;
+                animatedY = interpPos.y;
+            }
+
+            // Apply screen offsets
+            animatedX += boardStartX;
+            animatedY += boardStartY;
+
+            // Floating animations for the selected component
             if (selectedOpt.has_value() &&
                 pieceSnap.logicalPosition.row() == selectedOpt->row() &&
                 pieceSnap.logicalPosition.col() == selectedOpt->col())
@@ -121,7 +140,7 @@ renderer.drawSprite(isLight ? "tile_light" : "tile_dark", pos, size);
             float padding = cellWidth * 0.10f;
             renderer.drawSprite(assetId, {spritePos.x + padding, spritePos.y + padding}, {spriteSize.x - (padding * 2), spriteSize.y - (padding * 2)});
 
-            // Render visual cooldown effects
+            // Circular Cooldown progress sectors
             if (allowSimultaneous && pieceSnap.cooldownProgress > 0.0f) {
                 Vector2D center{animatedX + cellWidth / 2.0f, animatedY + cellHeight / 2.0f};
                 float radius = cellWidth * 0.42f;
@@ -129,8 +148,7 @@ renderer.drawSprite(isLight ? "tile_light" : "tile_dark", pos, size);
                 float startAngle = -90.0f;
                 float endAngle = -90.0f + (360.0f * pieceSnap.cooldownProgress);
 
-                Color radialColor{180, 35, 35, 110};
-                renderer.drawSector(center, radius, startAngle, endAngle, radialColor, true);
+                renderer.drawSector(center, radius, startAngle, endAngle, {180, 35, 35, 110}, true);
                 renderer.drawCircle(center, radius, {220, 50, 50, 90}, false);
 
                 m_cooldownBar.draw(renderer, center, pieceSnap.cooldownProgress);
@@ -139,14 +157,14 @@ renderer.drawSprite(isLight ? "tile_light" : "tile_dark", pos, size);
             piecePositions[positionKey(pieceSnap.logicalPosition, cols)] = spritePos;
         }
 
-        // --- 4. Draw premove paths and guiding lines ---
+        // --- 4. Render Premove Guidelines ---
         if (!isPaused && !snapshot.isGameOver) {
             for (const auto &entry : premoveQueue.entries()) {
                 auto piece = entry.first;
                 auto to = entry.second;
                 if (!piece) continue;
 
-                float destX = to.col() * cellWidth;
+                float destX = boardStartX + to.col() * cellWidth;
                 float destY = boardStartY + to.row() * cellHeight;
 
                 Color premoveColor{255, 107, 107, 70};
@@ -161,7 +179,7 @@ renderer.drawSprite(isLight ? "tile_light" : "tile_dark", pos, size);
                     startPt.x = it->second.x + cellWidth / 2.0f;
                     startPt.y = it->second.y + cellHeight / 2.0f;
                 } else {
-                    startPt.x = piece->position().col() * cellWidth + cellWidth / 2.0f;
+                    startPt.x = boardStartX + piece->position().col() * cellWidth + cellWidth / 2.0f;
                     startPt.y = boardStartY + piece->position().row() * cellHeight + cellHeight / 2.0f;
                 }
 

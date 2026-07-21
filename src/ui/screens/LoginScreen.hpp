@@ -240,6 +240,7 @@ public:
     void onExit() override {}
 
     void update(float deltaTime) override {
+        tickBackground(deltaTime); 
         m_cursorTimer += deltaTime;
 
         if (m_authPending && m_authFuture.valid()) {

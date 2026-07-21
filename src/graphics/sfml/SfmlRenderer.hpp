@@ -7,6 +7,7 @@
 #include <string_view>
 #include <memory>
 #include <cmath>
+#include <algorithm>
 
 class SfmlRenderer : public IRenderer {
 private:
@@ -22,6 +23,99 @@ private:
 
     sf::Vector2f toSfVec(Vector2D vec) const {
         return sf::Vector2f(vec.x, vec.y);
+    }
+
+    // ------------------------------------------------------------------
+    // Helpers for modern UI drawing (rounded corners, gradients, shadows)
+    // ------------------------------------------------------------------
+
+    // Builds the boundary points of a rectangle with rounded corners, going
+    // clockwise starting from the top-left arc. Shared by every method below
+    // so rounded rectangles, gradients, shadows and glows all look consistent.
+    std::vector<sf::Vector2f> buildRoundedRectPoints(Vector2D position, Vector2D size,
+                                                       float radius, unsigned int cornerSegments = 8) const {
+        float r = std::max(0.0f, std::min({radius, size.x / 2.0f, size.y / 2.0f}));
+
+        struct Corner { float cx, cy, startDeg; };
+        Corner corners[4] = {
+            {position.x + r,          position.y + r,          180.0f}, // top-left
+            {position.x + size.x - r, position.y + r,          270.0f}, // top-right
+            {position.x + size.x - r, position.y + size.y - r,   0.0f}, // bottom-right
+            {position.x + r,          position.y + size.y - r,  90.0f}  // bottom-left
+        };
+
+        std::vector<sf::Vector2f> points;
+        points.reserve(4 * (cornerSegments + 1));
+
+        for (const auto& corner : corners) {
+            for (unsigned int i = 0; i <= cornerSegments; ++i) {
+                float angle = (corner.startDeg + 90.0f * (static_cast<float>(i) / cornerSegments)) * 3.14159265f / 180.0f;
+                points.push_back({
+                    corner.cx + r * std::cos(angle),
+                    corner.cy + r * std::sin(angle)
+                });
+            }
+        }
+        return points;
+    }
+
+    // Draws a solid-colored rounded-rect fan. Accepts custom render states so
+    // callers (e.g. drawGlow) can request additive blending.
+    void drawRoundedFan(Vector2D position, Vector2D size, float radius, Color color,
+                         const sf::RenderStates& states = sf::RenderStates::Default) {
+        auto points = buildRoundedRectPoints(position, size, radius);
+        sf::VertexArray fan(sf::PrimitiveType::TriangleFan, points.size() + 2);
+        sf::Vector2f center{position.x + size.x / 2.0f, position.y + size.y / 2.0f};
+        sf::Color sfCol = toSfColor(color);
+
+        fan[0].position = center;
+        fan[0].color = sfCol;
+        for (size_t i = 0; i < points.size(); ++i) {
+            fan[i + 1].position = points[i];
+            fan[i + 1].color = sfCol;
+        }
+        fan[points.size() + 1].position = points[0];
+        fan[points.size() + 1].color = sfCol;
+
+        m_window.draw(fan, states);
+    }
+
+    // Linearly interpolates a color across a multi-stop gradient at position t (0..1).
+    static Color sampleGradientStops(const std::vector<GradientStop>& stops, float t) {
+        if (stops.empty()) return {0, 0, 0, 255};
+        if (t <= stops.front().position) return stops.front().color;
+        if (t >= stops.back().position) return stops.back().color;
+
+        for (size_t i = 0; i + 1 < stops.size(); ++i) {
+            const auto& a = stops[i];
+            const auto& b = stops[i + 1];
+            if (t >= a.position && t <= b.position) {
+                float span = b.position - a.position;
+                float localT = span > 0.0001f ? (t - a.position) / span : 0.0f;
+                return {
+                    static_cast<std::uint8_t>(a.color.r + (b.color.r - a.color.r) * localT),
+                    static_cast<std::uint8_t>(a.color.g + (b.color.g - a.color.g) * localT),
+                    static_cast<std::uint8_t>(a.color.b + (b.color.b - a.color.b) * localT),
+                    static_cast<std::uint8_t>(a.color.a + (b.color.a - a.color.a) * localT)
+                };
+            }
+        }
+        return stops.back().color;
+    }
+
+    // Projects a point onto the gradient's axis and normalizes it to [0,1]
+    // relative to the rectangle's own extent along that axis.
+    static float projectAlongAxis(Vector2D point, Vector2D position, Vector2D size, float angleDegrees) {
+        float rad = angleDegrees * 3.14159265f / 180.0f;
+        Vector2D dir{std::cos(rad), std::sin(rad)};
+        Vector2D center{position.x + size.x / 2.0f, position.y + size.y / 2.0f};
+        Vector2D half{size.x / 2.0f, size.y / 2.0f};
+
+        float extent = std::abs(dir.x) * half.x + std::abs(dir.y) * half.y;
+        if (extent < 0.0001f) return 0.5f;
+
+        float rel = (point.x - center.x) * dir.x + (point.y - center.y) * dir.y;
+        return std::clamp(0.5f + rel / (2.0f * extent), 0.0f, 1.0f);
     }
 
 public:
@@ -244,6 +338,122 @@ public:
     Vector2D getTargetSize() const override {
         sf::Vector2u size = m_window.getSize();
         return { static_cast<float>(size.x), static_cast<float>(size.y) };
+    }
+
+    // ------------------------------------------------------------------
+    // Modern UI drawing capabilities
+    // ------------------------------------------------------------------
+
+    void drawRoundedRectangle(Vector2D position, Vector2D size, float radius,
+                               Color color, bool fill) override {
+        if (fill) {
+            drawRoundedFan(position, size, radius, color);
+            return;
+        }
+
+        auto points = buildRoundedRectPoints(position, size, radius);
+        sf::VertexArray outline(sf::PrimitiveType::LineStrip, points.size() + 1);
+        sf::Color sfCol = toSfColor(color);
+
+        for (size_t i = 0; i < points.size(); ++i) {
+            outline[i].position = points[i];
+            outline[i].color = sfCol;
+        }
+        outline[points.size()].position = points[0];
+        outline[points.size()].color = sfCol;
+
+        m_window.draw(outline);
+    }
+
+    void drawGradientRect(Vector2D position, Vector2D size,
+                           const std::vector<GradientStop>& stops,
+                           float angleDegrees, float cornerRadius) override {
+        if (stops.empty()) return;
+
+        auto points = buildRoundedRectPoints(position, size, cornerRadius);
+        sf::VertexArray fan(sf::PrimitiveType::TriangleFan, points.size() + 2);
+        Vector2D center{position.x + size.x / 2.0f, position.y + size.y / 2.0f};
+
+        auto colorAt = [&](Vector2D p) {
+            return toSfColor(sampleGradientStops(stops, projectAlongAxis(p, position, size, angleDegrees)));
+        };
+
+        fan[0].position = toSfVec(center);
+        fan[0].color = colorAt(center);
+
+        for (size_t i = 0; i < points.size(); ++i) {
+            fan[i + 1].position = points[i];
+            fan[i + 1].color = colorAt({points[i].x, points[i].y});
+        }
+        fan[points.size() + 1].position = points[0];
+        fan[points.size() + 1].color = fan[1].color;
+
+        m_window.draw(fan);
+    }
+
+    void drawRectShadow(Vector2D position, Vector2D size, float cornerRadius,
+                         Color shadowColor, float blurRadius, Vector2D offset) override {
+        // "Poor man's blur": several overlapping rounded-rect layers, growing
+        // in size and fading in alpha, approximate a soft shadow without a
+        // shader pass. Cheap, and good enough for UI-scale shadows.
+        const int layers = 8;
+        Vector2D shadowPos{position.x + offset.x, position.y + offset.y};
+
+        for (int i = layers; i >= 1; --i) {
+            float t = static_cast<float>(i) / layers;
+            float grow = blurRadius * t;
+            float alphaFactor = (1.0f - t) * (1.0f - t);
+
+            Vector2D layerPos{shadowPos.x - grow, shadowPos.y - grow};
+            Vector2D layerSize{size.x + grow * 2.0f, size.y + grow * 2.0f};
+            float layerRadius = cornerRadius + grow;
+
+            Color layerColor = shadowColor;
+            layerColor.a = static_cast<std::uint8_t>(std::clamp(shadowColor.a * alphaFactor * 0.5f, 0.0f, 255.0f));
+
+            drawRoundedFan(layerPos, layerSize, layerRadius, layerColor);
+        }
+    }
+
+    void drawGlow(Vector2D center, Vector2D size, float cornerRadius,
+                  Color glowColor, float intensity) override {
+        Vector2D position{center.x - size.x / 2.0f, center.y - size.y / 2.0f};
+        const int layers = 6;
+
+        sf::RenderStates states;
+        states.blendMode = sf::BlendAdd; // additive blend makes it "glow" against the background
+
+        for (int i = layers; i >= 1; --i) {
+            float t = static_cast<float>(i) / layers;
+            float grow = 12.0f * t * intensity;
+            float alphaFactor = (1.0f - t) * (1.0f - t) * intensity;
+
+            Vector2D layerPos{position.x - grow, position.y - grow};
+            Vector2D layerSize{size.x + grow * 2.0f, size.y + grow * 2.0f};
+            float layerRadius = cornerRadius + grow;
+
+            Color layerColor = glowColor;
+            layerColor.a = static_cast<std::uint8_t>(std::clamp(glowColor.a * alphaFactor, 0.0f, 255.0f));
+
+            drawRoundedFan(layerPos, layerSize, layerRadius, layerColor, states);
+        }
+    }
+
+    void drawGlassPanel(Vector2D position, Vector2D size, float cornerRadius,
+                         Color tint, float blurStrength) override {
+        // NOTE: this is an approximation, not a true frosted-glass blur.
+        // A real blur needs the background already rendered to an offscreen
+        // sf::RenderTexture, then a two-pass Gaussian blur shader applied to
+        // it before this panel is composited on top. That requires reworking
+        // draw order (this renderer currently draws directly to the window),
+        // so it's left as a future upgrade. This version fakes the effect
+        // with a translucent tint plus a soft light border.
+        Color fillTint = tint;
+        fillTint.a = static_cast<std::uint8_t>(std::clamp(tint.a * (0.35f + 0.15f * blurStrength), 0.0f, 255.0f));
+        drawRoundedFan(position, size, cornerRadius, fillTint);
+
+        Color borderColor{255, 255, 255, static_cast<std::uint8_t>(20 + 60 * std::clamp(blurStrength, 0.0f, 1.0f))};
+        drawRoundedRectangle(position, size, cornerRadius, borderColor, false);
     }
 
     AssetManager& getAssetManager() {

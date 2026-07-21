@@ -1,3 +1,4 @@
+// engine/snapshot/SnapshotBuilder.hpp
 #pragma once
 
 #include <optional>
@@ -10,15 +11,15 @@ namespace view {
 
 class SnapshotBuilder {
 public:
+    // Calculates a pure logical representations without screen metrics dependency
     static GameSnapshot build(
         const IBoard& board,
         const RealTimeArbiter& arbiter,
         int currentTimeMs,
         bool gameOver,
-        std::optional<Position> selectedCell,
-        float cellSize
+        std::optional<Position> selectedCell
     ) noexcept;
 };
 
 }  // namespace view
-}  // namespace kungfu
+}  // namespace kungfu  

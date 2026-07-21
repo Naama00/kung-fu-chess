@@ -41,8 +41,7 @@ TEST_CASE("Integration match between EasyAI and HardAI does not crash or hang", 
             gameEngine->getArbiter(),
             gameEngine->getCurrentTimeMs(),
             gameEngine->isGameOver(),
-            std::nullopt,
-            100.0f);
+            std::nullopt);
 
         if (gameEngine->isGameOver()) {
             break;

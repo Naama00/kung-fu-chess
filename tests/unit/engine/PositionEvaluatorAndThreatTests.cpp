@@ -11,7 +11,7 @@ namespace {
 kungfu::view::GameSnapshot buildSnapshotFromBoard(const std::shared_ptr<kungfu::Board>& board) {
     kungfu::GameConfig config;
     kungfu::RealTimeArbiter arbiter(board, config);
-    return kungfu::view::SnapshotBuilder::build(*board, arbiter, 0, false, std::nullopt, 100.0f);
+    return kungfu::view::SnapshotBuilder::build(*board, arbiter, 0, false, std::nullopt);
 }
 
 } // namespace

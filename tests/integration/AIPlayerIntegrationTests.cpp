@@ -40,8 +40,7 @@ TEST_CASE("AIPlayer can produce an action that GameEngine executes", "[integrati
         gameEngine->getArbiter(),
         gameEngine->getCurrentTimeMs(),
         gameEngine->isGameOver(),
-        std::nullopt,
-        100.0f);
+        std::nullopt);
 
     auto aiRequests = aiPlayer.decideActions(snapshot);
     REQUIRE(!aiRequests.empty());

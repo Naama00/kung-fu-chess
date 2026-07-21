@@ -8,7 +8,6 @@
 namespace kungfu {
 
 /// @brief Common interface for all player types in the game.
-///
 /// Every implementation receives a read-only snapshot (GameSnapshot) and returns
 /// a collection of action requests (ActionRequest) that it wants to execute.
 ///

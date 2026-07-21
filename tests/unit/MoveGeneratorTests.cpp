@@ -44,11 +44,8 @@ GameSnapshot snapshotFromBoard(const BoardPtr& board) {
         pieceSnapshot.logicalPosition = piece->position();
         pieceSnapshot.state = piece->state();
         pieceSnapshot.hasMoved = piece->hasMoved();
-        pieceSnapshot.pixelX = static_cast<float>(piece->position().col());
-        pieceSnapshot.pixelY = static_cast<float>(piece->position().row());
         snapshot.pieces.push_back(pieceSnapshot);
     }
-
     return snapshot;
 }
 
