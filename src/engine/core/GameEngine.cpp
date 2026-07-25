@@ -40,17 +40,15 @@ MoveResult GameEngine::requestMove(const Position& from, const Position& to) {
     }
     auto piece = sourcePieceOpt.value();
 
-    // 2. Query physical state through the Arbiter only (DIP)
-if (arbiter_.isOnCooldown(piece, currentTimeMs_)) {
-    // If the game is in simultaneous mode and premoves are enabled, allow a premove to be registered even while the piece is in cooldown
-    if (config_.allowSimultaneousMovement && config_.enablePremoves && from != to) {
-        return handlePremoveRegistration(piece, from, to);
+    // 2. Query physical state through the Arbiter only
+    if (arbiter_.isOnCooldown(piece, currentTimeMs_)) {
+        if (config_.allowSimultaneousMovement && config_.enablePremoves && from != to) {
+            return handlePremoveRegistration(piece, from, to);
+        }
+        return {false, "piece_on_cooldown"};
     }
-    return {false, "piece_on_cooldown"};
-}
 
     if (arbiter_.isPieceBusy(piece, currentTimeMs_)) {
-        // Prevent registering a premove for a self-jump (to avoid automatic jumping after cooldown)
         if (from == to) {
             return {false, "piece_on_cooldown"};
         }
@@ -67,7 +65,7 @@ if (arbiter_.isOnCooldown(piece, currentTimeMs_)) {
         }
     }
 
-    // 4. Validate movement rules against the geometric RuleEngine (normal move)
+    // 4. Validate movement rules
     if (from != to) {
         auto validation = ruleEngine_->validateMove(from, to);
         if (!validation.isValid) {
@@ -82,12 +80,12 @@ if (arbiter_.isOnCooldown(piece, currentTimeMs_)) {
         }
     }
 
-    // 5. Delegate the full motion execution to the Arbiter (SRP principle)
+    // 5. Delegate motion execution to Arbiter
     auto result = arbiter_.executeMove(piece, from, to, currentTimeMs_);
 
-    // 6. Update the overall game state (turn change) as needed
+    // 6. Update overall game state
     if (result.isAccepted && !config_.allowSimultaneousMovement) {
-        pendingTurnPiece_ = piece; // Save for resetting the turn after cooldown
+        pendingTurnPiece_ = piece;
         advanceTurn();
     }
 
@@ -108,7 +106,6 @@ std::vector<ActionResult> GameEngine::processActionRequests(const std::vector<Ac
 }
 
 MoveResult GameEngine::handlePremoveRegistration(const PiecePtr& piece, const Position& from, const Position& to) noexcept {
-    // In turn-based mode (non-simultaneous), premoves are not supported regardless of the enablePremoves flag
     if (!config_.allowSimultaneousMovement) {
         if (arbiter_.isPieceMoving(piece) || piece->state() == PieceState::Airborne) {
             return {false, "motion_in_progress"};
@@ -148,12 +145,11 @@ void GameEngine::wait(int ms) noexcept {
         }
         return promoted;
     };
-      auto events = arbiter_.advanceTime(ms, currentTimeMs_, promotionCallback);
+    auto events = arbiter_.advanceTime(ms, currentTimeMs_, promotionCallback);
     for (const auto& event : events) {
         if (event.capturedKing) {
             gameOver_ = true;
             
-            // Publish the game-over event on the Bus
             if (eventBus_) {
                 GameTransitionEvent endEvent{
                     GameTransitionType::Ended,
@@ -163,11 +159,8 @@ void GameEngine::wait(int ms) noexcept {
             }
         }
         
-        // Publish the generic event to the BUS
         if (eventBus_) {
-            // 1. Publish a move-completion event
             eventBus_->publish(MoveCompletedEvent{event}); 
-            // 2. Automatically publish an appropriate sound event based on the action type
             if (event.capturedKing) {
                 eventBus_->publish(PlaySoundEvent{"game_over"});
             } else if (event.isCapture) {
@@ -176,13 +169,11 @@ void GameEngine::wait(int ms) noexcept {
                 eventBus_->publish(PlaySoundEvent{"move"});
             }
             
-            // 3. Calculate and publish the updated score change
-            int whiteScore = PositionEvaluator::evaluateBalance(*board_, arbiter_); // or simple material-based scoring logic
-            int blackScore = -whiteScore; // or the existing piece-scoring logic in ChessGameScreen
+            int whiteScore = PositionEvaluator::evaluateBalance(*board_, arbiter_);
+            int blackScore = -whiteScore;
             eventBus_->publish(ScoreChangedEvent{whiteScore, blackScore});
         }
 
-        // Keep the existing observer mechanism so as not to break prior dependencies in one shot:
         for (auto& observer : observers_) {
             observer->onMoveCompleted(event, currentTimeMs_);
         }
@@ -220,20 +211,61 @@ MoveResult GameEngine::applyServerMove(const Position& from, const Position& to)
     if (!board_) {
         return {false, "internal_error"};
     }
-    // Locate the piece (bypassing turn and rule validations because the server already authorized it)
+
+    // Ignore duplicate server move requests if the piece is already moving to 'to'
+    for (const auto& motion : arbiter_.activeMotions()) {
+        if (motion.from() == from && motion.to() == to && motion.piece()) {
+            return {true, "already_moving"};
+        }
+    }
+    // 1. Search for the piece directly at 'from' on the board grid
     auto sourcePieceOpt = board_->pieceAt(from);
+
+    // 2. Search active motions for a piece animating toward or from 'from'
+    if (!sourcePieceOpt.has_value() || !sourcePieceOpt.value()) {
+        for (const auto& motion : arbiter_.activeMotions()) {
+            if ((motion.to() == from || motion.from() == from) && motion.piece()) {
+                if (motion.piece()->state() != PieceState::Captured) {
+                    sourcePieceOpt = motion.piece();
+                    break;
+                }
+            }
+        }
+    }
+
+    // 3. Fallback search for in-transit pieces
     if (!sourcePieceOpt.has_value() || !sourcePieceOpt.value()) {
         sourcePieceOpt = arbiter_.getPieceInTransitAt(from);
     }
+
+    // 4. Scan all board pieces to find any matching piece that drifted or was marked captured by local desync
+    if (!sourcePieceOpt.has_value() || !sourcePieceOpt.value()) {
+        for (auto& p : board_->pieces()) {
+            if (p && p->position() == from) {
+                sourcePieceOpt = p;
+                break;
+            }
+        }
+    }
+
     if (!sourcePieceOpt.has_value() || !sourcePieceOpt.value()) {
         return {false, "empty_source"};
     }
+
     auto piece = sourcePieceOpt.value();
-    // Cancel any local pending premoves for this piece as it's executing an authoritative server move
-    premoveQueue_.cancel(piece);
-    // Delegate execution directly to the Arbiter (interpolates movement and handles physics smoothly)
+
+    // Cancel any active in-flight motion for this piece to avoid animation/hopping conflicts
+    arbiter_.cancelMotionForPiece(piece);
+
+    // Force-reset state to Idle if it was temporarily Airborne or Captured locally
+    piece->setState(PieceState::Idle);
+
+    // Force-synchronize piece position to 'from' before initiating directional movement
+    piece->setPosition(from);
+    board_->placePiece(piece, from);
+
+    // Execute the new server move smoothly
     auto result = arbiter_.executeMove(piece, from, to, currentTimeMs_);
-    // Advance turn locally if the game mode is classic turn-based
     if (result.isAccepted && !config_.allowSimultaneousMovement) {
         advanceTurn();
     }

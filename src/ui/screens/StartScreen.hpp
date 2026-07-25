@@ -1,10 +1,11 @@
-﻿// ui/screens/StartScreen.hpp
+// ui/screens/StartScreen.hpp
 #pragma once
 #include "ui/screens/BaseScreen.hpp"
 #include "ui/framework/ISoundPlayer.hpp"
 #include "ui/screens/ChessGameScreen.hpp"
 #include "ui/framework/ScreenManager.hpp"
 #include "players/network/NetworkPlayer.hpp"
+#include "players/network/NetworkSession.hpp" // הוסף כדי להכיר את NetworkSession
 #include <memory>
 #include <string>
 #include <vector>
@@ -38,6 +39,7 @@ private:
     float m_lobbyQueryTimer = 0.0f;
 
     std::shared_ptr<ISoundPlayer> m_soundPlayer;
+    std::shared_ptr<kungfu::NetworkSession> m_authSession; // שמירת הסשן שמשתמשים בו
 
     const Vector2D m_panelPos{250.0f, 230.0f};
     const Vector2D m_panelSize{500.0f, 510.0f};
@@ -168,9 +170,7 @@ private:
         renderer.drawRectangle(m_onlineRoleSpecPos, m_onlineRoleBtnSize, isSpecActive ? Color{255, 255, 255, 180} : m_theme.border, false);
         renderer.drawText("Spectate Room", {m_onlineRoleSpecPos.x + 35.0f, m_onlineRoleSpecPos.y + 28.0f}, 14, m_theme.bodyText);
 
-        // Unique display tailored to your choice:
         if (isPlayActive) {
-            // Room Code text field
             renderer.drawText("Enter Room Code (0 for Random Match):", {310.0f, 570.0f}, 12, m_theme.bodyText);
             Color borderC = m_isRoomCodeActive ? m_theme.buttonHover : m_theme.border;
             renderer.drawRectangle({310.0f, 585.0f}, {380.0f, 35.0f}, {18, 19, 23, 255}, true);
@@ -185,7 +185,6 @@ private:
                 renderer.drawRectangle({310.0f, 585.0f}, {380.0f, 35.0f}, m_theme.border, false);
                 renderer.drawText("No active matches online...", {325.0f, 608.0f}, 11, m_theme.textMuted);
             } else {
-                // Ensure the selected index is valid, especially if the list of live rooms has changed
                 if (m_selectedRoomIndex >= m_liveRooms.size()) {
                     m_selectedRoomIndex = 0;
                 }
@@ -200,14 +199,13 @@ private:
                 renderer.drawRectangle({310.0f, 585.0f}, {380.0f, 35.0f}, isRoomSelected ? Color{255, 255, 255, 180} : m_theme.border, false);
                 renderer.drawText(label, {322.0f, 608.0f}, 10, m_theme.bodyText);
                 
-                // Add a small visual hint for the user when there are more than one room available
                 if (m_liveRooms.size() > 1) {
                     renderer.drawText("(Click to cycle through " + std::to_string(m_liveRooms.size()) + " matches)", {310.0f, 625.0f}, 10, m_theme.textMuted);
                 }
             }
         }
-
     }
+
     void drawMenuButtons(IRenderer &renderer)
     {
         bool playHovered = isPointInRect(m_mousePos, m_playBtnPos, m_btnSize);
@@ -235,8 +233,11 @@ protected:
     }
 
 public:
-    explicit StartScreen(ScreenManager &manager, std::shared_ptr<ISoundPlayer> soundPlayer = std::make_shared<NullSoundPlayer>())
-        : BaseScreen(manager, ""), m_soundPlayer(std::move(soundPlayer))
+    // הבנאי המעודכן - מקבל כעת 3 ארגומנטים (כאשר השלישי אופציונלי עם ערך ברירת מחדל nullptr)
+    explicit StartScreen(ScreenManager &manager, 
+                         std::shared_ptr<ISoundPlayer> soundPlayer = std::make_shared<NullSoundPlayer>(),
+                         std::shared_ptr<kungfu::NetworkSession> authSession = nullptr)
+        : BaseScreen(manager, ""), m_soundPlayer(std::move(soundPlayer)), m_authSession(std::move(authSession))
     {
         m_theme.background = Color{12, 13, 17, 255};
         m_theme.titleText = Color{240, 200, 80, 255};
@@ -259,6 +260,18 @@ public:
 
     void update(float deltaTime) override { 
         tickBackground(deltaTime); 
+
+        // Auto-redirect if returning to an active match upon reconnection
+        if (m_authSession && m_authSession->player && m_authSession->player->hasMatchStarted()) {
+            m_screenManager.pushScreen(std::make_unique<ChessGameScreen>(
+                m_screenManager,
+                (m_selectedMode == GameMode::Simultaneous),
+                m_soundPlayer,
+                m_authSession,
+                0
+            ));
+            return;
+        }
 
         if (m_selectedOpponent == OpponentType::Online && m_selectedOnlineRole == OnlineRole::Spectate) {
             if (!m_lobbyNetPlayer) {
@@ -351,14 +364,11 @@ public:
                      else if (m_selectedOpponent == OpponentType::Online && m_selectedOnlineRole == OnlineRole::Spectate &&
                              !m_liveRooms.empty() && isPointInRect(m_mousePos, {310.0f, 585.0f}, {380.0f, 35.0f}))
                     {
-                        // 1. Index protection
                         if (m_selectedRoomIndex >= m_liveRooms.size()) {
                             m_selectedRoomIndex = 0;
                         }
-                        // 2. Update room ID for spectating
                         m_selectedSpectateRoomId = m_liveRooms[m_selectedRoomIndex].matchId;
                         m_isRoomCodeActive = false;
-                        // 3. Advance the index for the next click (circular mechanism)
                         m_selectedRoomIndex = (m_selectedRoomIndex + 1) % m_liveRooms.size();
                     }
                     else {
@@ -383,18 +393,32 @@ public:
                             roomCode = 0;
                         }
 
-                        m_screenManager.pushScreen(std::make_unique<ChessGameScreen>(
-                            m_screenManager, 
-                            isSimultaneous, 
-                            isAiOpponent, 
-                            m_selectedDifficulty, 
-                            m_soundPlayer, 
-                            isNetworkMode,
-                            "127.0.0.1", "8080",
-                            isSpectator,
-                            spectateMatchId,
-                            roomCode 
-                        ));
+                        if (isNetworkMode && !isSpectator && m_authSession) {
+                            if (m_authSession->player) {
+                                // Ensure match state is reset prior to starting a new match
+                                m_authSession->player->resetMatchState();
+                            }
+                            m_screenManager.pushScreen(std::make_unique<ChessGameScreen>(
+                                m_screenManager,
+                                isSimultaneous,
+                                m_soundPlayer,
+                                m_authSession,
+                                roomCode
+                            ));
+                        } else {
+                            m_screenManager.pushScreen(std::make_unique<ChessGameScreen>(
+                                m_screenManager, 
+                                isSimultaneous, 
+                                isAiOpponent, 
+                                m_selectedDifficulty, 
+                                m_soundPlayer, 
+                                isNetworkMode,
+                                "127.0.0.1", "8080",
+                                isSpectator,
+                                spectateMatchId,
+                                roomCode 
+                            ));
+                        }
                     }
                     else if (isPointInRect(m_mousePos, m_exitBtnPos, m_btnSize))
                     {
@@ -413,7 +437,6 @@ public:
                         char c = '\0';
                         int code = event.key.rawCode;
                         
-                        // Reading from the local keyboard code
                         char rawChar = static_cast<char>(code & 0xFF);
                         if (rawChar >= '0' && rawChar <= '9') {
                             c = rawChar;

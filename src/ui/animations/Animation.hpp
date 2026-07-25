@@ -69,10 +69,10 @@ public:
             float maxHeight = cellSize * kJumpHeightFactor;
             result.y -= maxHeight * Easing::parabola(t);
         } else {
-            // Smoothed cubic movement for sliding transitions
-            float smoothedT = Easing::smoothstep(t);
-            result.x = startX + smoothedT * (endX - startX);
-            result.y = startY + smoothedT * (endY - startY);
+            // Immediate constant progression for responsive real-time sliding
+            float smoothT = Easing::linear(t);
+            result.x = startX + smoothT * (endX - startX);
+            result.y = startY + smoothT * (endY - startY);
         }
 
         return result;

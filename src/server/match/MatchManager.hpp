@@ -12,7 +12,7 @@
 
 namespace kungfu {
 
-class NetworkSession;
+class PlayerSession;
 class LiveMatch;
 
 struct MatchInfo {
@@ -24,7 +24,7 @@ struct MatchInfo {
 class MatchManager {
 public:
     struct WaitingPlayer {
-        std::shared_ptr<NetworkSession> session;
+        std::shared_ptr<PlayerSession> session;
         std::chrono::steady_clock::time_point joinTime;
         int rating;
         std::uint64_t roomCode = 0;
@@ -47,8 +47,8 @@ public:
 
     DatabaseManager& dbManager() { return m_dbManager; }
 
-    void registerPlayer(std::shared_ptr<NetworkSession> session, std::uint64_t roomCode = 0);
-    void unregisterPlayer(std::shared_ptr<NetworkSession> session);
+    void registerPlayer(std::shared_ptr<PlayerSession> session, std::uint64_t roomCode = 0);
+    void unregisterPlayer(std::shared_ptr<PlayerSession> session);
 
     std::shared_ptr<LiveMatch> getMatch(std::uint64_t matchId);
     void removeMatch(std::uint64_t matchId);
@@ -58,6 +58,7 @@ public:
 private:
     void scheduleMatchmakingTick();
     void runMatchmakingCycle();
+    void processMatchResultsAndElo(std::shared_ptr<LiveMatch> match);
 
     // Helper functions for clean matchmaking flow
     void removeTimedOutPlayers(std::chrono::steady_clock::time_point now);
@@ -65,8 +66,8 @@ private:
     bool isPrivateRoomMatch(const WaitingPlayer& p1, const WaitingPlayer& p2) const;
     bool isRatedMatch(const WaitingPlayer& p1, const WaitingPlayer& p2, int waitDurationSec) const;
 
-    std::shared_ptr<LiveMatch> startNewMatch(std::shared_ptr<NetworkSession> player1,
-                                             std::shared_ptr<NetworkSession> player2);
+    std::shared_ptr<LiveMatch> startNewMatch(std::shared_ptr<PlayerSession> player1,
+                                             std::shared_ptr<PlayerSession> player2);
 };
 
 } // namespace kungfu

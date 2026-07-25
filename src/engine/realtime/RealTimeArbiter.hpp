@@ -21,6 +21,7 @@ public:
     explicit RealTimeArbiter(std::shared_ptr<IBoard> board, GameConfig config = GameConfig{}) noexcept;
     bool hasActiveMotion() const noexcept;
     void startMotion(PiecePtr piece, const Position& from, const Position& to, int currentTimeMs, int durationMs) noexcept;
+    void cancelMotionForPiece(const PiecePtr& piece) noexcept;
     std::vector<ArrivalEvent> advanceTime(int ms, int& currentTimeMs, PromotionHandler promoteCallback = nullptr) noexcept;
     bool isOnCooldown(const PiecePtr& piece, int currentTimeMs) const noexcept;
     bool isPieceMoving(const PiecePtr& piece) const noexcept;

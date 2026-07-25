@@ -1,7 +1,7 @@
 // server/match/LiveMatch.cpp
 #include "LiveMatch.hpp"
 #include "../network/Serializer.hpp"
-#include "../network/NetworkSession.hpp"
+#include "../network/PlayerSession.hpp"
 #include "../ServerConfig.hpp"
 #include "engine/io/BoardPrinter.hpp"
 #include <utility>
@@ -18,7 +18,7 @@ LiveMatch::LiveMatch(boost::asio::io_context& ioContext,
       m_tickTimer(ioContext),
       m_reconnectTimer(ioContext) {}
 
-void LiveMatch::setPlayers(std::shared_ptr<NetworkSession> white, std::shared_ptr<NetworkSession> black) {
+void LiveMatch::setPlayers(std::shared_ptr<PlayerSession> white, std::shared_ptr<PlayerSession> black) {
     m_whiteSession = white;
     m_blackSession = black;
 
@@ -33,19 +33,18 @@ void LiveMatch::setOnMatchEnded(std::function<void(std::uint64_t)> callback) {
 std::uint64_t LiveMatch::matchId() const { return m_matchId; }
 std::shared_ptr<GameEngine> LiveMatch::engine() const { return m_engine; }
 
-std::shared_ptr<NetworkSession> LiveMatch::whiteSession() const { return m_whiteSession.lock(); }
-std::shared_ptr<NetworkSession> LiveMatch::blackSession() const { return m_blackSession.lock(); }
+std::shared_ptr<PlayerSession> LiveMatch::whiteSession() const { return m_whiteSession.lock(); }
+std::shared_ptr<PlayerSession> LiveMatch::blackSession() const { return m_blackSession.lock(); }
 
 std::string LiveMatch::whiteUsername() const { return m_whiteUsername; }
 std::string LiveMatch::blackUsername() const { return m_blackUsername; }
 
-bool LiveMatch::isWhiteDisconnected() const { return m_isWhiteDisconnected; }
-bool LiveMatch::isBlackDisconnected() const { return m_isBlackDisconnected; }
-bool LiveMatch::isWaitingForReconnection() const { return m_isWhiteDisconnected || m_isBlackDisconnected; }
-
-// ============================================================================
-// Match Lifecycle
-// ============================================================================
+bool LiveMatch::isWhiteDisconnected() const { return m_isWhiteDisconnected.load(); }
+bool LiveMatch::isBlackDisconnected() const { return m_isBlackDisconnected.load(); }
+bool LiveMatch::isWaitingForReconnection() const {
+    return m_isWhiteDisconnected.load() || m_isBlackDisconnected.load();
+}
+bool LiveMatch::hasEnded() const { return m_hasEnded; }
 
 void LiveMatch::start() {
     auto self = shared_from_this();
@@ -85,27 +84,26 @@ void LiveMatch::notifyGameOver() {
     broadcastToRoom(NetworkMessageType::GAME_OVER, {});
 }
 
-// ============================================================================
-// Move Handling
-// ============================================================================
-
-void LiveMatch::handlePlayerMove(std::shared_ptr<NetworkSession> sender, const NetworkMovePacket& packet) {
+void LiveMatch::handlePlayerMove(std::shared_ptr<PlayerSession> sender, const NetworkMovePacket& packet) {
     auto self = shared_from_this();
     boost::asio::post(m_strand, [self, sender, packet]() {
         self->handlePlayerMoveInternal(sender, packet);
     });
 }
 
-void LiveMatch::handlePlayerMoveInternal(std::shared_ptr<NetworkSession> sender, const NetworkMovePacket& packet) {
-    // 1. Retrieve active session handles
+void LiveMatch::handlePlayerMoveInternal(std::shared_ptr<PlayerSession> sender, const NetworkMovePacket& packet) {
+    // Reject moves while waiting for opponent reconnection
+    if (isWaitingForReconnection()) {
+        std::cout << "[Match " << m_matchId << "] Move rejected: match is waiting for opponent reconnection." << std::endl;
+        return;
+    }
+
     auto white = whiteSession();
     auto black = blackSession();
     
-    // 2. Validate move color tags
     bool isWhiteMove = (packet.playerColor == static_cast<std::uint8_t>(PlayerColor::White));
     bool isBlackMove = (packet.playerColor == static_cast<std::uint8_t>(PlayerColor::Black));
 
-    // 3. Security check: verify sender ownership of the color
     if ((isWhiteMove && sender != white) || (isBlackMove && sender != black)) {
         std::cerr << "[Match " << m_matchId << "] Security warning: Unauthorized move attempt from session: " 
                   << (sender ? sender->username() : "Unknown") << " trying to move color: " 
@@ -125,15 +123,9 @@ void LiveMatch::handlePlayerMoveInternal(std::shared_ptr<NetworkSession> sender,
 
     if (result.status == ActionStatus::Accepted) {
         auto movePayload = Serializer::serializeMovePacket(packet);
-
-        // Broadcast validated move to active players and room spectators
         broadcastToRoom(NetworkMessageType::GAME_MOVE, movePayload);
     }
 }
-
-// ============================================================================
-// Game Tick Loop
-// ============================================================================
 
 void LiveMatch::scheduleFirstTick() {
     m_tickTimer.expires_after(kTickInterval);
@@ -160,19 +152,15 @@ void LiveMatch::onTick() {
         return;
     }
 
-    // 1. Calculate elapsed time since last tick
     auto now = std::chrono::steady_clock::now();
     auto elapsedMs = std::chrono::duration_cast<std::chrono::milliseconds>(now - m_lastTickTime).count();
     m_lastTickTime = now;
 
-    // 2. Advance game engine state logic
     m_engine->wait(static_cast<int>(elapsedMs));
 
-    // 3. Process empty requests to trigger engine evaluations
     std::vector<ActionRequest> requests;
     m_engine->processActionRequests(requests);
 
-    // 4. Check for game termination condition
     if (m_engine->isGameOver()) {
         stopInternal();
         markEndedOnce();
@@ -180,58 +168,104 @@ void LiveMatch::onTick() {
         return;
     }
 
-    // 5. Schedule next tick iteration
     scheduleNextTick();
 }
 
-// ============================================================================
-// Reconnect Logic
-// ============================================================================
+void LiveMatch::handlePlayerDisconnect(std::shared_ptr<PlayerSession> session) {
+    if (m_hasEnded) return;
 
-void LiveMatch::handlePlayerDisconnect(std::shared_ptr<NetworkSession> session) {
+    auto white = whiteSession();
+    auto black = blackSession();
+    bool markedDisconnected = false;
+
+    if (white && session == white) {
+        m_isWhiteDisconnected.store(true);
+        markedDisconnected = true;
+        std::cout << "[Match " << m_matchId << "] Player White disconnected. "
+                  << ServerConfig::kReconnectTimeoutSec << "s countdown initiated." << std::endl;
+    } else if (black && session == black) {
+        m_isBlackDisconnected.store(true);
+        markedDisconnected = true;
+        std::cout << "[Match " << m_matchId << "] Player Black disconnected. "
+                  << ServerConfig::kReconnectTimeoutSec << "s countdown initiated." << std::endl;
+    }
+
+    if (!markedDisconnected) return;
+
     auto self = shared_from_this();
-    boost::asio::post(m_strand, [self, session]() {
+    boost::asio::post(m_strand, [self]() {
         if (self->m_hasEnded) return;
+        self->m_reconnectSecondsLeft = ServerConfig::kReconnectTimeoutSec;
 
-        auto white = self->whiteSession();
-        auto black = self->blackSession();
+        // Immediately notify remaining player about the disconnect
+        const bool bothDisconnected =
+            self->m_isWhiteDisconnected.load() && self->m_isBlackDisconnected.load();
 
-        if (white && session == white) {
-            self->m_isWhiteDisconnected = true;
-            std::cout << "[Match " << self->m_matchId << "] Player White disconnected. "
-                      << ServerConfig::kReconnectTimeoutSec << "s countdown initiated." << std::endl;
-        } else if (black && session == black) {
-            self->m_isBlackDisconnected = true;
-            std::cout << "[Match " << self->m_matchId << "] Player Black disconnected. "
-                      << ServerConfig::kReconnectTimeoutSec << "s countdown initiated." << std::endl;
+        if (!bothDisconnected) {
+            std::vector<std::uint8_t> payload = { static_cast<std::uint8_t>(self->m_reconnectSecondsLeft) };
+            auto remaining = self->m_isWhiteDisconnected.load() ? self->blackSession() : self->whiteSession();
+            if (remaining) {
+                remaining->sendPacket(NetworkMessageType::DISCONNECT_COUNTDOWN, payload);
+            }
         }
 
-        self->m_reconnectSecondsLeft = ServerConfig::kReconnectTimeoutSec;
         self->startReconnectCountdown();
     });
 }
 
-void LiveMatch::reconnectPlayer(std::shared_ptr<NetworkSession> newSession) {
+void LiveMatch::reconnectPlayer(std::shared_ptr<PlayerSession> newSession) {
+    if (m_hasEnded || !newSession) return;
+
+    const auto& username = newSession->username();
+    PlayerColor color = PlayerColor::White;
+    const char* colorName = nullptr;
+
+    if (m_isWhiteDisconnected.load() && username == m_whiteUsername) {
+        color = PlayerColor::White;
+        colorName = "White";
+    } else if (m_isBlackDisconnected.load() && username == m_blackUsername) {
+        color = PlayerColor::Black;
+        colorName = "Black";
+    } else {
+        return;
+    }
+
+    // Assign match identity immediately so duplicate JOIN_MATCH requests cannot
+    // tear down the live match before the strand callback runs.
+    newSession->setMatchId(m_matchId);
+    newSession->setColor(color);
+
     auto self = shared_from_this();
-    boost::asio::post(m_strand, [self, newSession]() {
+    boost::asio::post(m_strand, [self, newSession, color, colorName]() {
         boost::system::error_code ec;
         self->m_reconnectTimer.cancel(ec);
 
-        const auto& username = newSession->username();
+        const auto& reconnectUsername = newSession->username();
+        if (self->m_isWhiteDisconnected.load() && reconnectUsername == self->m_whiteUsername) {
+            self->m_whiteSession = newSession;
+            self->m_isWhiteDisconnected.store(false);
+        } else if (self->m_isBlackDisconnected.load() && reconnectUsername == self->m_blackUsername) {
+            self->m_blackSession = newSession;
+            self->m_isBlackDisconnected.store(false);
+        } else {
+            return;
+        }
 
-        auto handleReconnect = [&](std::weak_ptr<NetworkSession>& session, bool& isDisconnected, 
-                                   PlayerColor color, const char* colorName) {
-            session = newSession; 
-            isDisconnected = false;
-            newSession->setMatchId(self->m_matchId);
-            newSession->setColor(color);
-            std::cout << "[Match " << self->m_matchId << "] " << colorName << " reconnected successfully!" << std::endl;
-        };
+        std::cout << "[Match " << self->m_matchId << "] " << colorName << " reconnected successfully!" << std::endl;
+        self->syncSpectatorState(newSession);
 
-        if (self->m_isWhiteDisconnected && username == self->m_whiteUsername) {
-            handleReconnect(self->m_whiteSession, self->m_isWhiteDisconnected, PlayerColor::White, "White");
-        } else if (self->m_isBlackDisconnected && username == self->m_blackUsername) {
-            handleReconnect(self->m_blackSession, self->m_isBlackDisconnected, PlayerColor::Black, "Black");
+        // Notify remaining player that the opponent reconnected (0 = countdown cancelled)
+        const bool remainingDisconnected =
+            self->m_isWhiteDisconnected.load() || self->m_isBlackDisconnected.load();
+
+        auto otherSession = (color == PlayerColor::White) ? self->blackSession() : self->whiteSession();
+        if (otherSession) {
+            std::vector<std::uint8_t> clearPayload = { 0 };
+            otherSession->sendPacket(NetworkMessageType::DISCONNECT_COUNTDOWN, clearPayload);
+        }
+
+        if (remainingDisconnected) {
+            self->startReconnectCountdown();
         }
     });
 }
@@ -243,22 +277,26 @@ void LiveMatch::startReconnectCountdown() {
         [self](const boost::system::error_code& ec) {
             if (ec || !self->m_isRunning || self->m_hasEnded) return;
 
-            if (self->m_isWhiteDisconnected && self->m_isBlackDisconnected) {
-                self->stopInternal();
-                self->markEndedOnce();
-                return;
-            }
-
             self->m_reconnectSecondsLeft--;
 
-            std::vector<std::uint8_t> payload = { static_cast<std::uint8_t>(self->m_reconnectSecondsLeft) };
-            auto remaining = self->m_isWhiteDisconnected ? self->blackSession() : self->whiteSession();
-            if (remaining) {
-                remaining->sendPacket(NetworkMessageType::DISCONNECT_COUNTDOWN, payload);
+            const bool bothDisconnected =
+                self->m_isWhiteDisconnected.load() && self->m_isBlackDisconnected.load();
+
+            if (!bothDisconnected) {
+                std::vector<std::uint8_t> payload = { static_cast<std::uint8_t>(self->m_reconnectSecondsLeft) };
+                auto remaining = self->m_isWhiteDisconnected.load() ? self->blackSession() : self->whiteSession();
+                if (remaining) {
+                    remaining->sendPacket(NetworkMessageType::DISCONNECT_COUNTDOWN, payload);
+                }
             }
 
             if (self->m_reconnectSecondsLeft <= 0) {
-                self->triggerAutoResign(); 
+                if (bothDisconnected) {
+                    self->stopInternal();
+                    self->markEndedOnce();
+                } else {
+                    self->triggerAutoResign();
+                }
             } else {
                 self->startReconnectCountdown();
             }
@@ -271,11 +309,7 @@ void LiveMatch::triggerAutoResign() {
     notifyGameOver();
 }
 
-// ============================================================================
-// Spectator System & Broadcasts
-// ============================================================================
-
-void LiveMatch::addSpectator(std::shared_ptr<NetworkSession> spectator) {
+void LiveMatch::addSpectator(std::shared_ptr<PlayerSession> spectator) {
     auto self = shared_from_this();
     boost::asio::post(m_strand, [self, spectator]() {
         if (self->m_hasEnded) return;
@@ -290,11 +324,12 @@ void LiveMatch::addSpectator(std::shared_ptr<NetworkSession> spectator) {
     });
 }
 
-void LiveMatch::removeSpectator(std::shared_ptr<NetworkSession> spectator) {
+void LiveMatch::removeSpectator(std::shared_ptr<PlayerSession> spectator) {
+    if (!spectator) return;
     auto self = shared_from_this();
     boost::asio::post(m_strand, [self, spectator]() {
         auto it = std::remove_if(self->m_spectators.begin(), self->m_spectators.end(),
-            [spectator](const std::weak_ptr<NetworkSession>& weakSpec) {
+            [spectator](const std::weak_ptr<PlayerSession>& weakSpec) {
                 auto spec = weakSpec.lock();
                 return !spec || spec == spectator;
             });
@@ -308,32 +343,37 @@ void LiveMatch::removeSpectator(std::shared_ptr<NetworkSession> spectator) {
 }
 
 void LiveMatch::broadcastToRoom(NetworkMessageType type, const std::vector<std::uint8_t>& payload) {
-    // 1. Send to active players
     auto white = whiteSession();
     auto black = blackSession();
     if (white) white->sendPacket(type, payload);
     if (black) black->sendPacket(type, payload);
 
-    // 2. Broadcast to spectators with automatic prune of expired sessions
-    auto it = m_spectators.begin();
-    while (it != m_spectators.end()) {
-        if (auto spec = it->lock()) {
-            spec->sendPacket(type, payload);
-            ++it;
-        } else {
-            it = m_spectators.erase(it);
+    std::vector<std::shared_ptr<PlayerSession>> activeSpectators;
+    {
+        auto specIt = m_spectators.begin();
+        while (specIt != m_spectators.end()) {
+            if (auto spec = specIt->lock()) {
+                activeSpectators.push_back(spec);
+                ++specIt;
+            } else {
+                specIt = m_spectators.erase(specIt);
+            }
+        }
+    }
+
+    for (const auto& spectator : activeSpectators) {
+        if (spectator) {
+            spectator->sendPacket(type, payload);
         }
     }
 }
 
-// Sends the current board status to a viewer who has just joined the room
-void LiveMatch::syncSpectatorState(std::shared_ptr<NetworkSession> spectator) {
+void LiveMatch::syncSpectatorState(std::shared_ptr<PlayerSession> spectator) {
     auto rawBoard = std::dynamic_pointer_cast<const Board>(m_engine->getBoard());
     if (!rawBoard) return;
     
     std::string boardLayout = BoardPrinter::print(*rawBoard);
 
-    // Build the state synchronization packet using Serializer helper
     std::vector<std::uint8_t> payload;
     Serializer::writeU64(payload, m_matchId);
     Serializer::writeString(payload, boardLayout);

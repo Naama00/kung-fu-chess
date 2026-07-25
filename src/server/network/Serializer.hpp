@@ -11,20 +11,20 @@
 
 namespace kungfu
 {
-// ============================================================================
-// Serializer
-//
-// Converts between in-memory objects and the network wire format.
-//
-// All protocol fields are serialized explicitly in Big-Endian order instead of
-// copying structs with memcpy. This avoids compiler-dependent padding,
-// alignment, and endianness issues, keeping the protocol portable across
-// platforms and programming languages.
-//
-// Note: ActionResult is currently serialized with memcpy because it is an
-// internal engine type shared by native C++ components. If it is ever exposed
-// to external clients, it should receive explicit field-by-field serialization.
-// ============================================================================
+    // ============================================================================
+    // Serializer
+    //
+    // Converts between in-memory objects and the network wire format.
+    //
+    // All protocol fields are serialized explicitly in Big-Endian order instead of
+    // copying structs with memcpy. This avoids compiler-dependent padding,
+    // alignment, and endianness issues, keeping the protocol portable across
+    // platforms and programming languages.
+    //
+    // Note: ActionResult is currently serialized with memcpy because it is an
+    // internal engine type shared by native C++ components. If it is ever exposed
+    // to external clients, it should receive explicit field-by-field serialization.
+    // ============================================================================
     class Serializer
     {
     public:
@@ -56,11 +56,14 @@ namespace kungfu
             }
         }
 
-        static void writeString(std::vector<std::uint8_t> &buf,
-                                std::string_view str)
+        static void writeString(std::vector<std::uint8_t> &buf, std::string_view str)
         {
             writeU32(buf, static_cast<std::uint32_t>(str.size()));
-            buf.insert(buf.end(), str.begin(), str.end());
+            if (!str.empty())
+            {
+                const auto *bytes = reinterpret_cast<const std::uint8_t *>(str.data());
+                buf.insert(buf.end(), bytes, bytes + str.size());
+            }
         }
 
         // ---- Reading (Big-Endian) ----
@@ -115,13 +118,19 @@ namespace kungfu
                                std::string &out)
         {
             std::uint32_t length = 0;
-            if (!readU32(buf, offset, length) ||
-                offset + length > buf.size())
-            {
+            if (!readU32(buf, offset, length))
                 return false;
+
+            if (length == 0)
+            {
+                out.clear();
+                return true;
             }
-            out.assign(buf.begin() + offset,
-                       buf.begin() + offset + length);
+
+            if (offset + length > buf.size())
+                return false;
+
+            out.assign(reinterpret_cast<const char *>(buf.data() + offset), length);
             offset += length;
             return true;
         }
@@ -136,7 +145,10 @@ namespace kungfu
 
             writeU8(frame, static_cast<std::uint8_t>(type));
             writeU32(frame, static_cast<std::uint32_t>(payload.size()));
-            frame.insert(frame.end(), payload.begin(), payload.end());
+            if (!payload.empty())
+            {
+                frame.insert(frame.end(), payload.data(), payload.data() + payload.size());
+            }
 
             return frame;
         }
@@ -248,6 +260,58 @@ namespace kungfu
             writeU32(buf, opponentElo);
             return buf;
         }
+
+        // ---- LOGIN_RESPONSE Payload Serialization ----
+        // success flag (1 byte), followed by [ELO rating (4 bytes) + one-time
+        // sessionToken (8 bytes)] only when authentication succeeded. The
+        // sessionToken is what the client presents in SESSION_BIND to attach
+        // its UDP realtime channel to this TCP-authenticated session.
+        static std::vector<std::uint8_t> serializeLoginResponse(bool success, int rating, std::uint64_t sessionToken)
+        {
+            std::vector<std::uint8_t> buf;
+            writeU8(buf, success ? 1 : 0);
+            if (success)
+            {
+                writeU32(buf, static_cast<std::uint32_t>(rating));
+                writeU64(buf, sessionToken);
+            }
+            return buf;
+        }
+
+        static bool deserializeLoginResponse(const std::vector<std::uint8_t> &buf, bool &outSuccess, int &outRating, std::uint64_t &outSessionToken)
+        {
+            std::size_t offset = 0;
+            std::uint8_t successByte = 0;
+            if (!readU8(buf, offset, successByte))
+                return false;
+
+            outSuccess = successByte != 0;
+            if (outSuccess)
+            {
+                std::uint32_t rating = 0;
+                if (!readU32(buf, offset, rating) || !readU64(buf, offset, outSessionToken))
+                    return false;
+                outRating = static_cast<int>(rating);
+            }
+            return true;
+        }
+
+        // ---- SESSION_BIND Payload Serialization ----
+        // Carries only the sessionToken issued by LOGIN_RESPONSE, proving to
+        // the UDP server that this endpoint belongs to an already
+        // TCP-authenticated client.
+        static std::vector<std::uint8_t> serializeSessionBind(std::uint64_t sessionToken)
+        {
+            std::vector<std::uint8_t> buf;
+            writeU64(buf, sessionToken);
+            return buf;
+        }
+
+        static bool deserializeSessionBind(const std::vector<std::uint8_t> &buf, std::uint64_t &outSessionToken)
+        {
+            std::size_t offset = 0;
+            return readU64(buf, offset, outSessionToken);
+        }
     };
-    
+
 } // namespace kungfu

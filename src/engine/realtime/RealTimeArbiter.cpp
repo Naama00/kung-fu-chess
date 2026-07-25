@@ -19,35 +19,15 @@ void RealTimeArbiter::startMotion(PiecePtr piece, const Position& from, const Po
     activeMotions_.emplace_back(piece, from, to, currentTimeMs, durationMs);
 }
 
-// Calculates the current slot of a moving tool based on elapsed time (interpolation).
-// The tool moves one cell every msPerCell milliseconds, starting from 'from' to 'to'.
-static Position interpolatePosition(const Motion& motion, int currentTimeMs, int msPerCell) noexcept {
-    if (motion.from() == motion.to()) {
-        return motion.from(); // No movement, return the original position
-    }
-
-    int elapsed = currentTimeMs - motion.startTime();
-    if (elapsed <= 0) return motion.from();
-
-    int duration = motion.arrivalTime() - motion.startTime();
-    if (duration <= 0 || elapsed >= duration) return motion.to();
-
-    int fromR = motion.from().row(), fromC = motion.from().col();
-    int toR   = motion.to().row(),   toC   = motion.to().col();
-    int dr = toR - fromR, dc = toC - fromC;
-    int steps = std::max(std::abs(dr), std::abs(dc)); // Total number of steps
-    if (steps == 0) return motion.from();
-
-    // Every few milliseconds the tool takes one step.
-    int msPerStep = duration / steps;
-    if (msPerStep <= 0) return motion.to();
-
-    int stepsDone = elapsed / msPerStep;
-    if (stepsDone >= steps) return motion.to();
-
-    int stepR = (dr > 0) ? 1 : (dr < 0 ? -1 : 0);
-    int stepC = (dc > 0) ? 1 : (dc < 0 ? -1 : 0);
-    return Position(fromR + stepR * stepsDone, fromC + stepC * stepsDone);
+void RealTimeArbiter::cancelMotionForPiece(const PiecePtr& piece) noexcept {
+    if (!piece) return;
+    activeMotions_.erase(
+        std::remove_if(activeMotions_.begin(), activeMotions_.end(),
+            [&piece](const Motion& m) noexcept {
+                return m.piece() == piece;
+            }),
+        activeMotions_.end()
+    );
 }
 
 std::vector<ArrivalEvent> RealTimeArbiter::advanceTime(int ms, int& currentTimeMs, PromotionHandler promoteCallback) noexcept {
@@ -67,8 +47,6 @@ std::vector<ArrivalEvent> RealTimeArbiter::advanceTime(int ms, int& currentTimeM
     activeMotions_.erase(
         std::remove_if(activeMotions_.begin(), activeMotions_.end(),
             [](const Motion& m) {
-                // Removes trapped tools, but also tools stopped by a mid-route solution
-                // (state == Idle after resolveMidRouteCollision — they are no longer in motion).
                 return m.piece()->state() == PieceState::Captured ||
                        m.piece()->state() == PieceState::Idle;
             }),
@@ -103,13 +81,8 @@ std::vector<ArrivalEvent> RealTimeArbiter::advanceTime(int ms, int& currentTimeM
         }
     }
 
-    // Update the positions of all active motions based on the current time, even if they haven't arrived yet.
-    for (const auto& motion : activeMotions_) {
-        if (motion.from() != motion.to()) {
-            auto interpolated = interpolatePosition(motion, currentTimeMs, config_.msPerCellSpeed);
-            motion.piece()->setPosition(interpolated);
-        }
-    }
+    // Continuous smooth movement interpolation is rendered directly by BoardView/Interpolator.
+    // We intentionally avoid stepping piece positions cell-by-cell here to prevent first-cell stuttering.
 
     return events;
 }
@@ -150,7 +123,6 @@ std::optional<PiecePtr> RealTimeArbiter::getPieceInTransitAt(const Position& pos
     return std::nullopt;
 }
 
-// Checks if a piece is currently busy (either moving, airborne, or on cooldown)
 bool RealTimeArbiter::isPieceBusy(const PiecePtr& piece, int currentTimeMs) const noexcept {
     if (!piece) return false;
     return isPieceMoving(piece) || 
@@ -158,12 +130,9 @@ bool RealTimeArbiter::isPieceBusy(const PiecePtr& piece, int currentTimeMs) cons
            isOnCooldown(piece, currentTimeMs);
 }
 
-// Implements the logic for setting time and physical states of the tool 
 MoveResult RealTimeArbiter::executeMove(PiecePtr piece, const Position& from, const Position& to, int currentTimeMs) noexcept {
     if (from == to) {
         piece->setState(PieceState::Airborne);
-        // The tool jumps "leaving" the logical square — removed from the board until it lands.
-        // Other tools can occupy its square; when it lands, it will consume them.
         board_->removePiece(piece);
         startMotion(piece, from, to, currentTimeMs, config_.jumpDurationMs);
         return {true, "jump_started"};
@@ -189,7 +158,6 @@ float RealTimeArbiter::getCooldownProgress(const PiecePtr& piece, int currentTim
     int remaining = expiresAt - currentTimeMs;
     if (remaining <= 0) return 0.0f;
     
-    // Return a normalized value between 0.0 and 1.0 representing the cooldown progress
     return static_cast<float>(remaining) / config_.cooldownDurationMs;
 }
 

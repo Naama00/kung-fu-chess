@@ -6,7 +6,9 @@
 namespace kungfu {
 
 struct ClientConfig {
-    // Network configuration
+    // Network configuration.
+    // Heartbeat and move-retry timers operate on the realtime (UDP) channel -
+    // see NetworkMessages.hpp for the TCP/UDP protocol split.
     static constexpr auto kHeartbeatInterval = std::chrono::seconds(5);
     static constexpr auto kMoveRetryCheckInterval = std::chrono::milliseconds(100);
     static constexpr auto kMoveRetryTimeout = std::chrono::milliseconds(200);

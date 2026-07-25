@@ -1,11 +1,13 @@
 // ui/screens/LoginScreen.hpp
 #pragma once
+
 #include "ui/screens/BaseScreen.hpp"
 #include "ui/framework/ISoundPlayer.hpp"
 #include "ui/screens/StartScreen.hpp"
 #include "ui/framework/ScreenManager.hpp"
 #include "server/network/Serializer.hpp"        
 #include "players/network/ClientAuth.hpp"      
+#include "players/network/NetworkSession.hpp"
 #include <future>
 #include <string>
 #include <vector>
@@ -32,10 +34,12 @@ private:
 
     std::future<AuthResult> m_authFuture;
     bool m_authPending = false;
+    std::shared_ptr<kungfu::NetworkSession> m_authSession;
+    bool m_loginConnecting = false;
+
     std::string m_statusMessage = "";
     Color m_statusColor{210, 215, 225, 255}; 
 
-    // Geometric settings for the user interface (aligned within the central card)
     const Vector2D m_panelPos{270.0f, 240.0f};
     const Vector2D m_panelSize{460.0f, 510.0f};
 
@@ -56,9 +60,9 @@ private:
         AuthResult res{false, "Connection error", 1200};
         try {
             boost::asio::io_context ioContext;
-            boost::asio::ip::udp::socket socket(ioContext);
-            boost::asio::ip::udp::resolver resolver(ioContext);
-            
+            boost::asio::ip::tcp::socket socket(ioContext);
+            boost::asio::ip::tcp::resolver resolver(ioContext);
+
             boost::system::error_code ec;
             auto endpoints = resolver.resolve("127.0.0.1", "8080", ec);
             if (ec) {
@@ -66,13 +70,7 @@ private:
                 return res;
             }
 
-            socket.open(boost::asio::ip::udp::v4(), ec);
-            if (ec) {
-                res.message = "Could not open UDP socket";
-                return res;
-            }
-
-            socket.connect(*endpoints.begin(), ec);
+            boost::asio::connect(socket, endpoints, ec);
             if (ec) {
                 res.message = "Server is offline";
                 return res;
@@ -82,15 +80,15 @@ private:
             auto type = isRegister ? kungfu::NetworkMessageType::REGISTER_REQUEST : kungfu::NetworkMessageType::LOGIN_REQUEST;
             auto frame = kungfu::Serializer::buildFrame(type, payload);
 
-            socket.send(boost::asio::buffer(frame), 0, ec);
+            boost::asio::write(socket, boost::asio::buffer(frame), ec);
             if (ec) {
                 res.message = "Failed to send credentials";
                 return res;
             }
 
-            std::vector<std::uint8_t> recvBuf(kungfu::kMaxPayloadSize);
-            std::size_t bytesRecvd = socket.receive(boost::asio::buffer(recvBuf), 0, ec);
-            if (ec || bytesRecvd < kungfu::kHeaderSize) {
+            std::vector<std::uint8_t> headerBuf(kungfu::kHeaderSize);
+            boost::asio::read(socket, boost::asio::buffer(headerBuf), ec);
+            if (ec) {
                 res.message = "No response from server";
                 return res;
             }
@@ -98,42 +96,36 @@ private:
             std::size_t offset = 0;
             std::uint8_t resType = 0;
             std::uint32_t payloadSize = 0;
-            kungfu::Serializer::readU8(recvBuf, offset, resType);
-            kungfu::Serializer::readU32(recvBuf, offset, payloadSize);
+            kungfu::Serializer::readU8(headerBuf, offset, resType);
+            kungfu::Serializer::readU32(headerBuf, offset, payloadSize);
 
-            std::vector<std::uint8_t> responsePayload(
-                recvBuf.begin() + offset, 
-                recvBuf.begin() + offset + payloadSize
-            );
+            std::vector<std::uint8_t> responsePayload(payloadSize);
+            if (payloadSize > 0) {
+                boost::asio::read(socket, boost::asio::buffer(responsePayload), ec);
+                if (ec) {
+                    res.message = "Incomplete response from server";
+                    return res;
+                }
+            }
 
             if (resType == static_cast<std::uint8_t>(kungfu::NetworkMessageType::REGISTER_RESPONSE)) {
                 if (!responsePayload.empty() && responsePayload[0] == 1) {
                     res.success = true;
-                    res.message = "Registration successful! You can now login.";
+                    res.message = "Registration successful!";
                 } else {
                     res.message = "Registration failed. Username taken.";
                 }
             }
-            else if (resType == static_cast<std::uint8_t>(kungfu::NetworkMessageType::LOGIN_RESPONSE)) {
-                if (!responsePayload.empty() && responsePayload[0] == 1) {
-                    std::size_t readOffset = 1;
-                    std::uint32_t rating = 1200;
-                    kungfu::Serializer::readU32(responsePayload, readOffset, rating);
-                    
-                    res.success = true;
-                    res.rating = static_cast<int>(rating);
-                    res.message = "Success! Access granted.";
-                } else {
-                    res.message = "Login failed. Invalid password.";
-                }
-            }
+
+            boost::system::error_code ignored;
+            socket.shutdown(boost::asio::ip::tcp::socket::shutdown_both, ignored);
+            socket.close(ignored);
         } catch (const std::exception& e) {
             res.message = e.what();
         }
         return res;
     }
 
-    // Translates input key events into character representations (supports uppercase, lowercase, numbers, and symbols)
     char translateKeyToChar(const KeyEvent& keyEvent) const {
         int code = keyEvent.rawCode;
         if ((code >= 'a' && code <= 'z') || 
@@ -152,31 +144,56 @@ private:
             return;
         }
 
-        m_statusMessage = isRegister ? "Registering account..." : "Connecting to server...";
-        m_statusColor = {240, 200, 80, 255}; 
-        m_authPending = true;
+        // Cleanly reset static client auth session state upon each new login attempt
+        kungfu::ClientAuth::reset();
 
-        m_authFuture = std::async(std::launch::async, [this, isRegister]() {
-            return performNetworkAuth(m_usernameText, m_passwordText, isRegister);
+        if (isRegister) {
+            m_statusMessage = "Registering account...";
+            m_statusColor = {240, 200, 80, 255}; 
+            m_authPending = true;
+
+            m_authFuture = std::async(std::launch::async, [this]() {
+                return performNetworkAuth(m_usernameText, m_passwordText, true);
+            });
+            return;
+        }
+
+        m_statusMessage = "Connecting to server...";
+        m_statusColor = {240, 200, 80, 255};
+        m_authPending = true;
+        m_loginConnecting = true;
+
+        kungfu::ClientAuth::username = m_usernameText;
+        kungfu::ClientAuth::password = m_passwordText;
+        kungfu::ClientAuth::isAuthenticated = true;
+
+        m_authSession = std::make_shared<kungfu::NetworkSession>();
+        m_authSession->player = std::make_shared<kungfu::NetworkPlayer>(
+            m_authSession->ioContext, "127.0.0.1", "8080",
+            /*isSpectator=*/false, /*spectateMatchId=*/0, /*onlineRoomCode=*/0,
+            /*deferJoin=*/true);
+        m_authSession->player->connectAndJoin();
+
+        auto session = m_authSession; 
+        m_authSession->thread = std::thread([session]() {
+            boost::asio::io_context::work work(session->ioContext);
+            session->ioContext.run();
         });
     }
 
 protected:
     void drawContent(IRenderer& renderer) override {
-        // Draw styled central headings
         renderer.drawText("KUNG-FU CHESS", {280.0f, 130.0f}, 42, m_theme.titleText);
         renderer.drawText("The Real-Time Chess Experience", {340.0f, 190.0f}, 14, m_theme.bodyText);
 
-        // Draw the central glass panel that centers the login form
         drawGlassPanel(renderer, m_panelPos, m_panelSize);
 
         renderer.drawText("Account Authentication", {m_panelPos.x + 30.0f, m_panelPos.y + 40.0f}, 20, m_theme.titleText);
         renderer.drawLine({m_panelPos.x + 30.0f, m_panelPos.y + 60.0f}, {m_panelPos.x + 430.0f, m_panelPos.y + 60.0f}, {65, 68, 85, 120}, 1.0f);
 
-        Color activeBorder{240, 200, 80, 255};      // Active gold
-        Color inactiveBorder{50, 52, 65, 255};     // Faded gray
+        Color activeBorder{240, 200, 80, 255};
+        Color inactiveBorder{50, 52, 65, 255};
 
-        // Username field
         renderer.drawText("Username:", {m_usernamePos.x, m_usernamePos.y - 25.0f}, 13, m_theme.bodyText);
         Color userBorder = (m_activeField == ActiveField::Username) ? activeBorder : inactiveBorder;
         renderer.drawRectangle(m_usernamePos, m_inputSize, {18, 19, 23, 255}, true);
@@ -188,7 +205,6 @@ protected:
         }
         renderer.drawText(userDisplay, {m_usernamePos.x + 12.0f, m_usernamePos.y + 28.0f}, 15, {255, 255, 255, 255});
 
-        // Password field
         renderer.drawText("Password:", {m_passwordPos.x, m_passwordPos.y - 25.0f}, 13, m_theme.bodyText);
         Color passBorder = (m_activeField == ActiveField::Password) ? activeBorder : inactiveBorder;
         renderer.drawRectangle(m_passwordPos, m_inputSize, {18, 19, 23, 255}, true);
@@ -200,12 +216,10 @@ protected:
         }
         renderer.drawText(passDisplay, {m_passwordPos.x + 12.0f, m_passwordPos.y + 28.0f}, 15, {255, 255, 255, 255});
 
-        // Detect hovering the mouse over buttons
         bool loginHovered = isPointInRect(m_mousePos, m_loginBtnPos, m_btnSize);
         bool registerHovered = isPointInRect(m_mousePos, m_registerBtnPos, m_btnSize);
         bool offlineHovered = isPointInRect(m_mousePos, m_offlineBtnPos, m_offlineBtnSize);
 
-        // Draw the buttons inside the card
         drawButton(renderer, "   Login", m_loginBtnPos, m_btnSize, loginHovered);
         drawButton(renderer, "  Register", m_registerBtnPos, m_btnSize, registerHovered);
 
@@ -214,7 +228,6 @@ protected:
         renderer.drawRectangle(m_offlineBtnPos, m_offlineBtnSize, m_theme.border, false);
         renderer.drawText("Play Offline", {m_offlineBtnPos.x + 120.0f, m_offlineBtnPos.y + 31.0f}, 15, m_theme.bodyText);
 
-        // Display status messages
         if (!m_statusMessage.empty()) {
             renderer.drawText(m_statusMessage, {m_panelPos.x + 30.0f, m_panelPos.y + 490.0f}, 12, m_statusColor);
         }
@@ -238,25 +251,29 @@ public:
         tickBackground(deltaTime); 
         m_cursorTimer += deltaTime;
 
-        if (m_authPending && m_authFuture.valid()) {
-            if (m_authFuture.wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
-                auto result = m_authFuture.get();
+        if (!m_authPending) return;
+
+        if (m_loginConnecting) {
+            auto status = m_authSession->player->loginStatus();
+            if (status == kungfu::NetworkPlayer::LoginStatus::Success) {
                 m_authPending = false;
-                m_statusMessage = result.message;
-
-                if (result.success) {
-                    m_statusColor = {100, 210, 130, 255}; // green for success
-                    
-                    kungfu::ClientAuth::username = m_usernameText;
-                    kungfu::ClientAuth::password = m_passwordText;
-                    kungfu::ClientAuth::rating = result.rating;
-                    kungfu::ClientAuth::isAuthenticated = true;
-
-                    m_screenManager.changeScreen(std::make_unique<StartScreen>(m_screenManager, m_soundPlayer));
-                } else {
-                    m_statusColor = {240, 100, 100, 255}; // red for failure
-                }
+                m_loginConnecting = false;
+                m_statusMessage = m_authSession->player->loginMessage();
+                m_statusColor = {100, 210, 130, 255};
+                m_screenManager.changeScreen(std::make_unique<StartScreen>(m_screenManager, m_soundPlayer, m_authSession));
+            } else if (status == kungfu::NetworkPlayer::LoginStatus::Failed) {
+                m_authPending = false;
+                m_loginConnecting = false;
+                m_statusMessage = m_authSession->player->loginMessage();
+                m_statusColor = {240, 100, 100, 255};
+                kungfu::ClientAuth::reset();
+                m_authSession.reset(); 
             }
+        } else if (m_authFuture.valid() && m_authFuture.wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
+            auto result = m_authFuture.get();
+            m_authPending = false;
+            m_statusMessage = result.success ? (result.message + " You can now log in.") : result.message;
+            m_statusColor = result.success ? Color{100, 210, 130, 255} : Color{240, 100, 100, 255};
         }
     }
 
@@ -279,7 +296,7 @@ public:
                     } else if (isPointInRect(m_mousePos, m_registerBtnPos, m_btnSize)) {
                         startAuth(true);
                     } else if (isPointInRect(m_mousePos, m_offlineBtnPos, m_offlineBtnSize)) {
-                        kungfu::ClientAuth::isAuthenticated = false;
+                        kungfu::ClientAuth::reset();
                         m_screenManager.changeScreen(std::make_unique<StartScreen>(m_screenManager, m_soundPlayer));
                     }
                 }

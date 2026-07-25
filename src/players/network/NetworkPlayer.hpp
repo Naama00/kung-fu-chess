@@ -2,26 +2,36 @@
 #pragma once
 
 #include <boost/asio.hpp>
-#include <memory>
-#include <vector>
-#include <mutex>
-#include <map>
-#include <string>
+#include <array>
 #include <atomic>
-#include <cstdint>
 #include <chrono>
+#include <cstdint>
+#include <deque>
+#include <map>
+#include <memory>
+#include <mutex>
+#include <string>
+#include <vector>
 #include "players/IPlayer.hpp"
-#include "../../server/network/NetworkMessages.hpp" 
+#include "../../server/network/NetworkMessages.hpp"
 #include "../../engine/actions/ActionRequest.hpp"
 #include "../../engine/actions/ActionResult.hpp"
 
 namespace kungfu
 {
+    using boost::asio::ip::tcp;
     using boost::asio::ip::udp;
 
+    // ============================================================================
+    // NetworkPlayer talks to the server over two independent channels:
+    //   - m_controlSocket  (TCP): login, lobby, matchmaking, match-lifecycle.
+    //   - m_realtimeSocket (UDP): moves, move results, heartbeat.
+    // ============================================================================
     class NetworkPlayer : public IPlayer, public std::enable_shared_from_this<NetworkPlayer>
     {
     public:
+        enum class LoginStatus { Pending, Success, Failed };
+
         // Struct to hold serialized details of live matches running on the server
         struct ClientMatchInfo {
             std::uint64_t matchId;
@@ -31,8 +41,21 @@ namespace kungfu
 
     private:
         boost::asio::io_context &m_ioContext;
-        udp::socket m_socket;
         boost::asio::strand<boost::asio::any_io_executor> m_strand;
+
+        // ---- Control channel (TCP) ----
+        tcp::socket m_controlSocket;
+        std::array<std::uint8_t, kHeaderSize> m_controlHeaderBuffer{};
+        std::vector<std::uint8_t> m_controlPayloadBuffer;
+        std::deque<std::vector<std::uint8_t>> m_controlWriteQueue;
+        std::atomic<bool> m_controlConnected{false};
+
+        // ---- Realtime channel (UDP) ----
+        udp::socket m_realtimeSocket;
+        std::vector<std::uint8_t> m_realtimeRecvBuffer;
+        std::atomic<bool> m_realtimeBound{false};
+
+        std::uint64_t m_sessionToken = 0;
 
         std::string m_host;
         std::string m_port;
@@ -55,15 +78,13 @@ namespace kungfu
         std::vector<ActionResult> m_incomingResults;
         std::mutex m_mutex;
 
-        std::vector<std::uint8_t> m_recvBuffer;
-
         std::atomic<std::uint64_t> m_nextRequestId{1};
         std::atomic<bool> m_isOpponentDisconnected{false};
         std::atomic<int> m_disconnectCountdown{20};
 
-        // Network timers
+        // Network timers - both run on the realtime channel
         boost::asio::steady_timer m_heartbeatTimer;
-        boost::asio::steady_timer m_retryTimer; // Reliable delivery check timer
+        boost::asio::steady_timer m_retryTimer;
 
         // Moves awaiting server confirmation (managed strictly on the Strand thread context)
         struct PendingMove {
@@ -77,6 +98,11 @@ namespace kungfu
         std::uint64_t m_spectateMatchId = 0;
         std::uint64_t m_onlineRoomCode = 0;
 
+        bool m_deferJoin = false;
+        std::atomic<LoginStatus> m_loginStatus{LoginStatus::Pending};
+        std::string m_loginMessage;
+        std::mutex m_loginMutex;
+
         std::atomic<bool> m_hasPendingSync{false};
         std::string m_pendingSyncBoard;
         std::mutex m_syncMutex;
@@ -87,7 +113,8 @@ namespace kungfu
 
     public:
         NetworkPlayer(boost::asio::io_context &ioContext, const std::string &host, const std::string &port,
-                      bool isSpectator = false, std::uint64_t spectateMatchId = 0, std::uint64_t onlineRoomCode = 0);
+                      bool isSpectator = false, std::uint64_t spectateMatchId = 0, std::uint64_t onlineRoomCode = 0,
+                      bool deferJoin = false);
         ~NetworkPlayer() override;
 
         void connectAndJoin();
@@ -124,20 +151,45 @@ namespace kungfu
         std::vector<ClientMatchInfo> getActiveRooms();
         void requestActiveRooms();
 
+        LoginStatus loginStatus() const { return m_loginStatus.load(); }
+        std::string loginMessage() {
+            std::lock_guard<std::mutex> lock(m_loginMutex);
+            return m_loginMessage;
+        }
+
+        // Call this once the caller knows what mode to join in (after LoginScreen hands connection to StartScreen)
+        void beginPlay(bool isSpectator, std::uint64_t spectateMatchId, std::uint64_t onlineRoomCode);
+
         // Publicly accessible for clean connection termination
         void handleDisconnect();
 
+        // Resets in-match state without tearing down active socket connections
+        void resetMatchState();
+        
     private:
+        // ---- Connection handshake ----
         void doConnect();
+        void onControlConnected();
+        void connectRealtimeChannel();
+        void sendSessionBind();
         void sendJoinRequest();
-        void sendSpectateRequest(); 
-        void startReceive();
-        void processDatagram(std::size_t bytesRecvd);
+        void sendSpectateRequest();
+
+        // ---- Control channel (TCP): stream framing ----
+        void startControlReceive();
+        void readControlHeader();
+        void readControlPayload(NetworkMessageType type, std::uint32_t payloadSize);
+        void writeControlPacket(std::vector<std::uint8_t> frame);
+        void writeControlNext();
+
+        // ---- Realtime channel (UDP): datagram framing ----
+        void startRealtimeReceive();
+        void writeRealtimePacket(std::vector<std::uint8_t> frame);
+
         void writePacket(NetworkMessageType type, const std::vector<std::uint8_t> &payload);
-        
+        void handleMessage(NetworkMessageType type, const std::vector<std::uint8_t> &payload, TransportChannel fromChannel);
+
         void startHeartbeat();
-        
-        // Application-level ACKs and reliability mechanisms
         void startRetryTimer();
         void checkAndRetryMoves();
     };
