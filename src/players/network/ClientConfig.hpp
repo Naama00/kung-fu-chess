@@ -1,19 +1,18 @@
-// players/ClientConfig.hpp
+// players/network/ClientConfig.hpp
 #pragma once
 
 #include <chrono>
+#include <cstdint>
 
 namespace kungfu {
 
 struct ClientConfig {
-    // Network configuration.
-    // Heartbeat and move-retry timers operate on the realtime (UDP) channel -
-    // see NetworkMessages.hpp for the TCP/UDP protocol split.
     static constexpr auto kHeartbeatInterval = std::chrono::seconds(5);
     static constexpr auto kMoveRetryCheckInterval = std::chrono::milliseconds(100);
     static constexpr auto kMoveRetryTimeout = std::chrono::milliseconds(200);
     static constexpr int kMaxMoveRetries = 5;
     static constexpr int kDefaultDisconnectCountdownSec = 20;
+    static constexpr std::uint32_t kDefaultRating = 1200; 
 };
 
 } // namespace kungfu

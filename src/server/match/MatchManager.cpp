@@ -1,14 +1,13 @@
 // server/match/MatchManager.cpp
-#include "MatchManager.hpp"
-#include "../network/PlayerSession.hpp"
-#include "LiveMatch.hpp"
-#include "MatchFactory.hpp"
-#include "../network/Serializer.hpp"
+#include "server/match/MatchManager.hpp"
+#include "server/match/LiveMatch.hpp"
+#include "server/match/MatchFactory.hpp"
+#include "server/network/PlayerSession.hpp"
+#include "server/network/Serializer.hpp"
 #include "server/ServerConfig.hpp"
 #include "engine/analysis/EloCalculator.hpp"
 #include <algorithm>
 #include <iostream>
-#include <memory>
 
 namespace kungfu {
 
@@ -27,24 +26,21 @@ void MatchManager::scheduleMatchmakingTick() {
     });
 }
 
-void MatchManager::processMatchResultsAndElo(std::shared_ptr<LiveMatch> match) {
-    if (!match) return;
+void MatchManager::removeFromWaitingPool(const std::shared_ptr<PlayerSession>& session) {
+    auto it = std::remove_if(m_waitingPool.begin(), m_waitingPool.end(),
+        [&session](const WaitingPlayer& wp) {
+            if (!wp.session || wp.session == session) return true;
+            if (!session->username().empty() && wp.session->username() == session->username()) return true;
+            return false;
+        });
+    m_waitingPool.erase(it, m_waitingPool.end());
+}
 
-    std::string whiteUser = match->whiteUsername();
-    std::string blackUser = match->blackUsername();
+std::pair<double, double> MatchManager::calculateMatchScores(const std::shared_ptr<LiveMatch>& match) const {
+    if (match->isWhiteDisconnected()) return {0.0, 1.0};
+    if (match->isBlackDisconnected()) return {1.0, 0.0};
 
-    if (whiteUser.empty() && blackUser.empty()) return;
-
-    double whiteScore = 0.5;
-    double blackScore = 0.5;
-
-    if (match->isWhiteDisconnected()) {
-        whiteScore = 0.0;
-        blackScore = 1.0;
-    } else if (match->isBlackDisconnected()) {
-        whiteScore = 1.0;
-        blackScore = 0.0;
-    } else if (match->engine() && match->engine()->isGameOver()) {
+    if (match->engine() && match->engine()->isGameOver()) {
         auto board = match->engine()->getBoard();
         if (board) {
             bool whiteKingAlive = false;
@@ -55,15 +51,22 @@ void MatchManager::processMatchResultsAndElo(std::shared_ptr<LiveMatch> match) {
                     if (piece->color() == PlayerColor::Black) blackKingAlive = true;
                 }
             }
-            if (whiteKingAlive && !blackKingAlive) {
-                whiteScore = 1.0;
-                blackScore = 0.0;
-            } else if (!whiteKingAlive && blackKingAlive) {
-                whiteScore = 0.0;
-                blackScore = 1.0;
-            }
+            if (whiteKingAlive && !blackKingAlive) return {1.0, 0.0};
+            if (!whiteKingAlive && blackKingAlive) return {0.0, 1.0};
         }
     }
+    return {0.5, 0.5}; // Draw
+}
+
+void MatchManager::processMatchResultsAndElo(std::shared_ptr<LiveMatch> match) {
+    if (!match) return;
+
+    std::string whiteUser = match->whiteUsername();
+    std::string blackUser = match->blackUsername();
+
+    if (whiteUser.empty() && blackUser.empty()) return;
+
+    auto [whiteScore, blackScore] = calculateMatchScores(match);
 
     auto whiteSession = match->whiteSession();
     auto blackSession = match->blackSession();
@@ -87,49 +90,48 @@ void MatchManager::processMatchResultsAndElo(std::shared_ptr<LiveMatch> match) {
     }
 }
 
-void MatchManager::registerPlayer(std::shared_ptr<PlayerSession> session, std::uint64_t roomCode) {
-    if (!session) return;
-    std::lock_guard<std::mutex> lock(m_mutex);
+bool MatchManager::tryReconnectExistingMatch(const std::shared_ptr<PlayerSession>& session) {
+    if (session->username().empty()) return false;
 
-    auto removeFromWaitingPool = [this, &session]() {
-        auto it = std::remove_if(m_waitingPool.begin(), m_waitingPool.end(),
-            [&session](const WaitingPlayer& wp) {
-                if (!wp.session || wp.session == session) return true;
-                if (!session->username().empty() && wp.session->username() == session->username()) return true;
-                return false;
-            });
-        m_waitingPool.erase(it, m_waitingPool.end());
-    };
+    for (const auto& pair : m_matches) {
+        auto match = pair.second;
+        if (!match || match->hasEnded()) continue;
 
-    if (!session->username().empty()) {
-        for (const auto& pair : m_matches) {
-            auto match = pair.second;
-            if (!match || match->hasEnded()) continue;
-
-            bool isWhiteReconnect = match->isWhiteDisconnected() && match->whiteUsername() == session->username();
-            bool isBlackReconnect = match->isBlackDisconnected() && match->blackUsername() == session->username();
-            if (isWhiteReconnect || isBlackReconnect) {
-                match->reconnectPlayer(session);
-                removeFromWaitingPool();
-                std::cout << "[MatchManager] Reconnected " << session->username()
-                          << " to match " << match->matchId() << std::endl;
-                return;
-            }
+        bool isWhiteReconnect = match->isWhiteDisconnected() && match->whiteUsername() == session->username();
+        bool isBlackReconnect = match->isBlackDisconnected() && match->blackUsername() == session->username();
+        if (isWhiteReconnect || isBlackReconnect) {
+            match->reconnectPlayer(session);
+            removeFromWaitingPool(session);
+            std::cout << "[MatchManager] Reconnected " << session->username()
+                      << " to match " << match->matchId() << std::endl;
+            return true;
         }
     }
+    return false;
+}
 
+void MatchManager::detachFromCurrentMatch(const std::shared_ptr<PlayerSession>& session) {
     std::uint64_t currentMatchId = session->matchId();
     if (currentMatchId != 0) {
         auto matchIt = m_matches.find(currentMatchId);
         if (matchIt != m_matches.end() && !matchIt->second->hasEnded()) {
-            // Player is requesting a new match while still attached to an active match.
-            // Notify the previous match that this player left so opponent receives disconnect countdown.
             matchIt->second->handlePlayerDisconnect(session);
         }
         session->setMatchId(0);
     }
+}
 
-    removeFromWaitingPool();
+void MatchManager::registerPlayer(std::shared_ptr<PlayerSession> session, std::uint64_t roomCode) {
+    if (!session) return;
+    std::lock_guard<std::mutex> lock(m_mutex);
+
+    removeFromWaitingPool(session);
+
+    if (tryReconnectExistingMatch(session)) {
+        return;
+    }
+
+    detachFromCurrentMatch(session);
 
     m_waitingPool.push_back({session, std::chrono::steady_clock::now(), session->rating(), roomCode});
     std::cout << "[Lobby] Player " << (session->username().empty() ? "Guest" : session->username())
@@ -144,13 +146,7 @@ void MatchManager::unregisterPlayer(std::shared_ptr<PlayerSession> session) {
     {
         std::lock_guard<std::mutex> lock(m_mutex);
 
-        auto it = std::remove_if(m_waitingPool.begin(), m_waitingPool.end(),
-            [&session](const WaitingPlayer& wp) {
-                if (!wp.session || wp.session == session) return true;
-                if (!session->username().empty() && wp.session->username() == session->username()) return true;
-                return false;
-            });
-        m_waitingPool.erase(it, m_waitingPool.end());
+        removeFromWaitingPool(session);
 
         std::uint64_t matchId = session->matchId();
         if (matchId != 0) {
@@ -282,7 +278,7 @@ std::shared_ptr<LiveMatch> MatchManager::findActiveMatchForUser(const std::strin
     std::lock_guard<std::mutex> lock(m_mutex);
     for (const auto& pair : m_matches) {
         auto match = pair.second;
-        if (match && !match->hasEnded()) { // Filter out matches that have already ended
+        if (match && !match->hasEnded()) {
             bool isWhiteAndDisconnected = match->isWhiteDisconnected() && match->whiteUsername() == username;
             bool isBlackAndDisconnected = match->isBlackDisconnected() && match->blackUsername() == username;
             if (isWhiteAndDisconnected || isBlackAndDisconnected) {

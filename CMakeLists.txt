@@ -53,6 +53,7 @@ FetchContent_MakeAvailable(Catch2)
 file(GLOB_RECURSE ENGINE_SOURCES CONFIGURE_DEPENDS
     src/engine/*.cpp
     src/players/*.cpp
+    src/ui/*.cpp
 )
 
 file(GLOB_RECURSE TEST_SOURCES CONFIGURE_DEPENDS

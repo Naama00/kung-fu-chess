@@ -7,8 +7,9 @@
 #include <mutex>
 #include <vector>
 #include <chrono>
-#include "../persistence/DatabaseManager.hpp"
-#include "../network/NetworkMessages.hpp"
+#include <utility>
+#include "server/persistence/DatabaseManager.hpp"
+#include "server/network/NetworkMessages.hpp"
 
 namespace kungfu {
 
@@ -60,7 +61,12 @@ private:
     void runMatchmakingCycle();
     void processMatchResultsAndElo(std::shared_ptr<LiveMatch> match);
 
-    // Helper functions for clean matchmaking flow
+    // Helpers
+    void removeFromWaitingPool(const std::shared_ptr<PlayerSession>& session);
+    bool tryReconnectExistingMatch(const std::shared_ptr<PlayerSession>& session);
+    void detachFromCurrentMatch(const std::shared_ptr<PlayerSession>& session);
+    std::pair<double, double> calculateMatchScores(const std::shared_ptr<LiveMatch>& match) const;
+
     void removeTimedOutPlayers(std::chrono::steady_clock::time_point now);
     bool canPairPlayers(const WaitingPlayer& p1, const WaitingPlayer& p2, int waitDurationSec) const;
     bool isPrivateRoomMatch(const WaitingPlayer& p1, const WaitingPlayer& p2) const;

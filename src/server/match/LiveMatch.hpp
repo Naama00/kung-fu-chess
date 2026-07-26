@@ -9,8 +9,8 @@
 #include <string>
 #include <vector>
 #include "engine/core/GameEngine.hpp"
-#include "../network/NetworkMessages.hpp"
-#include "../ServerConfig.hpp"
+#include "server/network/NetworkMessages.hpp"
+#include "server/ServerConfig.hpp"
 
 namespace kungfu {
 
@@ -18,8 +18,6 @@ class PlayerSession;
 
 class LiveMatch : public std::enable_shared_from_this<LiveMatch> {
 private:
-    static constexpr std::chrono::milliseconds kTickInterval{50};
-
     std::uint64_t m_matchId;
     std::shared_ptr<GameEngine> m_engine;
 
@@ -38,7 +36,7 @@ private:
     bool m_isRunning = false;
     bool m_hasEnded = false;
 
-    // Reconnect state (atomic so MatchManager can read without posting to strand)
+    // Reconnect state
     std::atomic<bool> m_isWhiteDisconnected{false};
     std::atomic<bool> m_isBlackDisconnected{false};
     int m_reconnectSecondsLeft = ServerConfig::kReconnectTimeoutSec;
@@ -51,7 +49,6 @@ public:
               std::uint64_t matchId,
               std::shared_ptr<GameEngine> engine);
 
-    // Setup & Getters
     void setPlayers(std::shared_ptr<PlayerSession> white, std::shared_ptr<PlayerSession> black);
     void setOnMatchEnded(std::function<void(std::uint64_t)> callback);
 
@@ -69,49 +66,32 @@ public:
     bool isWaitingForReconnection() const;
     bool hasEnded() const;
 
-    // ------------------------------------------------------------------------
-    // Match Lifecycle
-    // ------------------------------------------------------------------------
     void start();
     void stop();
 
-    // ------------------------------------------------------------------------
-    // Move Handling
-    // ------------------------------------------------------------------------
     void handlePlayerMove(std::shared_ptr<PlayerSession> sender, const NetworkMovePacket& packet);
-
-    // ------------------------------------------------------------------------
-    // Reconnect Logic
-    // ------------------------------------------------------------------------
     void handlePlayerDisconnect(std::shared_ptr<PlayerSession> session);
     void reconnectPlayer(std::shared_ptr<PlayerSession> newSession);
 
-    // ------------------------------------------------------------------------
-    // Spectator System
-    // ------------------------------------------------------------------------
     void addSpectator(std::shared_ptr<PlayerSession> spectator);
     void removeSpectator(std::shared_ptr<PlayerSession> spectator);
 
 private:
-    // Lifecycle internal helpers
     void stopInternal();
     void markEndedOnce();
     void notifyGameOver();
 
-    // Move Handling internal helpers
     void handlePlayerMoveInternal(std::shared_ptr<PlayerSession> sender, const NetworkMovePacket& packet);
 
-    // Tick Loop internal handlers
     void scheduleFirstTick();
     void scheduleNextTick();
     void armTimer();
     void onTick();
 
-    // Reconnect internal helpers
     void startReconnectCountdown();
+    void notifyOpponentDisconnectCountdown(int secondsLeft); // הופרד ל-DRY
     void triggerAutoResign();
 
-    // Spectator & Broadcast internal helpers
     void broadcastToRoom(NetworkMessageType type, const std::vector<std::uint8_t>& payload);
     void syncSpectatorState(std::shared_ptr<PlayerSession> spectator);
 };

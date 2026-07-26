@@ -6,13 +6,13 @@
 #include <memory>
 #include <string>
 #include <vector>
-#include "IConnection.hpp"
-#include "NetworkMessages.hpp"
+#include "server/network/IConnection.hpp"
+#include "server/network/NetworkMessages.hpp"
+#include "server/ServerConfig.hpp"
 #include "engine/common/Enums.hpp"
 
 namespace kungfu
 {
-
     class MatchManager;
 
     // PlayerSession is the single logical identity of a connected player or
@@ -40,7 +40,7 @@ namespace kungfu
         PlayerColor m_color = PlayerColor::White;
 
         std::string m_username;
-        int m_rating = 1200;
+        int m_rating = ServerConfig::kDefaultRating;
         bool m_isAuthenticated = false;
 
         std::chrono::steady_clock::time_point m_lastActivity;
@@ -61,36 +61,28 @@ namespace kungfu
         bool isAuthenticated() const;
 
         // ---- Channel management ----
-        // Attaches the realtime (UDP) channel once the client has proven, via
-        // SESSION_BIND, that it owns this session's token.
         void bindRealtimeChannel(std::shared_ptr<IConnection> realtimeChannel);
         bool hasRealtimeChannel() const;
 
         // ---- Sending ----
-        // Routes automatically to the control or realtime channel based on
-        // channelFor(type). Business logic (MatchManager/LiveMatch) always calls
-        // this single method and never needs to know which transport is used.
         void sendPacket(NetworkMessageType type, const std::vector<std::uint8_t> &payload);
-
-        // Sends unconditionally over the control (TCP) channel, ignoring
-        // channelFor(type). Spectators never complete SESSION_BIND (they have no
-        // login token), so they have no realtime channel at all - everything they
-        // receive, including realtime broadcasts like GAME_MOVE, must go over TCP.
         void sendControlPacket(NetworkMessageType type, const std::vector<std::uint8_t> &payload);
 
         // ---- Incoming message handling ----
-        // 'fromChannel' is the transport the message physically arrived on; used
-        // to reject messages sent over the wrong channel (defense in depth).
         void processMessage(NetworkMessageType type, const std::vector<std::uint8_t> &payload, TransportChannel fromChannel);
-
-        // Called when the TCP control channel closes - the single, authoritative
-        // "player disconnected" event. The UDP realtime channel intentionally
-        // has no equivalent: losing it only degrades gameplay latency, it does
-        // not end the session (see UdpServer's stale-binding pruning).
         void handleDisconnect();
 
         std::chrono::steady_clock::time_point lastActivity() const;
         void updateActivity();
+
+    private:
+        // ---- Dedicated Message Handlers ----
+        void handleLoginRequest(const std::vector<std::uint8_t>& payload);
+        void handleRegisterRequest(const std::vector<std::uint8_t>& payload);
+        void handleJoinMatchRequest(const std::vector<std::uint8_t>& payload);
+        void handleGameMoveMsg(const std::vector<std::uint8_t>& payload);
+        void handleSpectateRoomRequest(const std::vector<std::uint8_t>& payload);
+        void handleRoomListRequest();
     };
 
 } // namespace kungfu

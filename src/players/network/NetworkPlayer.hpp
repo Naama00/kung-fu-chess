@@ -13,9 +13,10 @@
 #include <string>
 #include <vector>
 #include "players/IPlayer.hpp"
-#include "../../server/network/NetworkMessages.hpp"
-#include "../../engine/actions/ActionRequest.hpp"
-#include "../../engine/actions/ActionResult.hpp"
+#include "players/network/ClientConfig.hpp"
+#include "server/network/NetworkMessages.hpp"
+#include "engine/actions/ActionRequest.hpp"
+#include "engine/actions/ActionResult.hpp"
 
 namespace kungfu
 {
@@ -32,7 +33,6 @@ namespace kungfu
     public:
         enum class LoginStatus { Pending, Success, Failed };
 
-        // Struct to hold serialized details of live matches running on the server
         struct ClientMatchInfo {
             std::uint64_t matchId;
             std::string whitePlayer;
@@ -67,7 +67,7 @@ namespace kungfu
 
         // Opponent info stored thread-safely
         std::string m_opponentUsername = "Waiting...";
-        std::uint32_t m_opponentRating = 1200;
+        std::uint32_t m_opponentRating = ClientConfig::kDefaultRating;
         std::mutex m_opponentInfoMutex;
 
         std::atomic<bool> m_matchEnded{false};
@@ -80,13 +80,12 @@ namespace kungfu
 
         std::atomic<std::uint64_t> m_nextRequestId{1};
         std::atomic<bool> m_isOpponentDisconnected{false};
-        std::atomic<int> m_disconnectCountdown{20};
+        std::atomic<int> m_disconnectCountdown{ClientConfig::kDefaultDisconnectCountdownSec};
 
         // Network timers - both run on the realtime channel
         boost::asio::steady_timer m_heartbeatTimer;
         boost::asio::steady_timer m_retryTimer;
 
-        // Moves awaiting server confirmation (managed strictly on the Strand thread context)
         struct PendingMove {
             NetworkMovePacket packet;
             std::chrono::steady_clock::time_point lastSent;
@@ -157,13 +156,8 @@ namespace kungfu
             return m_loginMessage;
         }
 
-        // Call this once the caller knows what mode to join in (after LoginScreen hands connection to StartScreen)
         void beginPlay(bool isSpectator, std::uint64_t spectateMatchId, std::uint64_t onlineRoomCode);
-
-        // Publicly accessible for clean connection termination
         void handleDisconnect();
-
-        // Resets in-match state without tearing down active socket connections
         void resetMatchState();
         
     private:
@@ -175,19 +169,29 @@ namespace kungfu
         void sendJoinRequest();
         void sendSpectateRequest();
 
-        // ---- Control channel (TCP): stream framing ----
+        // ---- Control channel (TCP) ----
         void startControlReceive();
         void readControlHeader();
         void readControlPayload(NetworkMessageType type, std::uint32_t payloadSize);
         void writeControlPacket(std::vector<std::uint8_t> frame);
         void writeControlNext();
 
-        // ---- Realtime channel (UDP): datagram framing ----
+        // ---- Realtime channel (UDP) ----
         void startRealtimeReceive();
         void writeRealtimePacket(std::vector<std::uint8_t> frame);
 
         void writePacket(NetworkMessageType type, const std::vector<std::uint8_t> &payload);
         void handleMessage(NetworkMessageType type, const std::vector<std::uint8_t> &payload, TransportChannel fromChannel);
+
+        // ---- Dedicated Message Handlers ----
+        void handleLoginResponse(const std::vector<std::uint8_t> &payload);
+        void handleSessionBindAck();
+        void handleRoomStateSync(const std::vector<std::uint8_t> &payload);
+        void handleRoomListResponse(const std::vector<std::uint8_t> &payload);
+        void handleDisconnectCountdown(const std::vector<std::uint8_t> &payload);
+        void handleMatchFound(const std::vector<std::uint8_t> &payload);
+        void handleMoveResult(const std::vector<std::uint8_t> &payload);
+        void handleGameMove(const std::vector<std::uint8_t> &payload);
 
         void startHeartbeat();
         void startRetryTimer();

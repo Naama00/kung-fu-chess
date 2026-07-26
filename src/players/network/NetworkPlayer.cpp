@@ -1,8 +1,8 @@
 // players/network/NetworkPlayer.cpp
-#include "NetworkPlayer.hpp"
-#include "ClientConfig.hpp"
-#include "ClientAuth.hpp"
-#include "../../server/network/Serializer.hpp"
+#include "players/network/NetworkPlayer.hpp"
+#include "players/network/ClientConfig.hpp"
+#include "players/network/ClientAuth.hpp"
+#include "server/network/Serializer.hpp"
 #include <iostream>
 
 namespace kungfu
@@ -47,8 +47,7 @@ namespace kungfu
     void NetworkPlayer::connectAndJoin()
     {
         auto self = shared_from_this();
-        boost::asio::post(m_strand, [self]()
-                          { self->doConnect(); });
+        boost::asio::post(m_strand, [self]() { self->doConnect(); });
     }
 
     void NetworkPlayer::doConnect()
@@ -57,42 +56,36 @@ namespace kungfu
         auto self = shared_from_this();
 
         resolver->async_resolve(m_host, m_port,
-                                boost::asio::bind_executor(m_strand,
-                                                           [self, resolver](boost::system::error_code ec, tcp::resolver::results_type endpoints)
-                                                           {
-                                                               if (ec)
-                                                               {
-                                                                   std::cerr << "[Client] Host resolution failed: " << ec.message() << std::endl;
-                                                                   self->m_connected = false;
-                                                                   {
-                                                                       std::lock_guard<std::mutex> lock(self->m_loginMutex);
-                                                                       self->m_loginMessage = "Could not resolve server address";
-                                                                   }
-                                                                   self->m_loginStatus.store(LoginStatus::Failed);
-                                                                   return;
-                                                               }
+            boost::asio::bind_executor(m_strand,
+                [self, resolver](boost::system::error_code ec, tcp::resolver::results_type endpoints) {
+                    if (ec) {
+                        std::cerr << "[Client] Host resolution failed: " << ec.message() << std::endl;
+                        self->m_connected = false;
+                        {
+                            std::lock_guard<std::mutex> lock(self->m_loginMutex);
+                            self->m_loginMessage = "Could not resolve server address";
+                        }
+                        self->m_loginStatus.store(LoginStatus::Failed);
+                        return;
+                    }
 
-                                                               boost::asio::async_connect(self->m_controlSocket, endpoints,
-                                                                                          boost::asio::bind_executor(self->m_strand,
-                                                                                                                     [self](boost::system::error_code connectEc, const tcp::endpoint &)
-                                                                                                                     {
-                                                                                                                         if (!connectEc)
-                                                                                                                         {
-                                                                                                                             std::cout << "[Client] Connected to TCP control server!" << std::endl;
-                                                                                                                             self->onControlConnected();
-                                                                                                                         }
-                                                                                                                         else
-                                                                                                                         {
-                                                                                                                             std::cerr << "[Client] TCP connection failed: " << connectEc.message() << std::endl;
-                                                                                                                             self->m_connected = false;
-                                                                                                                             {
-                                                                                                                                 std::lock_guard<std::mutex> lock(self->m_loginMutex);
-                                                                                                                                 self->m_loginMessage = "Server is offline";
-                                                                                                                             }
-                                                                                                                             self->m_loginStatus.store(LoginStatus::Failed);
-                                                                                                                         }
-                                                                                                                     }));
-                                                           }));
+                    boost::asio::async_connect(self->m_controlSocket, endpoints,
+                        boost::asio::bind_executor(self->m_strand,
+                            [self](boost::system::error_code connectEc, const tcp::endpoint &) {
+                                if (!connectEc) {
+                                    std::cout << "[Client] Connected to TCP control server!" << std::endl;
+                                    self->onControlConnected();
+                                } else {
+                                    std::cerr << "[Client] TCP connection failed: " << connectEc.message() << std::endl;
+                                    self->m_connected = false;
+                                    {
+                                        std::lock_guard<std::mutex> lock(self->m_loginMutex);
+                                        self->m_loginMessage = "Server is offline";
+                                    }
+                                    self->m_loginStatus.store(LoginStatus::Failed);
+                                }
+                            }));
+                }));
     }
 
     void NetworkPlayer::onControlConnected()
@@ -101,13 +94,10 @@ namespace kungfu
         m_connected = true;
         startControlReceive();
 
-        if (ClientAuth::isAuthenticated)
-        {
+        if (ClientAuth::isAuthenticated) {
             auto payload = Serializer::serializeAuthRequest(ClientAuth::username, ClientAuth::password);
             writePacket(NetworkMessageType::LOGIN_REQUEST, payload);
-        }
-        else
-        {
+        } else {
             sendJoinRequest();
         }
     }
@@ -118,53 +108,42 @@ namespace kungfu
         auto self = shared_from_this();
 
         resolver->async_resolve(m_host, m_port,
-                                boost::asio::bind_executor(m_strand,
-                                                           [self, resolver](boost::system::error_code ec, udp::resolver::results_type endpoints)
-                                                           {
-                                                               if (ec)
-                                                               {
-                                                                   std::cerr << "[Client] Realtime endpoint resolution failed: " << ec.message() << std::endl;
-                                                                   self->handleDisconnect();
-                                                                   return;
-                                                               }
+            boost::asio::bind_executor(m_strand,
+                [self, resolver](boost::system::error_code ec, udp::resolver::results_type endpoints) {
+                    if (ec) {
+                        std::cerr << "[Client] Realtime endpoint resolution failed: " << ec.message() << std::endl;
+                        self->handleDisconnect();
+                        return;
+                    }
 
-                                                               self->m_realtimeSocket.open(udp::v4(), ec);
-                                                               if (!ec)
-                                                               {
-                                                                   self->m_realtimeSocket.connect(*endpoints.begin(), ec);
-                                                               }
+                    self->m_realtimeSocket.open(udp::v4(), ec);
+                    if (!ec) {
+                        self->m_realtimeSocket.connect(*endpoints.begin(), ec);
+                    }
 
-                                                               if (!ec)
-                                                               {
-                                                                   std::cout << "[Client] Connected to UDP realtime server, binding session..." << std::endl;
-                                                                   self->startRealtimeReceive();
-                                                                   self->sendSessionBind();
-                                                               }
-                                                               else
-                                                               {
-                                                                   std::cerr << "[Client] UDP connection failed: " << ec.message() << std::endl;
-                                                                   self->handleDisconnect();
-                                                               }
-                                                           }));
+                    if (!ec) {
+                        std::cout << "[Client] Connected to UDP realtime server, binding session..." << std::endl;
+                        self->startRealtimeReceive();
+                        self->sendSessionBind();
+                    } else {
+                        std::cerr << "[Client] UDP connection failed: " << ec.message() << std::endl;
+                        self->handleDisconnect();
+                    }
+                }));
     }
 
-    void NetworkPlayer::sendSessionBind()
-    {
+    void NetworkPlayer::sendSessionBind() {
         writePacket(NetworkMessageType::SESSION_BIND, Serializer::serializeSessionBind(m_sessionToken));
     }
 
-    void NetworkPlayer::sendJoinRequest()
-    {
-        if (m_isSpectator)
-        {
+    void NetworkPlayer::sendJoinRequest() {
+        if (m_isSpectator) {
             sendSpectateRequest();
             return;
         }
 
-        if (m_matchStarted.load() && m_matchId.load() != 0)
-        {
-            std::cout << "[Client] Already in match " << m_matchId.load()
-                      << ", skipping JOIN_MATCH request." << std::endl;
+        if (m_matchStarted.load() && m_matchId.load() != 0) {
+            std::cout << "[Client] Already in match " << m_matchId.load() << ", skipping JOIN_MATCH request." << std::endl;
             return;
         }
 
@@ -173,65 +152,55 @@ namespace kungfu
         writePacket(NetworkMessageType::JOIN_MATCH_REQUEST, payload);
     }
 
-    void NetworkPlayer::sendSpectateRequest()
-    {
+    void NetworkPlayer::sendSpectateRequest() {
         std::vector<std::uint8_t> payload;
         Serializer::writeU64(payload, m_spectateMatchId);
         writePacket(NetworkMessageType::SPECTATE_ROOM_REQUEST, payload);
         std::cout << "[Client] Sent SPECTATE_ROOM_REQUEST for Match ID: " << m_spectateMatchId << std::endl;
     }
 
-    void NetworkPlayer::beginPlay(bool isSpectator, std::uint64_t spectateMatchId, std::uint64_t onlineRoomCode)
-    {
+    void NetworkPlayer::beginPlay(bool isSpectator, std::uint64_t spectateMatchId, std::uint64_t onlineRoomCode) {
         auto self = shared_from_this();
-        boost::asio::post(m_strand, [self, isSpectator, spectateMatchId, onlineRoomCode]()
-                          {
+        boost::asio::post(m_strand, [self, isSpectator, spectateMatchId, onlineRoomCode]() {
             self->resetMatchState();
             self->m_isSpectator = isSpectator;
             self->m_spectateMatchId = spectateMatchId;
             self->m_onlineRoomCode = onlineRoomCode;
-            self->m_deferJoin = false; // Ensure deferJoin is cleared when joining a game
+            self->m_deferJoin = false;
             if (!self->m_connected.load()) {
                 self->doConnect();
             } else {
                 self->sendJoinRequest();
-            } });
+            }
+        });
     }
 
-    void NetworkPlayer::requestActiveRooms()
-    {
-        if (!m_connected)
-            return;
+    void NetworkPlayer::requestActiveRooms() {
+        if (!m_connected) return;
         auto self = shared_from_this();
-        boost::asio::post(m_strand, [self]()
-                          { self->writePacket(NetworkMessageType::ROOM_LIST_REQUEST, {}); });
+        boost::asio::post(m_strand, [self]() { self->writePacket(NetworkMessageType::ROOM_LIST_REQUEST, {}); });
     }
 
-    std::vector<NetworkPlayer::ClientMatchInfo> NetworkPlayer::getActiveRooms()
-    {
+    std::vector<NetworkPlayer::ClientMatchInfo> NetworkPlayer::getActiveRooms() {
         std::lock_guard<std::mutex> lock(m_roomsMutex);
         m_roomsUpdated.store(false);
         return m_activeRooms;
     }
 
-    std::string NetworkPlayer::consumePendingSync()
-    {
+    std::string NetworkPlayer::consumePendingSync() {
         std::lock_guard<std::mutex> lock(m_syncMutex);
         m_hasPendingSync.store(false);
         return m_pendingSyncBoard;
     }
 
-    void NetworkPlayer::startControlReceive()
-    {
+    void NetworkPlayer::startControlReceive() {
         readControlHeader();
     }
 
-    void NetworkPlayer::readControlHeader()
-    {
+    void NetworkPlayer::readControlHeader() {
         auto self = shared_from_this();
         boost::asio::async_read(m_controlSocket, boost::asio::buffer(m_controlHeaderBuffer),
-                                boost::asio::bind_executor(m_strand, [self](boost::system::error_code ec, std::size_t)
-                                                           {
+            boost::asio::bind_executor(m_strand, [self](boost::system::error_code ec, std::size_t) {
                 if (ec) {
                     self->handleDisconnect();
                     return;
@@ -242,8 +211,7 @@ namespace kungfu
                 std::uint32_t payloadSize = 0;
                 std::vector<std::uint8_t> header(self->m_controlHeaderBuffer.begin(), self->m_controlHeaderBuffer.end());
 
-                bool ok = Serializer::readU8(header, offset, rawType) &&
-                          Serializer::readU32(header, offset, payloadSize);
+                bool ok = Serializer::readU8(header, offset, rawType) && Serializer::readU32(header, offset, payloadSize);
 
                 if (!ok || payloadSize > kMaxPayloadSize) {
                     std::cerr << "[Client] Malformed or oversized control frame header." << std::endl;
@@ -251,15 +219,14 @@ namespace kungfu
                     return;
                 }
 
-                self->readControlPayload(static_cast<NetworkMessageType>(rawType), payloadSize); }));
+                self->readControlPayload(static_cast<NetworkMessageType>(rawType), payloadSize);
+            }));
     }
 
-    void NetworkPlayer::readControlPayload(NetworkMessageType type, std::uint32_t payloadSize)
-    {
+    void NetworkPlayer::readControlPayload(NetworkMessageType type, std::uint32_t payloadSize) {
         m_controlPayloadBuffer.assign(payloadSize, 0);
 
-        if (payloadSize == 0)
-        {
+        if (payloadSize == 0) {
             handleMessage(type, m_controlPayloadBuffer, TransportChannel::Control);
             readControlHeader();
             return;
@@ -267,32 +234,28 @@ namespace kungfu
 
         auto self = shared_from_this();
         boost::asio::async_read(m_controlSocket, boost::asio::buffer(m_controlPayloadBuffer),
-                                boost::asio::bind_executor(m_strand, [self, type](boost::system::error_code ec, std::size_t)
-                                                           {
+            boost::asio::bind_executor(m_strand, [self, type](boost::system::error_code ec, std::size_t) {
                 if (ec) {
                     self->handleDisconnect();
                     return;
                 }
                 self->handleMessage(type, self->m_controlPayloadBuffer, TransportChannel::Control);
-                self->readControlHeader(); }));
+                self->readControlHeader();
+            }));
     }
 
-    void NetworkPlayer::writeControlPacket(std::vector<std::uint8_t> frame)
-    {
+    void NetworkPlayer::writeControlPacket(std::vector<std::uint8_t> frame) {
         bool writeInProgress = !m_controlWriteQueue.empty();
         m_controlWriteQueue.push_back(std::move(frame));
-        if (!writeInProgress)
-        {
+        if (!writeInProgress) {
             writeControlNext();
         }
     }
 
-    void NetworkPlayer::writeControlNext()
-    {
+    void NetworkPlayer::writeControlNext() {
         auto self = shared_from_this();
         boost::asio::async_write(m_controlSocket, boost::asio::buffer(m_controlWriteQueue.front()),
-                                 boost::asio::bind_executor(m_strand, [self](boost::system::error_code ec, std::size_t)
-                                                            {
+            boost::asio::bind_executor(m_strand, [self](boost::system::error_code ec, std::size_t) {
                 if (ec) {
                     std::cerr << "[Client] TCP write error: " << ec.message() << std::endl;
                     self->handleDisconnect();
@@ -301,74 +264,200 @@ namespace kungfu
                 self->m_controlWriteQueue.pop_front();
                 if (!self->m_controlWriteQueue.empty()) {
                     self->writeControlNext();
-                } }));
+                }
+            }));
     }
 
-    void NetworkPlayer::startRealtimeReceive()
-    {
+    void NetworkPlayer::startRealtimeReceive() {
         auto self = shared_from_this();
         m_realtimeSocket.async_receive(boost::asio::buffer(m_realtimeRecvBuffer),
-                                       boost::asio::bind_executor(m_strand,
-                                                                  [self](boost::system::error_code ec, std::size_t bytesRecvd)
-                                                                  {
-                                                                      if (!ec)
-                                                                      {
-                                                                          if (bytesRecvd >= kHeaderSize)
-                                                                          {
-                                                                              std::size_t offset = 0;
-                                                                              std::uint8_t rawType = 0;
-                                                                              std::uint32_t payloadSize = 0;
+            boost::asio::bind_executor(m_strand, [self](boost::system::error_code ec, std::size_t bytesRecvd) {
+                if (!ec) {
+                    if (bytesRecvd >= kHeaderSize) {
+                        std::size_t offset = 0;
+                        std::uint8_t rawType = 0;
+                        std::uint32_t payloadSize = 0;
 
-                                                                              bool ok = Serializer::readU8(self->m_realtimeRecvBuffer, offset, rawType) &&
-                                                                                        Serializer::readU32(self->m_realtimeRecvBuffer, offset, payloadSize);
+                        bool ok = Serializer::readU8(self->m_realtimeRecvBuffer, offset, rawType) &&
+                                  Serializer::readU32(self->m_realtimeRecvBuffer, offset, payloadSize);
 
-                                                                              if (ok && offset + payloadSize <= bytesRecvd)
-                                                                              {
-                                                                                  std::vector<std::uint8_t> payload(
-                                                                                      self->m_realtimeRecvBuffer.begin() + offset,
-                                                                                      self->m_realtimeRecvBuffer.begin() + offset + payloadSize);
-                                                                                  self->handleMessage(static_cast<NetworkMessageType>(rawType), payload, TransportChannel::Realtime);
-                                                                              }
-                                                                          }
-                                                                          self->startRealtimeReceive();
-                                                                      }
-                                                                      else
-                                                                      {
-                                                                          self->handleDisconnect();
-                                                                      }
-                                                                  }));
+                        if (ok && offset + payloadSize <= bytesRecvd) {
+                            std::vector<std::uint8_t> payload(
+                                self->m_realtimeRecvBuffer.begin() + offset,
+                                self->m_realtimeRecvBuffer.begin() + offset + payloadSize);
+                            self->handleMessage(static_cast<NetworkMessageType>(rawType), payload, TransportChannel::Realtime);
+                        }
+                    }
+                    self->startRealtimeReceive();
+                } else {
+                    self->handleDisconnect();
+                }
+            }));
     }
 
-    void NetworkPlayer::writeRealtimePacket(std::vector<std::uint8_t> frame)
-    {
+    void NetworkPlayer::writeRealtimePacket(std::vector<std::uint8_t> frame) {
         auto framePtr = std::make_shared<std::vector<std::uint8_t>>(std::move(frame));
         auto self = shared_from_this();
         m_realtimeSocket.async_send(boost::asio::buffer(*framePtr),
-                                    boost::asio::bind_executor(m_strand,
-                                                               [self, framePtr](boost::system::error_code ec, std::size_t)
-                                                               {
-                                                                   if (ec)
-                                                                   {
-                                                                       std::cerr << "[Client] UDP write error: " << ec.message() << std::endl;
-                                                                   }
-                                                               }));
+            boost::asio::bind_executor(m_strand, [self, framePtr](boost::system::error_code ec, std::size_t) {
+                if (ec) {
+                    std::cerr << "[Client] UDP write error: " << ec.message() << std::endl;
+                }
+            }));
     }
 
-    void NetworkPlayer::writePacket(NetworkMessageType type, const std::vector<std::uint8_t> &payload)
-    {
+    void NetworkPlayer::writePacket(NetworkMessageType type, const std::vector<std::uint8_t> &payload) {
         auto frame = Serializer::buildFrame(type, payload);
-        if (channelFor(type) == TransportChannel::Control)
-        {
+        if (channelFor(type) == TransportChannel::Control) {
             writeControlPacket(std::move(frame));
-        }
-        else
-        {
+        } else {
             writeRealtimePacket(std::move(frame));
         }
     }
 
-    void NetworkPlayer::handleMessage(NetworkMessageType type, const std::vector<std::uint8_t> &payload, TransportChannel fromChannel)
-    {
+    // ============================================================================
+    // Dedicated Message Handlers
+    // ============================================================================
+
+    void NetworkPlayer::handleLoginResponse(const std::vector<std::uint8_t> &payload) {
+        bool success = false;
+        int rating = 0;
+        std::uint64_t token = 0;
+
+        if (Serializer::deserializeLoginResponse(payload, success, rating, token) && success) {
+            std::cout << "[Client] TCP authentication succeeded!" << std::endl;
+            ClientAuth::rating = rating;
+            m_sessionToken = token;
+            connectRealtimeChannel();
+        } else {
+            {
+                std::lock_guard<std::mutex> lock(m_loginMutex);
+                m_loginMessage = "Login failed. Invalid password.";
+            }
+            m_loginStatus.store(LoginStatus::Failed);
+            std::cerr << "[Client] Auth failed. Closing connection." << std::endl;
+            handleDisconnect();
+        }
+    }
+
+    void NetworkPlayer::handleSessionBindAck() {
+        m_realtimeBound.store(true);
+        std::cout << "[Client] Realtime channel bound." << std::endl;
+        startHeartbeat();
+        startRetryTimer();
+        if (m_deferJoin) {
+            {
+                std::lock_guard<std::mutex> lock(m_loginMutex);
+                m_loginMessage = "Success! Access granted.";
+            }
+            m_loginStatus.store(LoginStatus::Success);
+        } else {
+            sendJoinRequest();
+        }
+    }
+
+    void NetworkPlayer::handleRoomStateSync(const std::vector<std::uint8_t> &payload) {
+        std::size_t readOffset = 0;
+        std::uint64_t matchId = 0;
+        std::string boardStr;
+
+        if (Serializer::readU64(payload, readOffset, matchId) &&
+            Serializer::readString(payload, readOffset, boardStr)) {
+            m_matchId.store(matchId);
+            m_matchStarted.store(true);
+
+            std::lock_guard<std::mutex> lock(m_syncMutex);
+            m_pendingSyncBoard = boardStr;
+            m_hasPendingSync.store(true);
+            std::cout << "[Client] Received ROOM_STATE_SYNC for Match ID: " << matchId << std::endl;
+        }
+    }
+
+    void NetworkPlayer::handleRoomListResponse(const std::vector<std::uint8_t> &payload) {
+        std::size_t readOffset = 0;
+        std::uint32_t count = 0;
+        if (Serializer::readU32(payload, readOffset, count)) {
+            std::vector<ClientMatchInfo> rooms;
+            rooms.reserve(count);
+
+            bool parseOk = true;
+            for (std::uint32_t i = 0; i < count; ++i) {
+                ClientMatchInfo info{};
+                parseOk &= Serializer::readU64(payload, readOffset, info.matchId);
+                parseOk &= Serializer::readString(payload, readOffset, info.whitePlayer);
+                parseOk &= Serializer::readString(payload, readOffset, info.blackPlayer);
+
+                if (parseOk) {
+                    rooms.push_back(info);
+                }
+            }
+
+            if (parseOk) {
+                std::lock_guard<std::mutex> lock(m_roomsMutex);
+                m_activeRooms = std::move(rooms);
+                m_roomsUpdated.store(true);
+            }
+        }
+    }
+
+    void NetworkPlayer::handleDisconnectCountdown(const std::vector<std::uint8_t> &payload) {
+        if (!payload.empty()) {
+            int seconds = static_cast<int>(payload[0]);
+            if (seconds == 0) {
+                m_isOpponentDisconnected.store(false);
+            } else {
+                m_disconnectCountdown.store(seconds);
+                m_isOpponentDisconnected.store(true);
+            }
+        }
+    }
+
+    void NetworkPlayer::handleMatchFound(const std::vector<std::uint8_t> &payload) {
+        std::size_t readOffset = 0;
+        std::uint64_t matchId = 0;
+        std::uint8_t colorVal = 0;
+        std::string oppUser;
+        std::uint32_t oppElo = ClientConfig::kDefaultRating;
+
+        if (Serializer::readU64(payload, readOffset, matchId) &&
+            Serializer::readU8(payload, readOffset, colorVal)) {
+            m_matchId.store(matchId);
+            m_assignedColor.store(static_cast<PlayerColor>(colorVal));
+
+            if (Serializer::readString(payload, readOffset, oppUser) &&
+                Serializer::readU32(payload, readOffset, oppElo)) {
+                std::lock_guard<std::mutex> lock(m_opponentInfoMutex);
+                m_opponentUsername = oppUser;
+                m_opponentRating = oppElo;
+            }
+
+            m_matchStarted.store(true);
+            std::cout << "[Client] Match started! ID: " << matchId
+                      << " vs Opponent: " << oppUser << " (Elo: " << oppElo << ")" << std::endl;
+        }
+    }
+
+    void NetworkPlayer::handleMoveResult(const std::vector<std::uint8_t> &payload) {
+        auto resultOpt = Serializer::deserializeToResult(payload);
+        if (resultOpt.has_value()) {
+            m_pendingMoves.erase(resultOpt->requestId);
+            std::lock_guard<std::mutex> lock(m_mutex);
+            m_incomingResults.push_back(*resultOpt);
+        }
+    }
+
+    void NetworkPlayer::handleGameMove(const std::vector<std::uint8_t> &payload) {
+        m_isOpponentDisconnected.store(false);
+        auto packet = Serializer::deserializeMovePacket(payload);
+        if (packet.has_value()) {
+            m_pendingMoves.erase(packet->requestId);
+            ActionRequest request = Serializer::deserializeToRequest(*packet);
+            std::lock_guard<std::mutex> lock(m_mutex);
+            m_incomingActions.push_back(request);
+        }
+    }
+
+    void NetworkPlayer::handleMessage(NetworkMessageType type, const std::vector<std::uint8_t> &payload, TransportChannel fromChannel) {
         bool isControlMove = (fromChannel == TransportChannel::Control) && (type == NetworkMessageType::GAME_MOVE);
         if (channelFor(type) != fromChannel && !isControlMove) {
             std::cerr << "[Client] Rejected message type " << static_cast<int>(type)
@@ -376,174 +465,15 @@ namespace kungfu
             return;
         }
 
-        switch (type)
-        {
-        case NetworkMessageType::LOGIN_RESPONSE:
-        {
-            bool success = false;
-            int rating = 0;
-            std::uint64_t token = 0;
-
-            if (Serializer::deserializeLoginResponse(payload, success, rating, token) && success)
-            {
-                std::cout << "[Client] TCP authentication succeeded!" << std::endl;
-                ClientAuth::rating = rating;
-                m_sessionToken = token;
-                connectRealtimeChannel();
-            }
-            else
-            {
-                {
-                    std::lock_guard<std::mutex> lock(m_loginMutex);
-                    m_loginMessage = "Login failed. Invalid password.";
-                }
-                m_loginStatus.store(LoginStatus::Failed);
-                std::cerr << "[Client] Auth failed. Closing connection." << std::endl;
-                handleDisconnect();
-            }
-            break;
-        }
-        case NetworkMessageType::SESSION_BIND_ACK:
-        {
-            m_realtimeBound.store(true);
-            std::cout << "[Client] Realtime channel bound." << std::endl;
-            startHeartbeat();
-            startRetryTimer();
-            if (m_deferJoin)
-            {
-                {
-                    std::lock_guard<std::mutex> lock(m_loginMutex);
-                    m_loginMessage = "Success! Access granted.";
-                }
-                m_loginStatus.store(LoginStatus::Success);
-            }
-            else
-            {
-                sendJoinRequest();
-            }
-            break;
-        }
-        case NetworkMessageType::ROOM_STATE_SYNC:
-        {
-            std::size_t readOffset = 0;
-            std::uint64_t matchId = 0;
-            std::string boardStr;
-
-            if (Serializer::readU64(payload, readOffset, matchId) &&
-                Serializer::readString(payload, readOffset, boardStr))
-            {
-                m_matchId.store(matchId);
-                m_matchStarted.store(true);
-
-                std::lock_guard<std::mutex> lock(m_syncMutex);
-                m_pendingSyncBoard = boardStr;
-                m_hasPendingSync.store(true);
-                std::cout << "[Client] Received ROOM_STATE_SYNC for Match ID: " << matchId << std::endl;
-            }
-            break;
-        }
-        case NetworkMessageType::ROOM_LIST_RESPONSE:
-        {
-            std::size_t readOffset = 0;
-            std::uint32_t count = 0;
-            if (Serializer::readU32(payload, readOffset, count))
-            {
-                std::vector<ClientMatchInfo> rooms;
-                rooms.reserve(count);
-
-                bool parseOk = true;
-                for (std::uint32_t i = 0; i < count; ++i)
-                {
-                    ClientMatchInfo info{};
-                    parseOk &= Serializer::readU64(payload, readOffset, info.matchId);
-                    parseOk &= Serializer::readString(payload, readOffset, info.whitePlayer);
-                    parseOk &= Serializer::readString(payload, readOffset, info.blackPlayer);
-
-                    if (parseOk)
-                    {
-                        rooms.push_back(info);
-                    }
-                }
-
-                if (parseOk)
-                {
-                    std::lock_guard<std::mutex> lock(m_roomsMutex);
-                    m_activeRooms = std::move(rooms);
-                    m_roomsUpdated.store(true);
-                }
-            }
-            break;
-        }
-        case NetworkMessageType::DISCONNECT_COUNTDOWN:
-        {
-            if (!payload.empty())
-            {
-                int seconds = static_cast<int>(payload[0]);
-                if (seconds == 0)
-                {
-                    // 0 indicates the opponent reconnected; hide overlay immediately
-                    m_isOpponentDisconnected.store(false);
-                }
-                else
-                {
-                    m_disconnectCountdown.store(seconds);
-                    m_isOpponentDisconnected.store(true);
-                }
-            }
-            break;
-        }
-        case NetworkMessageType::MATCH_FOUND:
-        {
-            std::size_t readOffset = 0;
-            std::uint64_t matchId = 0;
-            std::uint8_t colorVal = 0;
-            std::string oppUser;
-            std::uint32_t oppElo = 1200;
-
-            if (Serializer::readU64(payload, readOffset, matchId) &&
-                Serializer::readU8(payload, readOffset, colorVal))
-            {
-                m_matchId.store(matchId);
-                m_assignedColor.store(static_cast<PlayerColor>(colorVal));
-
-                if (Serializer::readString(payload, readOffset, oppUser) &&
-                    Serializer::readU32(payload, readOffset, oppElo))
-                {
-                    std::lock_guard<std::mutex> lock(m_opponentInfoMutex);
-                    m_opponentUsername = oppUser;
-                    m_opponentRating = oppElo;
-                }
-
-                m_matchStarted.store(true);
-                std::cout << "[Client] Match started! ID: " << matchId
-                          << " vs Opponent: " << oppUser << " (Elo: " << oppElo << ")" << std::endl;
-            }
-            break;
-        }
-        case NetworkMessageType::MOVE_RESULT:
-        {
-            auto resultOpt = Serializer::deserializeToResult(payload);
-            if (resultOpt.has_value())
-            {
-                m_pendingMoves.erase(resultOpt->requestId); // Clear pending retry upon server response
-                std::lock_guard<std::mutex> lock(m_mutex);
-                m_incomingResults.push_back(*resultOpt);
-            }
-            break;
-        }
-        case NetworkMessageType::GAME_MOVE:
-        {
-            m_isOpponentDisconnected.store(false);
-            auto packet = Serializer::deserializeMovePacket(payload);
-            if (packet.has_value())
-            {
-                m_pendingMoves.erase(packet->requestId); // Clear pending retry upon confirmed move broadcast
-                ActionRequest request = Serializer::deserializeToRequest(*packet);
-                std::lock_guard<std::mutex> lock(m_mutex);
-                m_incomingActions.push_back(request);
-            }
-            break;
-        }
+        switch (type) {
+        case NetworkMessageType::LOGIN_RESPONSE:       handleLoginResponse(payload); break;
+        case NetworkMessageType::SESSION_BIND_ACK:     handleSessionBindAck(); break;
+        case NetworkMessageType::ROOM_STATE_SYNC:      handleRoomStateSync(payload); break;
+        case NetworkMessageType::ROOM_LIST_RESPONSE:   handleRoomListResponse(payload); break;
+        case NetworkMessageType::DISCONNECT_COUNTDOWN: handleDisconnectCountdown(payload); break;
+        case NetworkMessageType::MATCH_FOUND:          handleMatchFound(payload); break;
+        case NetworkMessageType::MOVE_RESULT:          handleMoveResult(payload); break;
+        case NetworkMessageType::GAME_MOVE:            handleGameMove(payload); break;
         case NetworkMessageType::GAME_OVER:
             m_matchEnded.store(true);
             m_isOpponentDisconnected.store(false);
@@ -563,10 +493,8 @@ namespace kungfu
         }
     }
 
-    void NetworkPlayer::sendMoveToServer(const PlayerAction &action)
-    {
-        if (!m_connected || m_matchId.load() == 0)
-            return;
+    void NetworkPlayer::sendMoveToServer(const PlayerAction &action) {
+        if (!m_connected || m_matchId.load() == 0) return;
 
         NetworkMovePacket packet{};
         packet.matchId = m_matchId.load();
@@ -578,55 +506,45 @@ namespace kungfu
         packet.to.y = action.to.row();
 
         auto self = shared_from_this();
-        boost::asio::post(m_strand, [self, packet]()
-                          {
+        boost::asio::post(m_strand, [self, packet]() {
             PendingMove pm{packet, std::chrono::steady_clock::now(), 0};
             self->m_pendingMoves[packet.requestId] = pm;
 
             auto payload = Serializer::serializeMovePacket(packet);
-            self->writePacket(NetworkMessageType::GAME_MOVE, payload); });
+            self->writePacket(NetworkMessageType::GAME_MOVE, payload);
+        });
     }
 
-    void NetworkPlayer::startHeartbeat()
-    {
+    void NetworkPlayer::startHeartbeat() {
         auto self = shared_from_this();
         m_heartbeatTimer.expires_after(ClientConfig::kHeartbeatInterval);
         m_heartbeatTimer.async_wait(boost::asio::bind_executor(m_strand,
-                                                               [self](const boost::system::error_code &ec)
-                                                               {
-                                                                   if (!ec && self->m_realtimeBound)
-                                                                   {
-                                                                       self->writePacket(NetworkMessageType::HEARTBEAT, {});
-                                                                       self->startHeartbeat();
-                                                                   }
-                                                               }));
+            [self](const boost::system::error_code &ec) {
+                if (!ec && self->m_realtimeBound) {
+                    self->writePacket(NetworkMessageType::HEARTBEAT, {});
+                    self->startHeartbeat();
+                }
+            }));
     }
 
-    void NetworkPlayer::startRetryTimer()
-    {
+    void NetworkPlayer::startRetryTimer() {
         auto self = shared_from_this();
         m_retryTimer.expires_after(ClientConfig::kMoveRetryCheckInterval);
         m_retryTimer.async_wait(boost::asio::bind_executor(m_strand,
-                                                           [self](const boost::system::error_code &ec)
-                                                           {
-                                                               if (!ec && self->m_realtimeBound)
-                                                               {
-                                                                   self->checkAndRetryMoves();
-                                                                   self->startRetryTimer();
-                                                               }
-                                                           }));
+            [self](const boost::system::error_code &ec) {
+                if (!ec && self->m_realtimeBound) {
+                    self->checkAndRetryMoves();
+                    self->startRetryTimer();
+                }
+            }));
     }
 
-    void NetworkPlayer::checkAndRetryMoves()
-    {
+    void NetworkPlayer::checkAndRetryMoves() {
         auto now = std::chrono::steady_clock::now();
-        for (auto it = m_pendingMoves.begin(); it != m_pendingMoves.end(); )
-        {
+        for (auto it = m_pendingMoves.begin(); it != m_pendingMoves.end(); ) {
             auto &pm = it->second;
-            if (now - pm.lastSent >= ClientConfig::kMoveRetryTimeout)
-            {
-                if (pm.retries >= ClientConfig::kMaxMoveRetries)
-                {
+            if (now - pm.lastSent >= ClientConfig::kMoveRetryTimeout) {
+                if (pm.retries >= ClientConfig::kMaxMoveRetries) {
                     std::cerr << "[Client] Move request " << pm.packet.requestId
                               << " max retries reached. Clearing unconfirmed pending move." << std::endl;
                     it = m_pendingMoves.erase(it);
@@ -644,8 +562,7 @@ namespace kungfu
         }
     }
 
-    void NetworkPlayer::handleDisconnect()
-    {
+    void NetworkPlayer::handleDisconnect() {
         m_connected = false;
         m_controlConnected = false;
         m_realtimeBound = false;
@@ -661,8 +578,7 @@ namespace kungfu
         m_retryTimer.cancel(ec);
     }
 
-    std::vector<ActionRequest> NetworkPlayer::decideActions(const view::GameSnapshot &snapshot)
-    {
+    std::vector<ActionRequest> NetworkPlayer::decideActions(const view::GameSnapshot &snapshot) {
         (void)snapshot;
         std::lock_guard<std::mutex> lock(m_mutex);
         auto actions = std::move(m_incomingActions);
@@ -670,16 +586,14 @@ namespace kungfu
         return actions;
     }
 
-    std::vector<ActionResult> NetworkPlayer::pollResults()
-    {
+    std::vector<ActionResult> NetworkPlayer::pollResults() {
         std::lock_guard<std::mutex> lock(m_mutex);
         auto results = std::move(m_incomingResults);
         m_incomingResults.clear();
         return results;
     }
 
-    void NetworkPlayer::resetMatchState()
-    {
+    void NetworkPlayer::resetMatchState() {
         m_matchId.store(0);
         m_matchStarted.store(false);
         m_matchEnded.store(false);
@@ -699,7 +613,7 @@ namespace kungfu
         {
             std::lock_guard<std::mutex> lock(m_opponentInfoMutex);
             m_opponentUsername = "Waiting...";
-            m_opponentRating = 1200;
+            m_opponentRating = ClientConfig::kDefaultRating;
         }
     }
 
