@@ -213,7 +213,7 @@ TEST_CASE("Asynchronous Network Matchmaking and Move Relay Integration Test", "[
     MatchManager matchManager(serverIo);
     SessionManager sessionManager;
 
-    REQUIRE(matchManager.dbManager().initialize(dbPath) == true);
+    REQUIRE(matchManager.userRepository()->initialize(dbPath) == true);
 
     TcpServer tcpServer(serverIo, testPort, matchManager, sessionManager);
     UdpServer udpServer(serverIo, testPort, sessionManager);

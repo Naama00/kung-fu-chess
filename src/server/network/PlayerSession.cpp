@@ -74,11 +74,22 @@ void PlayerSession::handleLoginRequest(const std::vector<std::uint8_t>& payload)
     std::string username, password;
     if (!Serializer::deserializeAuthRequest(payload, username, password)) return;
 
+    auto repo = m_matchManager.userRepository();
+    auto hasher = m_matchManager.passwordHasher();
+
+    if (!repo || !hasher) {
+        sendPacket(NetworkMessageType::LOGIN_RESPONSE, Serializer::serializeLoginResponse(false, 0, 0));
+        return;
+    }
+
+    auto userOpt = repo->findByUsername(username);
+    bool success = false;
     int rating = ServerConfig::kDefaultRating;
-    bool success = m_matchManager.dbManager().authenticateUser(username, password, rating);
     std::uint64_t token = 0;
 
-    if (success) {
+    if (userOpt.has_value() && hasher->verifyPassword(password, userOpt->passwordHash)) {
+        success = true;
+        rating = userOpt->rating;
         token = generateSessionToken();
         m_sessionToken = token;
         m_username = username;
@@ -109,7 +120,19 @@ void PlayerSession::handleLoginRequest(const std::vector<std::uint8_t>& payload)
 void PlayerSession::handleRegisterRequest(const std::vector<std::uint8_t>& payload) {
     std::string username, password;
     if (Serializer::deserializeAuthRequest(payload, username, password)) {
-        bool success = m_matchManager.dbManager().registerUser(username, password);
+        auto repo = m_matchManager.userRepository();
+        auto hasher = m_matchManager.passwordHasher();
+
+        bool success = false;
+        if (repo && hasher) {
+            UserRecord newRecord;
+            newRecord.username = username;
+            newRecord.passwordHash = hasher->hashPassword(password);
+            newRecord.rating = ServerConfig::kDefaultRating;
+
+            success = repo->createUser(newRecord);
+        }
+
         std::vector<std::uint8_t> response;
         Serializer::writeU8(response, success ? 1 : 0);
         sendPacket(NetworkMessageType::REGISTER_RESPONSE, response);

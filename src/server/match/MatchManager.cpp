@@ -4,6 +4,8 @@
 #include "server/match/MatchFactory.hpp"
 #include "server/network/PlayerSession.hpp"
 #include "server/network/Serializer.hpp"
+#include "server/persistence/InMemoryUserRepository.hpp"
+#include "server/persistence/PasswordHasher.hpp"
 #include "server/ServerConfig.hpp"
 #include "engine/analysis/EloCalculator.hpp"
 #include <algorithm>
@@ -11,8 +13,13 @@
 
 namespace kungfu {
 
-MatchManager::MatchManager(boost::asio::io_context& ioContext)
-    : m_ioContext(ioContext), m_matchmakingTimer(ioContext) {
+MatchManager::MatchManager(boost::asio::io_context& ioContext,
+                             std::shared_ptr<IUserRepository> userRepo,
+                             std::shared_ptr<IPasswordHasher> passwordHasher)
+    : m_userRepo(userRepo ? std::move(userRepo) : std::make_shared<InMemoryUserRepository>()),
+      m_passwordHasher(passwordHasher ? std::move(passwordHasher) : std::make_shared<SodiumPasswordHasher>()),
+      m_ioContext(ioContext),
+      m_matchmakingTimer(ioContext) {
     scheduleMatchmakingTick();
 }
 
@@ -75,18 +82,20 @@ void MatchManager::processMatchResultsAndElo(std::shared_ptr<LiveMatch> match) {
     int oldBlackRating = blackSession ? blackSession->rating() : ServerConfig::kDefaultRating;
 
     int newWhiteRating = EloCalculator::calculateNewRating(oldWhiteRating, oldBlackRating, whiteScore);
-    int newBlackRating = EloCalculator::calculateNewRating(oldBlackRating, oldWhiteRating, blackScore);
+    int newBlackRating = EloCalculator::calculateNewRating(oldBlackRating, oldBlackRating, blackScore);
 
     if (whiteSession) whiteSession->setRating(newWhiteRating);
     if (blackSession) blackSession->setRating(newBlackRating);
 
-    if (!whiteUser.empty()) {
-        m_dbManager.updateRating(whiteUser, newWhiteRating);
-        std::cout << "[Elo] Updated rating for " << whiteUser << ": " << oldWhiteRating << " -> " << newWhiteRating << std::endl;
-    }
-    if (!blackUser.empty()) {
-        m_dbManager.updateRating(blackUser, newBlackRating);
-        std::cout << "[Elo] Updated rating for " << blackUser << ": " << oldBlackRating << " -> " << newBlackRating << std::endl;
+    if (m_userRepo) {
+        if (!whiteUser.empty()) {
+            m_userRepo->updateRating(whiteUser, newWhiteRating);
+            std::cout << "[Elo] Updated rating for " << whiteUser << ": " << oldWhiteRating << " -> " << newWhiteRating << std::endl;
+        }
+        if (!blackUser.empty()) {
+            m_userRepo->updateRating(blackUser, newBlackRating);
+            std::cout << "[Elo] Updated rating for " << blackUser << ": " << oldBlackRating << " -> " << newBlackRating << std::endl;
+        }
     }
 }
 

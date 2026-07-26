@@ -8,7 +8,8 @@
 #include <vector>
 #include <chrono>
 #include <utility>
-#include "server/persistence/DatabaseManager.hpp"
+#include "server/persistence/IUserRepository.hpp"
+#include "server/persistence/PasswordHasher.hpp"
 #include "server/network/NetworkMessages.hpp"
 
 namespace kungfu {
@@ -38,15 +39,20 @@ private:
 
     std::vector<WaitingPlayer> m_waitingPool;
 
-    DatabaseManager m_dbManager; 
+    std::shared_ptr<IUserRepository> m_userRepo;
+    std::shared_ptr<IPasswordHasher> m_passwordHasher;
+
     boost::asio::io_context& m_ioContext;
-    
     boost::asio::steady_timer m_matchmakingTimer;
 
 public:
-    explicit MatchManager(boost::asio::io_context& ioContext);
+    // Default arguments ensure backward compatibility with tests using InMemory instances
+    explicit MatchManager(boost::asio::io_context& ioContext,
+                         std::shared_ptr<IUserRepository> userRepo = nullptr,
+                         std::shared_ptr<IPasswordHasher> passwordHasher = nullptr);
 
-    DatabaseManager& dbManager() { return m_dbManager; }
+    std::shared_ptr<IUserRepository> userRepository() const { return m_userRepo; }
+    std::shared_ptr<IPasswordHasher> passwordHasher() const { return m_passwordHasher; }
 
     void registerPlayer(std::shared_ptr<PlayerSession> session, std::uint64_t roomCode = 0);
     void unregisterPlayer(std::shared_ptr<PlayerSession> session);

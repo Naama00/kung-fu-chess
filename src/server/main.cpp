@@ -6,27 +6,31 @@
 #include "network/UdpServer.hpp"
 #include "network/SessionManager.hpp"
 #include "match/MatchManager.hpp"
+#include "persistence/SqliteUserRepository.hpp"
+#include "persistence/PasswordHasher.hpp"
 #include "ServerConfig.hpp"
 
 int main() {
     try {
         boost::asio::io_context ioContext;
 
-        kungfu::MatchManager matchManager(ioContext);
-        kungfu::SessionManager sessionManager;
+        // Instantiate concrete Repository and Password Hasher implementations
+        auto userRepository = std::make_shared<kungfu::SqliteUserRepository>();
+        auto passwordHasher = std::make_shared<kungfu::SodiumPasswordHasher>();
 
-        // SQLite DB Initialization using secure DatabaseManager configuration
-        if (!matchManager.dbManager().initialize("kungfu_chess.db")) {
+        // Initialize SQLite persistence layer
+        if (!userRepository->initialize("kungfu_chess.db")) {
             std::cerr << "Database initialization failed! Exiting." << std::endl;
             return 1;
         }
 
+        // Inject interfaces via Dependency Injection
+        kungfu::MatchManager matchManager(ioContext, userRepository, passwordHasher);
+        kungfu::SessionManager sessionManager;
+
         std::cout << "Starting KungFu Chess Server..." << std::endl;
 
-        // Two independent transports, sharing one SessionManager so a
-        // client's TCP (control) and UDP (realtime) identities can be
-        // correlated. See network/NetworkMessages.hpp for the full
-        // protocol split and the SESSION_BIND handshake.
+        // Two independent transports sharing one SessionManager
         kungfu::TcpServer tcpServer(ioContext, kungfu::ServerConfig::kTcpPort, matchManager, sessionManager);
         kungfu::UdpServer udpServer(ioContext, kungfu::ServerConfig::kUdpPort, sessionManager);
 
