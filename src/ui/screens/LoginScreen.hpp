@@ -3,12 +3,14 @@
 
 #include "ui/screens/BaseScreen.hpp"
 #include "ui/framework/ISoundPlayer.hpp"
+#include "players/network/AuthService.hpp"
 #include "players/network/NetworkSession.hpp"
 #include <future>
 #include <memory>
 #include <string>
 #include <vector>
 
+// Passive UI View screen for user login and registration.
 class LoginScreen : public BaseScreen {
 public:
     explicit LoginScreen(ScreenManager& manager,
@@ -27,13 +29,6 @@ protected:
 private:
     enum class ActiveField { Username, Password };
 
-    struct AuthResult {
-        bool success;
-        std::string message;
-        int rating;
-    };
-
-    static AuthResult performNetworkAuth(const std::string& username, const std::string& password, bool isRegister);
     char translateKeyToChar(const KeyEvent& keyEvent) const;
     void startAuth(bool isRegister);
 
@@ -45,7 +40,11 @@ private:
     std::shared_ptr<ISoundPlayer> m_soundPlayer;
     bool m_isSfml = false;
 
-    std::future<AuthResult> m_authFuture;
+    // Headless Authentication Service
+    kungfu::AuthService m_authService;
+
+    // Asynchronous Auth Task State
+    std::future<kungfu::AuthResult> m_authFuture;
     bool m_authPending = false;
     std::shared_ptr<kungfu::NetworkSession> m_authSession;
     bool m_loginConnecting = false;
@@ -53,6 +52,7 @@ private:
     std::string m_statusMessage;
     Color m_statusColor{210, 215, 225, 255};
 
+    // UI Panel & Input Bounds
     const Vector2D m_panelPos{270.0f, 240.0f};
     const Vector2D m_panelSize{460.0f, 510.0f};
 

@@ -2,9 +2,7 @@
 #include "ui/screens/LoginScreen.hpp"
 #include "ui/screens/StartScreen.hpp"
 #include "ui/framework/ScreenManager.hpp"
-#include "server/network/Serializer.hpp"
 #include "players/network/ClientAuth.hpp"
-#include <boost/asio.hpp>
 #include <iostream>
 
 LoginScreen::LoginScreen(ScreenManager& manager, std::shared_ptr<ISoundPlayer> soundPlayer, bool isSfml)
@@ -15,76 +13,6 @@ LoginScreen::LoginScreen(ScreenManager& manager, std::shared_ptr<ISoundPlayer> s
     m_theme.buttonHover = Color{48, 120, 192, 255};
     m_theme.border = Color{55, 58, 70, 255};
     m_theme.bodyText = Color{210, 215, 225, 255};
-}
-
-LoginScreen::AuthResult LoginScreen::performNetworkAuth(const std::string& username, const std::string& password, bool isRegister) {
-    AuthResult res{false, "Connection error", 1200};
-    try {
-        boost::asio::io_context ioContext;
-        boost::asio::ip::tcp::socket socket(ioContext);
-        boost::asio::ip::tcp::resolver resolver(ioContext);
-
-        boost::system::error_code ec;
-        auto endpoints = resolver.resolve("127.0.0.1", "8080", ec);
-        if (ec) {
-            res.message = "Could not resolve server address";
-            return res;
-        }
-
-        boost::asio::connect(socket, endpoints, ec);
-        if (ec) {
-            res.message = "Server is offline";
-            return res;
-        }
-
-        auto payload = kungfu::Serializer::serializeAuthRequest(username, password);
-        auto type = isRegister ? kungfu::NetworkMessageType::REGISTER_REQUEST : kungfu::NetworkMessageType::LOGIN_REQUEST;
-        auto frame = kungfu::Serializer::buildFrame(type, payload);
-
-        boost::asio::write(socket, boost::asio::buffer(frame), ec);
-        if (ec) {
-            res.message = "Failed to send credentials";
-            return res;
-        }
-
-        std::vector<std::uint8_t> headerBuf(kungfu::kHeaderSize);
-        boost::asio::read(socket, boost::asio::buffer(headerBuf), ec);
-        if (ec) {
-            res.message = "No response from server";
-            return res;
-        }
-
-        std::size_t offset = 0;
-        std::uint8_t resType = 0;
-        std::uint32_t payloadSize = 0;
-        kungfu::Serializer::readU8(headerBuf, offset, resType);
-        kungfu::Serializer::readU32(headerBuf, offset, payloadSize);
-
-        std::vector<std::uint8_t> responsePayload(payloadSize);
-        if (payloadSize > 0) {
-            boost::asio::read(socket, boost::asio::buffer(responsePayload), ec);
-            if (ec) {
-                res.message = "Incomplete response from server";
-                return res;
-            }
-        }
-
-        if (resType == static_cast<std::uint8_t>(kungfu::NetworkMessageType::REGISTER_RESPONSE)) {
-            if (!responsePayload.empty() && responsePayload[0] == 1) {
-                res.success = true;
-                res.message = "Registration successful!";
-            } else {
-                res.message = "Registration failed. Username taken.";
-            }
-        }
-
-        boost::system::error_code ignored;
-        socket.shutdown(boost::asio::ip::tcp::socket::shutdown_both, ignored);
-        socket.close(ignored);
-    } catch (const std::exception& e) {
-        res.message = e.what();
-    }
-    return res;
 }
 
 char LoginScreen::translateKeyToChar(const KeyEvent& keyEvent) const {
@@ -112,8 +40,9 @@ void LoginScreen::startAuth(bool isRegister) {
         m_statusColor = {240, 200, 80, 255}; 
         m_authPending = true;
 
+        // Delegate registration to AuthService in background task
         m_authFuture = std::async(std::launch::async, [this]() {
-            return performNetworkAuth(m_usernameText, m_passwordText, true);
+            return m_authService.authenticate(m_usernameText, m_passwordText, true);
         });
         return;
     }
@@ -123,21 +52,8 @@ void LoginScreen::startAuth(bool isRegister) {
     m_authPending = true;
     m_loginConnecting = true;
 
-    kungfu::ClientAuth::username = m_usernameText;
-    kungfu::ClientAuth::password = m_passwordText;
-    kungfu::ClientAuth::isAuthenticated = true;
-
-    m_authSession = std::make_shared<kungfu::NetworkSession>();
-    m_authSession->player = std::make_shared<kungfu::NetworkPlayer>(
-        m_authSession->ioContext, "127.0.0.1", "8080",
-        false, 0, 0, true);
-    m_authSession->player->connectAndJoin();
-
-    auto session = m_authSession; 
-    m_authSession->thread = std::thread([session]() {
-        boost::asio::io_context::work work(session->ioContext);
-        session->ioContext.run();
-    });
+    // Delegate session creation to AuthService
+    m_authSession = m_authService.createAuthenticatedSession(m_usernameText, m_passwordText);
 }
 
 void LoginScreen::drawContent(IRenderer& renderer) {
@@ -201,6 +117,7 @@ void LoginScreen::update(float deltaTime) {
     if (!m_authPending) return;
 
     if (m_loginConnecting) {
+        if (!m_authSession || !m_authSession->player) return;
         auto status = m_authSession->player->loginStatus();
         if (status == kungfu::NetworkPlayer::LoginStatus::Success) {
             m_authPending = false;

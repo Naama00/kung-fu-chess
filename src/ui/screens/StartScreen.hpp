@@ -4,14 +4,13 @@
 #include "ui/screens/BaseScreen.hpp"
 #include "ui/framework/ISoundPlayer.hpp"
 #include "ui/screens/ChessGameScreen.hpp"
-#include "players/network/NetworkPlayer.hpp"
+#include "players/network/LobbyService.hpp"
 #include "players/network/NetworkSession.hpp"
-#include <boost/asio.hpp>
 #include <memory>
 #include <string>
 #include <vector>
-#include <thread>
 
+// Passive UI View screen for game mode selection and room selection.
 class StartScreen : public BaseScreen {
 public:
     enum class GameMode { Simultaneous, Classic };
@@ -22,7 +21,7 @@ public:
                          std::shared_ptr<ISoundPlayer> soundPlayer = std::make_shared<NullSoundPlayer>(),
                          std::shared_ptr<kungfu::NetworkSession> authSession = nullptr);
 
-    ~StartScreen() override;
+    ~StartScreen() override = default;
 
     void onEnter() override;
     void onExit() override;
@@ -51,15 +50,15 @@ private:
 
     std::uint64_t m_selectedSpectateRoomId = 0;
     std::size_t m_selectedRoomIndex = 0;
-    std::shared_ptr<kungfu::NetworkPlayer> m_lobbyNetPlayer;
-    boost::asio::io_context m_lobbyIoContext;
-    std::thread m_lobbyNetThread;
+
+    // Headless Lobby Service for active room listing
+    std::unique_ptr<kungfu::LobbyService> m_lobbyService;
     std::vector<kungfu::NetworkPlayer::ClientMatchInfo> m_liveRooms;
-    float m_lobbyQueryTimer = 0.0f;
 
     std::shared_ptr<ISoundPlayer> m_soundPlayer;
     std::shared_ptr<kungfu::NetworkSession> m_authSession;
 
+    // Layout Panel Bounds
     const Vector2D m_panelPos{250.0f, 230.0f};
     const Vector2D m_panelSize{500.0f, 510.0f};
 

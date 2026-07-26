@@ -7,6 +7,10 @@
 namespace kungfu {
 
 struct ClientConfig {
+    // Default server connectivity parameters
+    static constexpr const char* kDefaultHost = "127.0.0.1";
+    static constexpr const char* kDefaultPort = "8080";
+
     static constexpr auto kHeartbeatInterval = std::chrono::seconds(5);
     static constexpr auto kMoveRetryCheckInterval = std::chrono::milliseconds(100);
     static constexpr auto kMoveRetryTimeout = std::chrono::milliseconds(200);
