@@ -306,4 +306,66 @@ int GameEngine::getBoardCols() const {
     return board_ ? board_->cols() : 0;
 }
 
+MatchStateSnapshot GameEngine::exportState() const {
+    MatchStateSnapshot snapshot;
+    snapshot.currentTimeMs = currentTimeMs_;
+    snapshot.gameOver = gameOver_;
+    snapshot.currentTurn = currentTurn_;
+
+    if (board_) {
+        const auto& pieces = board_->pieces();
+        snapshot.pieces.reserve(pieces.size());
+
+        for (const auto& piece : pieces) {
+            if (!piece) continue;
+            PieceStateSnapshot pSnap;
+            pSnap.id = piece->id();
+            pSnap.type = piece->type();
+            pSnap.color = piece->color();
+            pSnap.position = piece->position();
+            pSnap.state = piece->state();
+            pSnap.hasMoved = piece->hasMoved();
+            snapshot.pieces.push_back(pSnap);
+        }
+    }
+
+    snapshot.activeMotions = arbiter_.exportMotions(currentTimeMs_);
+    snapshot.activeCooldowns = arbiter_.exportCooldowns(currentTimeMs_);
+    snapshot.pendingPremoves = premoveQueue_.exportSnapshot();
+
+    return snapshot;
+}
+
+void GameEngine::restoreState(const MatchStateSnapshot& snapshot) {
+    currentTimeMs_ = snapshot.currentTimeMs;
+    gameOver_ = snapshot.gameOver;
+    currentTurn_ = snapshot.currentTurn;
+
+    auto newBoard = std::make_shared<Board>(8, 8);
+    std::unordered_map<std::uint64_t, PiecePtr> pieceMap;
+    pieceMap.reserve(snapshot.pieces.size());
+
+    for (const auto& pSnap : snapshot.pieces) {
+        auto piece = std::make_shared<Piece>(pSnap.type, pSnap.color, pSnap.position);
+        piece->setState(pSnap.state);
+        if (pSnap.hasMoved) {
+            piece->markMoved();
+        }
+        
+        if (pSnap.state != PieceState::Captured) {
+            newBoard->placePiece(piece, pSnap.position);
+        }
+        pieceMap[pSnap.id] = piece;
+    }
+
+    board_ = newBoard;
+    ruleEngine_ = std::make_shared<RuleEngine>(board_);
+
+    arbiter_ = RealTimeArbiter(board_, config_);
+    arbiter_.restoreMotions(snapshot.activeMotions, currentTimeMs_, pieceMap);
+    arbiter_.restoreCooldowns(snapshot.activeCooldowns, currentTimeMs_);
+    
+    premoveQueue_.restoreSnapshot(snapshot.pendingPremoves, pieceMap);
+}
+
 }  // namespace kungfu

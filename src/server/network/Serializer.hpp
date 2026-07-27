@@ -314,4 +314,173 @@ namespace kungfu
         }
     };
 
+    static std::vector<std::uint8_t> serializeMatchSnapshot(const MatchStateSnapshot &snap)
+        {
+            std::vector<std::uint8_t> buf;
+            buf.reserve(256 + snap.pieces.size() * 18 + snap.activeMotions.size() * 24);
+
+            writeU64(buf, snap.matchId);
+            writeI32(buf, snap.currentTimeMs);
+            writeU8(buf, snap.gameOver ? 1 : 0);
+            writeU8(buf, static_cast<std::uint8_t>(snap.currentTurn));
+
+            writeString(buf, snap.whiteUsername);
+            writeString(buf, snap.blackUsername);
+            writeU8(buf, snap.isWhiteDisconnected ? 1 : 0);
+            writeU8(buf, snap.isBlackDisconnected ? 1 : 0);
+            writeI32(buf, snap.reconnectSecondsLeft);
+
+            // 1. Pieces
+            writeU32(buf, static_cast<std::uint32_t>(snap.pieces.size()));
+            for (const auto &p : snap.pieces) {
+                writeU64(buf, p.id);
+                writeU8(buf, static_cast<std::uint8_t>(p.type));
+                writeU8(buf, static_cast<std::uint8_t>(p.color));
+                writeI32(buf, p.position.row());
+                writeI32(buf, p.position.col());
+                writeU8(buf, static_cast<std::uint8_t>(p.state));
+                writeU8(buf, p.hasMoved ? 1 : 0);
+            }
+
+            // 2. Active Motions
+            writeU32(buf, static_cast<std::uint32_t>(snap.activeMotions.size()));
+            for (const auto &m : snap.activeMotions) {
+                writeU64(buf, m.pieceId);
+                writeI32(buf, m.from.row());
+                writeI32(buf, m.from.col());
+                writeI32(buf, m.to.row());
+                writeI32(buf, m.to.col());
+                writeI32(buf, m.elapsedMs);
+                writeI32(buf, m.durationMs);
+            }
+
+            // 3. Active Cooldowns
+            writeU32(buf, static_cast<std::uint32_t>(snap.activeCooldowns.size()));
+            for (const auto &c : snap.activeCooldowns) {
+                writeU64(buf, c.pieceId);
+                writeI32(buf, c.remainingMs);
+            }
+
+            // 4. Pending Premoves
+            writeU32(buf, static_cast<std::uint32_t>(snap.pendingPremoves.size()));
+            for (const auto &pm : snap.pendingPremoves) {
+                writeU64(buf, pm.pieceId);
+                writeI32(buf, pm.to.row());
+                writeI32(buf, pm.to.col());
+            }
+
+            return buf;
+        }
+
+        static std::optional<MatchStateSnapshot> deserializeMatchSnapshot(const std::vector<std::uint8_t> &buf)
+        {
+            std::size_t offset = 0;
+            MatchStateSnapshot snap;
+
+            std::uint8_t gameOverByte = 0, turnByte = 0;
+            std::uint8_t whiteDiscByte = 0, blackDiscByte = 0;
+
+            bool ok = true;
+            ok &= readU64(buf, offset, snap.matchId);
+            ok &= readI32(buf, offset, snap.currentTimeMs);
+            ok &= readU8(buf, offset, gameOverByte);
+            ok &= readU8(buf, offset, turnByte);
+            snap.gameOver = (gameOverByte != 0);
+            snap.currentTurn = static_cast<PlayerColor>(turnByte);
+
+            ok &= readString(buf, offset, snap.whiteUsername);
+            ok &= readString(buf, offset, snap.blackUsername);
+            ok &= readU8(buf, offset, whiteDiscByte);
+            ok &= readU8(buf, offset, blackDiscByte);
+            ok &= readI32(buf, offset, snap.reconnectSecondsLeft);
+            snap.isWhiteDisconnected = (whiteDiscByte != 0);
+            snap.isBlackDisconnected = (blackDiscByte != 0);
+
+            // 1. Pieces
+            std::uint32_t pieceCount = 0;
+            ok &= readU32(buf, offset, pieceCount);
+            if (!ok) return std::nullopt;
+
+            snap.pieces.reserve(pieceCount);
+            for (std::uint32_t i = 0; i < pieceCount; ++i) {
+                PieceStateSnapshot p{};
+                std::uint8_t typeByte = 0, colorByte = 0, stateByte = 0, movedByte = 0;
+                std::int32_t row = 0, col = 0;
+
+                ok &= readU64(buf, offset, p.id);
+                ok &= readU8(buf, offset, typeByte);
+                ok &= readU8(buf, offset, colorByte);
+                ok &= readI32(buf, offset, row);
+                ok &= readI32(buf, offset, col);
+                ok &= readU8(buf, offset, stateByte);
+                ok &= readU8(buf, offset, movedByte);
+
+                p.type = static_cast<PieceType>(typeByte);
+                p.color = static_cast<PlayerColor>(colorByte);
+                p.position = Position(row, col);
+                p.state = static_cast<PieceState>(stateByte);
+                p.hasMoved = (movedByte != 0);
+
+                snap.pieces.push_back(p);
+            }
+
+            // 2. Active Motions
+            std::uint32_t motionCount = 0;
+            ok &= readU32(buf, offset, motionCount);
+            if (!ok) return std::nullopt;
+
+            snap.activeMotions.reserve(motionCount);
+            for (std::uint32_t i = 0; i < motionCount; ++i) {
+                MotionSnapshot m{};
+                std::int32_t fromRow = 0, fromCol = 0, toRow = 0, toCol = 0;
+
+                ok &= readU64(buf, offset, m.pieceId);
+                ok &= readI32(buf, offset, fromRow);
+                ok &= readI32(buf, offset, fromCol);
+                ok &= readI32(buf, offset, toRow);
+                ok &= readI32(buf, offset, toCol);
+                ok &= readI32(buf, offset, m.elapsedMs);
+                ok &= readI32(buf, offset, m.durationMs);
+
+                m.from = Position(fromRow, fromCol);
+                m.to = Position(toRow, toCol);
+
+                snap.activeMotions.push_back(m);
+            }
+
+            // 3. Active Cooldowns
+            std::uint32_t cooldownCount = 0;
+            ok &= readU32(buf, offset, cooldownCount);
+            if (!ok) return std::nullopt;
+
+            snap.activeCooldowns.reserve(cooldownCount);
+            for (std::uint32_t i = 0; i < cooldownCount; ++i) {
+                CooldownSnapshot c{};
+                ok &= readU64(buf, offset, c.pieceId);
+                ok &= readI32(buf, offset, c.remainingMs);
+                snap.activeCooldowns.push_back(c);
+            }
+
+            // 4. Pending Premoves
+            std::uint32_t premoveCount = 0;
+            ok &= readU32(buf, offset, premoveCount);
+            if (!ok) return std::nullopt;
+
+            snap.pendingPremoves.reserve(premoveCount);
+            for (std::uint32_t i = 0; i < premoveCount; ++i) {
+                PremoveSnapshot pm{};
+                std::int32_t toRow = 0, toCol = 0;
+
+                ok &= readU64(buf, offset, pm.pieceId);
+                ok &= readI32(buf, offset, toRow);
+                ok &= readI32(buf, offset, toCol);
+                pm.to = Position(toRow, toCol);
+
+                snap.pendingPremoves.push_back(pm);
+            }
+
+            if (!ok) return std::nullopt;
+            return snap;
+        }
+        
 } // namespace kungfu

@@ -32,6 +32,10 @@ public:
     MoveResult executeMove(PiecePtr piece, const Position& from, const Position& to, int currentTimeMs) noexcept;
     float getCooldownProgress(const PiecePtr& piece, int currentTimeMs) const noexcept;
     const std::vector<Motion>& activeMotions() const noexcept { return activeMotions_; }
+    std::vector<MotionSnapshot> exportMotions(int currentTimeMs) const;
+    void restoreMotions(const std::vector<MotionSnapshot>& snapshots, int currentTimeMs, const std::unordered_map<std::uint64_t, PiecePtr>& pieceMap) noexcept;
+    std::vector<CooldownSnapshot> exportCooldowns(int currentTimeMs) const;
+    void restoreCooldowns(const std::vector<CooldownSnapshot>& snapshots, int currentTimeMs) noexcept;
 private:
     std::shared_ptr<IBoard> board_;
     std::vector<Motion> activeMotions_;

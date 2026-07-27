@@ -3,6 +3,8 @@
 
 #include <chrono>
 #include <cstdint>
+#include <cstdlib>
+#include <string>
 
 namespace kungfu {
 
@@ -17,6 +19,21 @@ struct ClientConfig {
     static constexpr int kMaxMoveRetries = 5;
     static constexpr int kDefaultDisconnectCountdownSec = 20;
     static constexpr std::uint32_t kDefaultRating = 1200; 
+
+    // Dynamic configuration helpers for environment-driven network client setup
+    static std::string getHost() {
+        if (const char* env = std::getenv("KUNGFU_SERVER_HOST")) {
+            return std::string(env);
+        }
+        return kDefaultHost;
+    }
+
+    static std::string getPort() {
+        if (const char* env = std::getenv("KUNGFU_SERVER_PORT")) {
+            return std::string(env);
+        }
+        return kDefaultPort;
+    }
 };
 
 } // namespace kungfu

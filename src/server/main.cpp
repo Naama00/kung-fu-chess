@@ -1,4 +1,4 @@
-// src/server/main.cpp
+// server/main.cpp
 #include <boost/asio.hpp>
 #include <iostream>
 #include <memory>
@@ -7,6 +7,7 @@
 #include "network/SessionManager.hpp"
 #include "match/MatchManager.hpp"
 #include "persistence/SqliteUserRepository.hpp"
+#include "persistence/RedisUserRepository.hpp"
 #include "persistence/PasswordHasher.hpp"
 #include "ServerConfig.hpp"
 
@@ -14,25 +15,39 @@ int main() {
     try {
         boost::asio::io_context ioContext;
 
-        // Instantiate concrete Repository and Password Hasher implementations
-        auto userRepository = std::make_shared<kungfu::SqliteUserRepository>();
-        auto passwordHasher = std::make_shared<kungfu::SodiumPasswordHasher>();
+        std::uint16_t tcpPort = kungfu::ServerConfig::getTcpPort();
+        std::uint16_t udpPort = kungfu::ServerConfig::getUdpPort();
+        std::string dbType = kungfu::ServerConfig::getDbType();
 
-        // Initialize SQLite persistence layer
-        if (!userRepository->initialize("kungfu_chess.db")) {
-            std::cerr << "Database initialization failed! Exiting." << std::endl;
-            return 1;
+        std::shared_ptr<kungfu::IUserRepository> userRepository;
+
+        if (dbType == "redis") {
+            std::string redisConn = kungfu::ServerConfig::getRedisHost() + ":" + 
+                                    std::to_string(kungfu::ServerConfig::getRedisPort());
+            userRepository = std::make_shared<kungfu::RedisUserRepository>();
+            if (!userRepository->initialize(redisConn)) {
+                std::cerr << "Redis Repository initialization failed! Exiting." << std::endl;
+                return 1;
+            }
+        } else {
+            std::string dbPath = kungfu::ServerConfig::getDbPath();
+            userRepository = std::make_shared<kungfu::SqliteUserRepository>();
+            if (!userRepository->initialize(dbPath)) {
+                std::cerr << "SQLite Repository initialization failed! Exiting." << std::endl;
+                return 1;
+            }
         }
 
-        // Inject interfaces via Dependency Injection
+        auto passwordHasher = std::make_shared<kungfu::SodiumPasswordHasher>();
+
         kungfu::MatchManager matchManager(ioContext, userRepository, passwordHasher);
         kungfu::SessionManager sessionManager;
 
         std::cout << "Starting KungFu Chess Server..." << std::endl;
+        std::cout << "[Config] Database Engine: " << dbType << std::endl;
 
-        // Two independent transports sharing one SessionManager
-        kungfu::TcpServer tcpServer(ioContext, kungfu::ServerConfig::kTcpPort, matchManager, sessionManager);
-        kungfu::UdpServer udpServer(ioContext, kungfu::ServerConfig::kUdpPort, sessionManager);
+        kungfu::TcpServer tcpServer(ioContext, tcpPort, matchManager, sessionManager);
+        kungfu::UdpServer udpServer(ioContext, udpPort, sessionManager);
 
         std::cout << "Server is running. Waiting for players to connect..." << std::endl;
 

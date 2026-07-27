@@ -9,6 +9,7 @@
 #include <string>
 #include <vector>
 #include "engine/core/GameEngine.hpp"
+#include "engine/snapshot/MatchStateSnapshot.hpp"
 #include "server/network/NetworkMessages.hpp"
 #include "server/ServerConfig.hpp"
 
@@ -76,6 +77,12 @@ public:
     void addSpectator(std::shared_ptr<PlayerSession> spectator);
     void removeSpectator(std::shared_ptr<PlayerSession> spectator);
 
+    // Exports match metadata and engine state for persistence
+    MatchStateSnapshot exportState() const;
+
+    // Restores match metadata and underlying engine state
+    void restoreState(const MatchStateSnapshot& snapshot);
+
 private:
     void stopInternal();
     void markEndedOnce();
@@ -89,7 +96,7 @@ private:
     void onTick();
 
     void startReconnectCountdown();
-    void notifyOpponentDisconnectCountdown(int secondsLeft); // הופרד ל-DRY
+    void notifyOpponentDisconnectCountdown(int secondsLeft);
     void triggerAutoResign();
 
     void broadcastToRoom(NetworkMessageType type, const std::vector<std::uint8_t>& payload);

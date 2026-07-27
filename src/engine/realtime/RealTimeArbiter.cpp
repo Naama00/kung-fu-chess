@@ -161,4 +161,52 @@ float RealTimeArbiter::getCooldownProgress(const PiecePtr& piece, int currentTim
     return static_cast<float>(remaining) / config_.cooldownDurationMs;
 }
 
+std::vector<MotionSnapshot> RealTimeArbiter::exportMotions(int currentTimeMs) const {
+    std::vector<MotionSnapshot> snapshots;
+    snapshots.reserve(activeMotions_.size());
+
+    for (const auto& motion : activeMotions_) {
+        if (!motion.piece()) continue;
+
+        int duration = motion.arrivalTime() - motion.startTime();
+        int elapsed = currentTimeMs - motion.startTime();
+        if (elapsed < 0) elapsed = 0;
+
+        snapshots.push_back({
+            motion.piece()->id(),
+            motion.from(),
+            motion.to(),
+            elapsed,
+            duration
+        });
+    }
+    return snapshots;
+}
+
+void RealTimeArbiter::restoreMotions(
+    const std::vector<MotionSnapshot>& snapshots,
+    int currentTimeMs,
+    const std::unordered_map<std::uint64_t, PiecePtr>& pieceMap) noexcept
+{
+    activeMotions_.clear();
+    activeMotions_.reserve(snapshots.size());
+
+    for (const auto& snap : snapshots) {
+        auto it = pieceMap.find(snap.pieceId);
+        if (it != pieceMap.end() && it->second) {
+            int startTimeMs = currentTimeMs - snap.elapsedMs;
+            int durationMs = snap.durationMs;
+            activeMotions_.emplace_back(it->second, snap.from, snap.to, startTimeMs, durationMs);
+        }
+    }
+}
+
+std::vector<CooldownSnapshot> RealTimeArbiter::exportCooldowns(int currentTimeMs) const {
+    return cooldownTracker_.exportSnapshot(currentTimeMs);
+}
+
+void RealTimeArbiter::restoreCooldowns(const std::vector<CooldownSnapshot>& snapshots, int currentTimeMs) noexcept {
+    cooldownTracker_.restoreSnapshot(snapshots, currentTimeMs);
+}
+
 }  // namespace kungfu

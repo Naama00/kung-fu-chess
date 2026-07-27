@@ -365,4 +365,31 @@ void LiveMatch::syncSpectatorState(std::shared_ptr<PlayerSession> spectator) {
     spectator->sendPacket(NetworkMessageType::ROOM_STATE_SYNC, payload);
 }
 
+MatchStateSnapshot LiveMatch::exportState() const {
+    MatchStateSnapshot snap;
+    if (m_engine) {
+        snap = m_engine->exportState();
+    }
+    snap.matchId = m_matchId;
+    snap.whiteUsername = m_whiteUsername;
+    snap.blackUsername = m_blackUsername;
+    snap.isWhiteDisconnected = m_isWhiteDisconnected.load();
+    snap.isBlackDisconnected = m_isBlackDisconnected.load();
+    snap.reconnectSecondsLeft = m_reconnectSecondsLeft;
+    return snap;
+}
+
+void LiveMatch::restoreState(const MatchStateSnapshot& snapshot) {
+    m_matchId = snapshot.matchId;
+    m_whiteUsername = snapshot.whiteUsername;
+    m_blackUsername = snapshot.blackUsername;
+    m_isWhiteDisconnected.store(snapshot.isWhiteDisconnected);
+    m_isBlackDisconnected.store(snapshot.isBlackDisconnected);
+    m_reconnectSecondsLeft = snapshot.reconnectSecondsLeft;
+
+    if (m_engine) {
+        m_engine->restoreState(snapshot);
+    }
+}
+
 } // namespace kungfu

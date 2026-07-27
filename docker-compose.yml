@@ -1,0 +1,36 @@
+version: '3.8'
+
+services:
+  redis:
+    image: redis:7-alpine
+    container_name: kungfu_chess_redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+
+  game-server:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: kungfu_chess_server
+    restart: unless-stopped
+    depends_on:
+      - redis
+    ports:
+      - "8080:8080/tcp"
+      - "8080:8080/udp"
+    environment:
+      - KUNGFU_TCP_PORT=8080
+      - KUNGFU_UDP_PORT=8080
+      - KUNGFU_DB_TYPE=redis
+      - KUNGFU_REDIS_HOST=redis
+      - KUNGFU_REDIS_PORT=6379
+      - KUNGFU_DB_PATH=/app/data/kungfu_chess.db
+    volumes:
+      - sqlite_data:/app/data
+
+volumes:
+  sqlite_data:
+  redis_data:

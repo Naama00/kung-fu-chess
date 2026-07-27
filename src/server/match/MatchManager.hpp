@@ -11,6 +11,8 @@
 #include "server/persistence/IUserRepository.hpp"
 #include "server/persistence/PasswordHasher.hpp"
 #include "server/network/NetworkMessages.hpp"
+#include "server/match/DistributedMatchmaker.hpp"
+#include "server/match/RedisSessionRegistry.hpp"
 
 namespace kungfu {
 
@@ -45,6 +47,8 @@ private:
     boost::asio::io_context& m_ioContext;
     boost::asio::steady_timer m_matchmakingTimer;
 
+    std::shared_ptr<DistributedMatchmaker> m_distributedMatchmaker;
+    std::shared_ptr<RedisSessionRegistry> m_sessionRegistry;
 public:
     // Default arguments ensure backward compatibility with tests using InMemory instances
     explicit MatchManager(boost::asio::io_context& ioContext,
@@ -61,7 +65,14 @@ public:
     void removeMatch(std::uint64_t matchId);
     std::shared_ptr<LiveMatch> findActiveMatchForUser(const std::string& username);
     std::vector<MatchInfo> getActiveMatchesList();
+    
+    void enableDistributedMode(const std::string& redisHost, std::uint16_t redisPort) {
+        m_distributedMatchmaker = std::make_shared<DistributedMatchmaker>();
+        m_distributedMatchmaker->initialize(redisHost, redisPort);
 
+        m_sessionRegistry = std::make_shared<RedisSessionRegistry>();
+        m_sessionRegistry->initialize(redisHost, redisPort);
+    }
 private:
     void scheduleMatchmakingTick();
     void runMatchmakingCycle();

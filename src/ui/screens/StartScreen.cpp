@@ -346,7 +346,8 @@ void StartScreen::handleInput(const std::vector<InputEvent> &events)
                             m_selectedDifficulty,
                             m_soundPlayer,
                             isNetworkMode,
-                            "127.0.0.1", "8080",
+                            kungfu::ClientConfig::getHost(),
+                            kungfu::ClientConfig::getPort(),
                             isSpectator,
                             spectateMatchId,
                             roomCode));

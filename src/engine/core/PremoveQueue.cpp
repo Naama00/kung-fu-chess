@@ -65,4 +65,31 @@ void PremoveQueue::processReady(const PieceBusyPredicate& isBusy, const MoveExec
     }
 }
 
+std::vector<PremoveSnapshot> PremoveQueue::exportSnapshot() const {
+    std::vector<PremoveSnapshot> snapshots;
+    snapshots.reserve(entries_.size());
+
+    for (const auto& entry : entries_) {
+        if (entry.first) {
+            snapshots.push_back({entry.first->id(), entry.second});
+        }
+    }
+    return snapshots;
+}
+
+void PremoveQueue::restoreSnapshot(
+    const std::vector<PremoveSnapshot>& snapshots,
+    const std::unordered_map<std::uint64_t, PiecePtr>& pieceMap) noexcept
+{
+    entries_.clear();
+    entries_.reserve(snapshots.size());
+
+    for (const auto& snap : snapshots) {
+        auto it = pieceMap.find(snap.pieceId);
+        if (it != pieceMap.end() && it->second) {
+            entries_.push_back({it->second, snap.to});
+        }
+    }
+}
+
 }  // namespace kungfu

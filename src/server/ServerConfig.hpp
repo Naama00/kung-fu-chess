@@ -3,6 +3,8 @@
 
 #include <chrono>
 #include <cstdint>
+#include <cstdlib>
+#include <string>
 
 namespace kungfu {
 
@@ -27,6 +29,50 @@ struct ServerConfig {
     // Reconnect countdown configuration
     static constexpr int kReconnectTimeoutSec = 20;
     static constexpr auto kReconnectTickInterval = std::chrono::seconds(1);
+
+    // Dynamic configuration helpers reading environment variables with fallback
+    static std::uint16_t getTcpPort() {
+        if (const char* env = std::getenv("KUNGFU_TCP_PORT")) {
+            return static_cast<std::uint16_t>(std::atoi(env));
+        }
+        return kTcpPort;
+    }
+
+    static std::uint16_t getUdpPort() {
+        if (const char* env = std::getenv("KUNGFU_UDP_PORT")) {
+            return static_cast<std::uint16_t>(std::atoi(env));
+        }
+        return kUdpPort;
+    }
+
+    static std::string getDbPath() {
+        if (const char* env = std::getenv("KUNGFU_DB_PATH")) {
+            return std::string(env);
+        }
+        return "kungfu_chess.db";
+    }
+
+    static std::string getDbType() {
+        if (const char* env = std::getenv("KUNGFU_DB_TYPE")) {
+            return std::string(env);
+        }
+        return "sqlite"; // Default fallback
+    }
+
+    static std::string getRedisHost() {
+        if (const char* env = std::getenv("KUNGFU_REDIS_HOST")) {
+            return std::string(env);
+        }
+        return "127.0.0.1";
+    }
+
+    static std::uint16_t getRedisPort() {
+        if (const char* env = std::getenv("KUNGFU_REDIS_PORT")) {
+            return static_cast<std::uint16_t>(std::atoi(env));
+        }
+        return 6379;
+    }
+
 };
 
 } // namespace kungfu

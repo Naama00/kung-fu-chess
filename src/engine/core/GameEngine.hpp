@@ -1,4 +1,4 @@
-// core/engine/GameEngine.hpp
+// engine/core/GameEngine.hpp
 #pragma once
 
 #include "engine/core/IGameEngine.hpp"
@@ -11,6 +11,7 @@
 #include "engine/common/GameConfig.hpp"
 #include "engine/common/ArrivalEvent.hpp"
 #include "engine/events/GameEvents.hpp"
+#include "engine/snapshot/MatchStateSnapshot.hpp"
 #include "ui/framework/EventBus.hpp"
 #include <memory>
 #include <vector>
@@ -18,7 +19,7 @@
 
 namespace kungfu {
 
-// Forward declaration only for the observer
+// Forward declaration for the game observer interface
 class IGameObserver;
 
 class GameEngine : public IGameEngine {
@@ -47,6 +48,12 @@ public:
     int getScore() const noexcept;
     MoveResult applyServerMove(const Position& from, const Position& to) noexcept;
 
+    // Exports complete live engine state for persistence and failover recovery
+    MatchStateSnapshot exportState() const;
+
+    // Restores engine state from a snapshot
+    void restoreState(const MatchStateSnapshot& snapshot);
+
 private:
     void advanceTurn() noexcept;
     MoveResult handlePremoveRegistration(const PiecePtr& piece, const Position& from, const Position& to) noexcept;
@@ -63,7 +70,7 @@ private:
     PiecePtr pendingTurnPiece_;   
     std::vector<MoveResult> premoveFailures_;
     std::shared_ptr<EventBus> eventBus_;    
-    std::vector<std::shared_ptr<IGameObserver>> observers_; // list of observers
+    std::vector<std::shared_ptr<IGameObserver>> observers_;
 };
 
 }  // namespace kungfu
