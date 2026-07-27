@@ -1,6 +1,7 @@
 version: '3.8'
 
 services:
+  # 1. Central Redis Store & PubSub Messenger
   redis:
     image: redis:7-alpine
     container_name: kungfu_chess_redis
@@ -10,11 +11,13 @@ services:
     volumes:
       - redis_data:/data
 
-  game-server:
+  # 2. API & Realtime Gateway Service (Entry point for clients)
+  gateway:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: kungfu_chess_server
+    container_name: kungfu_gateway
+    command: ["/app/gateway_service"]
     restart: unless-stopped
     depends_on:
       - redis
@@ -24,13 +27,52 @@ services:
     environment:
       - KUNGFU_TCP_PORT=8080
       - KUNGFU_UDP_PORT=8080
-      - KUNGFU_DB_TYPE=redis
       - KUNGFU_REDIS_HOST=redis
       - KUNGFU_REDIS_PORT=6379
-      - KUNGFU_DB_PATH=/app/data/kungfu_chess.db
-    volumes:
-      - sqlite_data:/app/data
+
+  # 3. Matchmaker & Game Allocator Service
+  matchmaker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: kungfu_matchmaker
+    command: ["/app/matchmaker_service"]
+    restart: unless-stopped
+    depends_on:
+      - redis
+    environment:
+      - KUNGFU_REDIS_HOST=redis
+      - KUNGFU_REDIS_PORT=6379
+
+  # 4. Game Server Shard 1 (Authoritative Game Engine)
+  gameserver-1:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: kungfu_gameserver_1
+    command: ["/app/gameserver_shard"]
+    restart: unless-stopped
+    depends_on:
+      - redis
+    environment:
+      - KUNGFU_SHARD_ID=gameserver-1
+      - KUNGFU_REDIS_HOST=redis
+      - KUNGFU_REDIS_PORT=6379
+
+  # 5. Game Server Shard 2 (Horizontal Scaling - Authoritative Game Engine)
+  gameserver-2:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: kungfu_gameserver_2
+    command: ["/app/gameserver_shard"]
+    restart: unless-stopped
+    depends_on:
+      - redis
+    environment:
+      - KUNGFU_SHARD_ID=gameserver-2
+      - KUNGFU_REDIS_HOST=redis
+      - KUNGFU_REDIS_PORT=6379
 
 volumes:
-  sqlite_data:
   redis_data:

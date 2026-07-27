@@ -1,8 +1,10 @@
+// server/network/Serializer.hpp
 #pragma once
 
 #include "server/network/NetworkMessages.hpp"
 #include "engine/actions/ActionRequest.hpp"
 #include "engine/actions/ActionResult.hpp"
+#include "engine/snapshot/MatchStateSnapshot.hpp"
 #include <string_view>
 #include <cstring>
 #include <cstdint>
@@ -15,15 +17,6 @@ namespace kungfu
     // Serializer
     //
     // Converts between in-memory objects and the network wire format.
-    //
-    // All protocol fields are serialized explicitly in Big-Endian order instead of
-    // copying structs with memcpy. This avoids compiler-dependent padding,
-    // alignment, and endianness issues, keeping the protocol portable across
-    // platforms and programming languages.
-    //
-    // Note: ActionResult is currently serialized with memcpy because it is an
-    // internal engine type shared by native C++ components. If it is ever exposed
-    // to external clients, it should receive explicit field-by-field serialization.
     // ============================================================================
     class Serializer
     {
@@ -67,8 +60,6 @@ namespace kungfu
         }
 
         // ---- Reading (Big-Endian) ----
-        // Every read function advances offset and returns false if there aren't
-        // enough bytes remaining.
 
         static bool readU8(const std::vector<std::uint8_t> &buf, std::size_t &offset, std::uint8_t &out)
         {
@@ -113,9 +104,7 @@ namespace kungfu
             return true;
         }
 
-        static bool readString(const std::vector<std::uint8_t> &buf,
-                               std::size_t &offset,
-                               std::string &out)
+        static bool readString(const std::vector<std::uint8_t> &buf, std::size_t &offset, std::string &out)
         {
             std::uint32_t length = 0;
             if (!readU32(buf, offset, length))
@@ -137,8 +126,7 @@ namespace kungfu
 
         // ---- Header + payload -> full frame ready to send ----
 
-        static std::vector<std::uint8_t> buildFrame(NetworkMessageType type,
-                                                    const std::vector<std::uint8_t> &payload)
+        static std::vector<std::uint8_t> buildFrame(NetworkMessageType type, const std::vector<std::uint8_t> &payload)
         {
             std::vector<std::uint8_t> frame;
             frame.reserve(kHeaderSize + payload.size());
@@ -171,8 +159,6 @@ namespace kungfu
             return buf;
         }
 
-        // Returns std::nullopt if the payload is malformed/too short, instead of
-        // silently reading garbage.
         static std::optional<NetworkMovePacket> deserializeMovePacket(const std::vector<std::uint8_t> &buf)
         {
             if (buf.size() != kMovePacketWireSize)
@@ -197,9 +183,6 @@ namespace kungfu
             return packet;
         }
 
-        // Translates a network packet into an engine action request.
-        // Note: in the Position constructor, the first parameter is row (y) and
-        // the second is col (x).
         static ActionRequest deserializeToRequest(const NetworkMovePacket &packet)
         {
             Position from(packet.from.y, packet.from.x);
@@ -214,7 +197,6 @@ namespace kungfu
         }
 
         // ---- ActionResult ----
-        // See the note at the top of this file regarding the shared-ABI assumption.
 
         static std::vector<std::uint8_t> serializeActionResult(const ActionResult &result)
         {
@@ -249,8 +231,6 @@ namespace kungfu
                    readString(buf, offset, outPassword);
         }
 
-        // ---- MATCH_FOUND Payload Serialization ----
-        // Encodes match ID, assigned color, opponent's username, and opponent's Elo rating.
         static std::vector<std::uint8_t> serializeMatchFound(std::uint64_t matchId, std::uint8_t color, std::string_view opponentUser, std::uint32_t opponentElo)
         {
             std::vector<std::uint8_t> buf;
@@ -261,11 +241,6 @@ namespace kungfu
             return buf;
         }
 
-        // ---- LOGIN_RESPONSE Payload Serialization ----
-        // success flag (1 byte), followed by [ELO rating (4 bytes) + one-time
-        // sessionToken (8 bytes)] only when authentication succeeded. The
-        // sessionToken is what the client presents in SESSION_BIND to attach
-        // its UDP realtime channel to this TCP-authenticated session.
         static std::vector<std::uint8_t> serializeLoginResponse(bool success, int rating, std::uint64_t sessionToken)
         {
             std::vector<std::uint8_t> buf;
@@ -296,10 +271,6 @@ namespace kungfu
             return true;
         }
 
-        // ---- SESSION_BIND Payload Serialization ----
-        // Carries only the sessionToken issued by LOGIN_RESPONSE, proving to
-        // the UDP server that this endpoint belongs to an already
-        // TCP-authenticated client.
         static std::vector<std::uint8_t> serializeSessionBind(std::uint64_t sessionToken)
         {
             std::vector<std::uint8_t> buf;
@@ -312,9 +283,10 @@ namespace kungfu
             std::size_t offset = 0;
             return readU64(buf, offset, outSessionToken);
         }
-    };
 
-    static std::vector<std::uint8_t> serializeMatchSnapshot(const MatchStateSnapshot &snap)
+        // ---- MatchStateSnapshot Serialization (High Performance Big-Endian) ----
+
+        static std::vector<std::uint8_t> serializeMatchSnapshot(const MatchStateSnapshot &snap)
         {
             std::vector<std::uint8_t> buf;
             buf.reserve(256 + snap.pieces.size() * 18 + snap.activeMotions.size() * 24);
@@ -482,5 +454,6 @@ namespace kungfu
             if (!ok) return std::nullopt;
             return snap;
         }
-        
+    };
+
 } // namespace kungfu

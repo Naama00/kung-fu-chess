@@ -1,4 +1,3 @@
-# CMakeLists.txt
 cmake_minimum_required(VERSION 3.16)
 
 project(kung_fu_chess LANGUAGES CXX)
@@ -15,6 +14,10 @@ if(MSVC)
     add_compile_options(/FS)
 endif()
 
+# Build toggles (Allows building headless server in Docker without GUI dependencies)
+option(BUILD_CLIENTS "Build graphical clients (SFML & OpenCV)" ON)
+option(BUILD_TESTS "Build Catch2 unit tests" ON)
+
 # ------------------------------------------------------------------------------
 # Dependencies
 # ------------------------------------------------------------------------------
@@ -27,33 +30,47 @@ if(NOT SFML_DIR)
     set(SFML_DIR "C:/SFML/lib/cmake/SFML")
 endif()
 
-# Find external visual, system and utility frameworks
-find_package(OpenCV REQUIRED)
-find_package(SFML 3 REQUIRED COMPONENTS Graphics Window System Audio)
-
-# Find SQLite3 (using standard CMake integration)
+# Find SQLite3
 find_package(SQLite3 REQUIRED)
 
-# Find libsodium (vcpkg exports libsodium as "unofficial-sodium" in CONFIG mode)
-find_package(unofficial-sodium CONFIG REQUIRED)
+# Portable libsodium discovery (vcpkg unofficial-sodium vs standard system libsodium)
+find_package(unofficial-sodium CONFIG QUIET)
+if(NOT unofficial-sodium_FOUND)
+    find_library(SODIUM_LIB NAMES sodium libsodium REQUIRED)
+    find_path(SODIUM_INCLUDE_DIR NAMES sodium.h REQUIRED)
+    add_library(unofficial-sodium::sodium UNKNOWN IMPORTED)
+    set_target_properties(unofficial-sodium::sodium PROPERTIES
+        IMPORTED_LOCATION "${SODIUM_LIB}"
+        INTERFACE_INCLUDE_DIRECTORIES "${SODIUM_INCLUDE_DIR}"
+    )
+endif()
+
+# Find GUI dependencies only if building clients
+if(BUILD_CLIENTS)
+    find_package(OpenCV REQUIRED)
+    find_package(SFML 3 REQUIRED COMPONENTS Graphics Window System Audio)
+endif()
 
 # Setup unit-testing framework (Catch2)
-include(FetchContent)
-FetchContent_Declare(
-    Catch2
-    GIT_REPOSITORY https://github.com/catchorg/Catch2.git
-    GIT_TAG v3.7.1
-)
-FetchContent_MakeAvailable(Catch2)
+if(BUILD_TESTS)
+    include(FetchContent)
+    FetchContent_Declare(
+        Catch2
+        GIT_REPOSITORY https://github.com/catchorg/Catch2.git
+        GIT_TAG v3.7.1
+    )
+    FetchContent_MakeAvailable(Catch2)
+endif()
 
 # ------------------------------------------------------------------------------
-# Source File Globbing (Keeps build script clean and dynamically updated)
+# Source File Globbing
 # ------------------------------------------------------------------------------
 
+# Core engine and domain logic files (Supports both src/ prefix and root-level structures)
 file(GLOB_RECURSE ENGINE_SOURCES CONFIGURE_DEPENDS
-    src/engine/*.cpp
-    src/players/*.cpp
-    src/ui/*.cpp
+    engine/*.cpp       src/engine/*.cpp
+    players/*.cpp      src/players/*.cpp
+    ui/*.cpp           src/ui/*.cpp
 )
 
 file(GLOB_RECURSE TEST_SOURCES CONFIGURE_DEPENDS
@@ -61,18 +78,18 @@ file(GLOB_RECURSE TEST_SOURCES CONFIGURE_DEPENDS
 )
 
 file(GLOB_RECURSE OPENCV_BACKEND_SOURCES CONFIGURE_DEPENDS
-    src/graphics/opencv/*.cpp
+    graphics/opencv/*.cpp src/graphics/opencv/*.cpp
 )
 
 file(GLOB_RECURSE SFML_BACKEND_SOURCES CONFIGURE_DEPENDS
-    src/graphics/sfml/*.cpp
+    graphics/sfml/*.cpp   src/graphics/sfml/*.cpp
 )
 
-# Globbing all server implementation files (excluding main.cpp to prevent link errors in tests)
+# Server core implementation files (Excluding main entry points in cmd/)
 file(GLOB_RECURSE SERVER_CORE_SOURCES CONFIGURE_DEPENDS
-    src/server/network/*.cpp
-    src/server/match/*.cpp
-    src/server/persistence/*.cpp
+    server/network/*.cpp     src/server/network/*.cpp
+    server/match/*.cpp       src/server/match/*.cpp
+    server/persistence/*.cpp src/server/persistence/*.cpp
 )
 
 # ------------------------------------------------------------------------------
@@ -80,17 +97,15 @@ file(GLOB_RECURSE SERVER_CORE_SOURCES CONFIGURE_DEPENDS
 # ------------------------------------------------------------------------------
 
 add_library(kungfu_engine ${ENGINE_SOURCES})
-target_include_directories(kungfu_engine PUBLIC src ${Boost_INCLUDE_DIR})
+target_include_directories(kungfu_engine PUBLIC . src ${Boost_INCLUDE_DIR})
 
 # ------------------------------------------------------------------------------
-# Target 2: Server Core Library (Decoupled Shared State - DRY Principle)
+# Target 2: Server Core Library (Shared across all microservices)
 # ------------------------------------------------------------------------------
 
 add_library(kungfu_server_core STATIC ${SERVER_CORE_SOURCES})
-target_include_directories(kungfu_server_core PUBLIC src/server)
+target_include_directories(kungfu_server_core PUBLIC . src src/server server)
 
-# Propagate dependencies automatically to anyone linking against the server core
-# Using the unofficial-sodium::sodium target exported by vcpkg
 target_link_libraries(kungfu_server_core PUBLIC 
     kungfu_engine 
     SQLite::SQLite3 
@@ -98,94 +113,123 @@ target_link_libraries(kungfu_server_core PUBLIC
 )
 
 # ------------------------------------------------------------------------------
-# Target 3: Server Executable (Uses the shared Server Core)
+# Target 3: Microservices Executables (Distributed Architecture)
 # ------------------------------------------------------------------------------
 
-add_executable(kungfu_server src/server/main.cpp)
-target_link_libraries(kungfu_server PRIVATE kungfu_server_core)
+# Helper logic to auto-detect whether cmd/ is placed inside src/server/cmd or server/cmd
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/src/server/cmd/gateway_main.cpp")
+    set(CMD_DIR "src/server/cmd")
+else()
+    set(CMD_DIR "server/cmd")
+endif()
+
+# 3a. API & Realtime Gateway Service
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/${CMD_DIR}/gateway_main.cpp")
+    add_executable(gateway_service ${CMD_DIR}/gateway_main.cpp)
+    target_link_libraries(gateway_service PRIVATE kungfu_server_core)
+endif()
+
+# 3b. Matchmaker & Game Allocator Service
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/${CMD_DIR}/matchmaker_main.cpp")
+    add_executable(matchmaker_service ${CMD_DIR}/matchmaker_main.cpp)
+    target_link_libraries(matchmaker_service PRIVATE kungfu_server_core)
+endif()
+
+# 3c. Authoritative Game Server Shard Executable
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/${CMD_DIR}/gameserver_main.cpp")
+    add_executable(gameserver_shard ${CMD_DIR}/gameserver_main.cpp)
+    target_link_libraries(gameserver_shard PRIVATE kungfu_server_core)
+endif()
+
+# 3d. Legacy Monolithic Server (For backwards compatibility/testing)
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/src/server/main.cpp")
+    add_executable(kungfu_server src/server/main.cpp)
+    target_link_libraries(kungfu_server PRIVATE kungfu_server_core)
+elseif(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/server/main.cpp")
+    add_executable(kungfu_server server/main.cpp)
+    target_link_libraries(kungfu_server PRIVATE kungfu_server_core)
+endif()
 
 # ------------------------------------------------------------------------------
-# Target 4: Game Tests Executable (Lego-like clean inclusion of Server Core)
+# Optional Target 4: Unit Tests
 # ------------------------------------------------------------------------------
 
-add_executable(kungfu_tests ${TEST_SOURCES})
+if(BUILD_TESTS)
+    add_executable(kungfu_tests ${TEST_SOURCES})
 
-target_link_libraries(kungfu_tests PRIVATE
-    kungfu_engine
-    kungfu_server_core
-    Catch2::Catch2WithMain
-)
-
-enable_testing()
-add_test(NAME unit_tests COMMAND kungfu_tests)
-
-# ------------------------------------------------------------------------------
-# Target 5: OpenCV Client Executable
-# ------------------------------------------------------------------------------
-
-add_executable(kungfu_game_opencv
-    src/app/main_opencv.cpp
-    ${OPENCV_BACKEND_SOURCES}
-)
-
-target_include_directories(kungfu_game_opencv PRIVATE
-    src
-    ${OpenCV_INCLUDE_DIRS}
-)
-
-target_link_libraries(kungfu_game_opencv PRIVATE
-    kungfu_engine
-    ${OpenCV_LIBS}
-)
-
-# ------------------------------------------------------------------------------
-# Target 6: SFML Client Executable
-# ------------------------------------------------------------------------------
-
-add_executable(kungfu_game_sfml
-    src/app/main_sfml.cpp
-    ${SFML_BACKEND_SOURCES}
-)
-
-target_include_directories(kungfu_game_sfml PRIVATE src)
-
-target_link_libraries(kungfu_game_sfml PRIVATE
-    kungfu_engine
-    SFML::Graphics
-    SFML::Window
-    SFML::System
-    SFML::Audio
-)
-
-# ------------------------------------------------------------------------------
-# Windows DLL Post-Build Copy Actions
-# ------------------------------------------------------------------------------
-
-if(WIN32)
-    file(GLOB OPENCV_DLLS
-        "${OpenCV_DIR}/x64/vc16/bin/opencv_world*.dll"
+    target_link_libraries(kungfu_tests PRIVATE
+        kungfu_engine
+        kungfu_server_core
+        Catch2::Catch2WithMain
     )
 
-    foreach(dll ${OPENCV_DLLS})
-        add_custom_command(TARGET kungfu_game_opencv POST_BUILD
-            COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                "${dll}"
-                $<TARGET_FILE_DIR:kungfu_game_opencv>
-        )
-    endforeach()
+    enable_testing()
+    add_test(NAME unit_tests COMMAND kungfu_tests)
+endif()
 
-    if(SFML_DIR)
-        file(GLOB SFML_DLLS
-            "${SFML_DIR}/../../bin/sfml-*.dll"
-            "${SFML_DIR}/bin/sfml-*.dll"
-        )
+# ------------------------------------------------------------------------------
+# Optional Targets 5 & 6: Graphical Clients
+# ------------------------------------------------------------------------------
 
-        foreach(dll ${SFML_DLLS})
-            add_custom_command(TARGET kungfu_game_sfml POST_BUILD
-                COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                    "${dll}"
-                    $<TARGET_FILE_DIR:kungfu_game_sfml>
+if(BUILD_CLIENTS)
+    # Determine OpenCV app entry path
+    if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/src/app/main_opencv.cpp")
+        set(OPENCV_MAIN "src/app/main_opencv.cpp")
+    else()
+        set(OPENCV_MAIN "app/main_opencv.cpp")
+    endif()
+
+    add_executable(kungfu_game_opencv
+        ${OPENCV_MAIN}
+        ${OPENCV_BACKEND_SOURCES}
+    )
+
+    target_include_directories(kungfu_game_opencv PRIVATE
+        . src ${OpenCV_INCLUDE_DIRS}
+    )
+
+    target_link_libraries(kungfu_game_opencv PRIVATE
+        kungfu_engine
+        ${OpenCV_LIBS}
+    )
+
+    # Determine SFML app entry path
+    if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/src/app/main_sfml.cpp")
+        set(SFML_MAIN "src/app/main_sfml.cpp")
+    else()
+        set(SFML_MAIN "app/main_sfml.cpp")
+    endif()
+
+    add_executable(kungfu_game_sfml
+        ${SFML_MAIN}
+        ${SFML_BACKEND_SOURCES}
+    )
+
+    target_include_directories(kungfu_game_sfml PRIVATE . src)
+
+    target_link_libraries(kungfu_game_sfml PRIVATE
+        kungfu_engine
+        SFML::Graphics
+        SFML::Window
+        SFML::System
+        SFML::Audio
+    )
+
+    if(WIN32)
+        file(GLOB OPENCV_DLLS "${OpenCV_DIR}/x64/vc16/bin/opencv_world*.dll")
+        foreach(dll ${OPENCV_DLLS})
+            add_custom_command(TARGET kungfu_game_opencv POST_BUILD
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different "${dll}" $<TARGET_FILE_DIR:kungfu_game_opencv>
             )
         endforeach()
+
+        if(SFML_DIR)
+            file(GLOB SFML_DLLS "${SFML_DIR}/../../bin/sfml-*.dll" "${SFML_DIR}/bin/sfml-*.dll")
+            foreach(dll ${SFML_DLLS})
+                add_custom_command(TARGET kungfu_game_sfml POST_BUILD
+                    COMMAND ${CMAKE_COMMAND} -E copy_if_different "${dll}" $<TARGET_FILE_DIR:kungfu_game_sfml>
+                )
+            endforeach()
+        endif()
     endif()
 endif()

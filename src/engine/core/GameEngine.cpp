@@ -3,8 +3,11 @@
 #include "engine/events/IGameObserver.hpp"
 #include "engine/analysis/PositionEvaluator.hpp"
 #include "engine/common/GameConfig.hpp"
+#include "engine/board/Board.hpp"   
+#include "engine/board/Piece.hpp" 
 #include <algorithm>
 #include <cmath>
+#include <unordered_map>  
 
 namespace kungfu {
 
