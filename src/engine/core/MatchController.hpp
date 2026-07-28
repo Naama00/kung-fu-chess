@@ -13,12 +13,12 @@
 #include "engine/rules/PromotionRules.hpp"
 #include "engine/rules/RuleEngine.hpp"
 #include "engine/snapshot/GameSnapshot.hpp"
+#include "engine/events/EventBus.hpp"
 #include "players/IPlayer.hpp"
 #include "players/ai/IAIDecisionStrategy.hpp"
 #include "players/human/HumanPlayer.hpp"
 #include "players/network/NetworkPlayer.hpp"
 #include "players/network/NetworkSession.hpp"
-#include "ui/framework/EventBus.hpp"
 
 #include <boost/asio.hpp>
 #include <future>

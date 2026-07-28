@@ -1,4 +1,4 @@
-// ui/framework/EventBus.hpp
+// engine/events/EventBus.hpp
 #pragma once
 #include <functional>
 #include <typeindex>

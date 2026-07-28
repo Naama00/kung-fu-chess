@@ -1,6 +1,5 @@
 // core/engine/GameEngine.cpp
 #include "engine/core/GameEngine.hpp"
-#include "engine/events/IGameObserver.hpp"
 #include "engine/analysis/PositionEvaluator.hpp"
 #include "engine/common/GameConfig.hpp"
 #include "engine/board/Board.hpp"   
@@ -176,10 +175,6 @@ void GameEngine::wait(int ms) noexcept {
             int blackScore = -whiteScore;
             eventBus_->publish(ScoreChangedEvent{whiteScore, blackScore});
         }
-
-        for (auto& observer : observers_) {
-            observer->onMoveCompleted(event, currentTimeMs_);
-        }
     }
     if (config_.enablePremoves && !gameOver_) {
         premoveFailures_.clear();
@@ -193,12 +188,6 @@ void GameEngine::wait(int ms) noexcept {
                 return result;
             }
         );
-    }
-}
-
-void GameEngine::addObserver(std::shared_ptr<IGameObserver> observer) noexcept {
-    if (observer) {
-        observers_.push_back(observer);
     }
 }
 

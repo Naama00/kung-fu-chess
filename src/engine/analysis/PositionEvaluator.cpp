@@ -70,20 +70,9 @@ int PositionEvaluator::evaluateBalance(const IBoard& board, const RealTimeArbite
     int whiteMaterial = 0;
     int blackMaterial = 0;
 
-    auto getOldValue = [](PieceType type) {
-        switch (type) {
-            case PieceType::Pawn:   return 1;
-            case PieceType::Knight: return 3;
-            case PieceType::Bishop: return 3;
-            case PieceType::Rook:   return 5;
-            case PieceType::Queen:  return 9;
-            default:                return 0;
-        }
-    };
-
     for (const auto& piece : board.pieces()) {
         if (piece && piece->state() != PieceState::Captured) {
-            int val = getOldValue(piece->type());
+            int val = PieceValues::getStandardValue(piece->type());
             if (piece->color() == PlayerColor::White) {
                 whiteMaterial += val;
             } else {
@@ -95,7 +84,7 @@ int PositionEvaluator::evaluateBalance(const IBoard& board, const RealTimeArbite
     for (const auto& motion : arbiter.activeMotions()) {
         auto piece = motion.piece();
         if (piece && piece->state() == PieceState::Airborne) {
-            int val = getOldValue(piece->type());
+            int val = PieceValues::getStandardValue(piece->type());
             if (piece->color() == PlayerColor::White) {
                 whiteMaterial += val;
             } else {
