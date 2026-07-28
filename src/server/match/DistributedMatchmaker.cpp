@@ -79,61 +79,86 @@ bool DistributedMatchmaker::sendCommand(const std::vector<std::string>& args, st
     return true;
 }
 
-bool DistributedMatchmaker::addWaitingPlayer(const std::string& username, int rating,
-                                             std::uint64_t roomCode, const std::string& serverAddr) {
-    std::lock_guard<std::mutex> lock(m_mutex);
-    std::string response;
-
-    std::string poolKey = (roomCode != 0) ? ("mm:room:" + std::to_string(roomCode)) : "mm:public";
-    std::string value = username + ":" + std::to_string(rating) + ":" + serverAddr;
-
-    sendCommand({"SADD", poolKey, value}, response);
-    return true;
-}
-
-bool DistributedMatchmaker::removeWaitingPlayer(const std::string& username) {
-    std::lock_guard<std::mutex> lock(m_mutex);
-    std::string response;
-
-    sendCommand({"SREM", "mm:public", username}, response);
-    return true;
-}
-
 std::vector<MatchedPair> DistributedMatchmaker::pollMatchedPairs() {
     std::lock_guard<std::mutex> lock(m_mutex);
     std::vector<MatchedPair> pairs;
     std::string response;
 
-    // Atomically pop up to 2 waiting players from Redis pool
-    if (sendCommand({"SPOP", "mm:public", "2"}, response)) {
-        if (response.rfind("*", 0) == 0) {
-            int count = std::stoi(response.substr(1));
-            std::vector<std::string> players;
+    // 1. Atomically pop up to 2 waiting player raw elements from Redis set
+    if (!sendCommand({"SPOP", "mm:public", "2"}, response)) {
+        return pairs; // Network command failed, m_connected was handled in sendCommand
+    }
 
-            for (int i = 0; i < count; ++i) {
-                boost::asio::streambuf buf;
-                boost::system::error_code ec;
-                boost::asio::read_until(m_socket, buf, "\r\n", ec);
-                boost::asio::read_until(m_socket, buf, "\r\n", ec);
-                std::istream is(&buf);
-                std::string header, val;
-                std::getline(is, header);
-                std::getline(is, val);
-                if (!val.empty() && val.back() == '\r') val.pop_back();
-                
-                std::size_t colonPos = val.find(':');
-                if (colonPos != std::string::npos) {
-                    players.push_back(val.substr(0, colonPos));
-                }
-            }
+    // RESP Array response starts with '*' (e.g., "*2\r\n" or "*0\r\n")
+    if (response.rfind("*", 0) != 0) {
+        return pairs;
+    }
 
-            if (players.size() == 2) {
-                pairs.push_back({players[0], players[1], 0});
-            } else if (players.size() == 1) {
-                // Re-add unmatched single player back to pool
-                sendCommand({"SADD", "mm:public", players[0]}, response);
-            }
+    int count = 0;
+    try {
+        count = std::stoi(response.substr(1));
+    } catch (...) {
+        return pairs;
+    }
+
+    // Documented edge case: Queue is empty, return promptly
+    if (count <= 0) {
+        return pairs;
+    }
+
+    std::vector<std::string> rawValues;
+    std::vector<std::string> parsedUsernames;
+    rawValues.reserve(count);
+    parsedUsernames.reserve(count);
+
+    for (int i = 0; i < count; ++i) {
+        boost::asio::streambuf buf;
+        boost::system::error_code ec;
+
+        // Read Bulk String Header ($<length>\r\n)
+        boost::asio::read_until(m_socket, buf, "\r\n", ec);
+        if (ec) {
+            m_connected = false;
+            break;
         }
+
+        // Read Actual String Value (<payload>\r\n)
+        boost::asio::read_until(m_socket, buf, "\r\n", ec);
+        if (ec) {
+            m_connected = false;
+            break;
+        }
+
+        std::istream is(&buf);
+        std::string header, val;
+        std::getline(is, header);
+        std::getline(is, val);
+        if (!val.empty() && val.back() == '\r') {
+            val.pop_back();
+        }
+
+        // Parse format "username:rating:serverAddr"
+        std::size_t colonPos = val.find(':');
+        if (colonPos != std::string::npos) {
+            std::string username = val.substr(0, colonPos);
+            if (!username.empty()) {
+                rawValues.push_back(val);              // Keep full original string for rollback
+                parsedUsernames.push_back(username);   // Extract clean username
+            }
+        } else {
+            std::cerr << "[Matchmaker] Warning: Malformed player value in Redis queue: " << val << std::endl;
+        }
+    }
+
+    // Evaluate results and handle match pairing or rollback
+    if (parsedUsernames.size() == 2) {
+        // Matched pair created! roomCode = 0 denotes a public matchmaking pair.
+        pairs.push_back({parsedUsernames[0], parsedUsernames[1], 0});
+    } 
+    else if (parsedUsernames.size() == 1) {
+        // Only 1 player popped (or 2nd failed parsing/network error). 
+        // Rollback: Re-add original full raw value ("username:rating:serverAddr") back to pool
+        sendCommand({"SADD", "mm:public", rawValues[0]}, response);
     }
 
     return pairs;

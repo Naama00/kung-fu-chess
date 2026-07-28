@@ -226,100 +226,24 @@ docker-compose up --build -d
 - `kungfu_gameserver_1`: Authoritative Game Server Shard #1 (`gameserver-1`).
 - `kungfu_gameserver_2`: Authoritative Game Server Shard #2 (`gameserver-2`).
 
-### docker-compose.yml (excerpt)
+### Container Orchestration Configuration (Excerpt)
+
+For local orchestration, `docker-compose` spins up the persistent infrastructure alongside microservices. Below is an excerpt illustrating service dependencies and environment configuration:
 
 ```yaml
-services:
-  # 1a. Central Redis Store & PubSub Messenger
-  redis:
-    image: redis:7-alpine
-    container_name: kungfu_chess_redis
-    restart: unless-stopped
-    ports:
-      - "6379:6379"
-    volumes:
-      - redis_data:/data
-
-  # 1b. Central PostgreSQL Database for User Persistence
-  postgres:
-    image: postgres:15-alpine
-    container_name: kungfu_chess_postgres
-    restart: unless-stopped
-    environment:
-      - POSTGRES_DB=kungfu
-      - POSTGRES_USER=postgres
-      - POSTGRES_PASSWORD=postgres
-    ports:
-      - "5432:5432"
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-
-  # 2. API & Realtime Gateway Service (Entry point for clients)
   gateway:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    container_name: kungfu_gateway
+    build: .
     command: ["/app/gateway_service"]
-    restart: unless-stopped
     depends_on:
-      - redis
-      - postgres
+      redis:
+        condition: service_started
+      postgres:
+        condition: service_healthy
     ports:
       - "8080:8080/tcp"
       - "8080:8080/udp"
     environment:
-      - KUNGFU_TCP_PORT=8080
-      - KUNGFU_UDP_PORT=8080
       - KUNGFU_REDIS_HOST=redis
-      - KUNGFU_REDIS_PORT=6379
       - KUNGFU_POSTGRES_CONN=host=postgres port=5432 dbname=kungfu user=postgres password=postgres
 
-  # 3. Matchmaker & Game Allocator Service
-  matchmaker:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    container_name: kungfu_matchmaker
-    command: ["/app/matchmaker_service"]
-    restart: unless-stopped
-    depends_on:
-      - redis
-    environment:
-      - KUNGFU_REDIS_HOST=redis
-      - KUNGFU_REDIS_PORT=6379
-
-  # 4. Game Server Shard 1 (Authoritative Game Engine)
-  gameserver-1:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    container_name: kungfu_gameserver_1
-    command: ["/app/gameserver_shard"]
-    restart: unless-stopped
-    depends_on:
-      - redis
-    environment:
-      - KUNGFU_SHARD_ID=gameserver-1
-      - KUNGFU_REDIS_HOST=redis
-      - KUNGFU_REDIS_PORT=6379
-
-  # 5. Game Server Shard 2 (Horizontal Scaling - Authoritative Game Engine)
-  gameserver-2:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    container_name: kungfu_gameserver_2
-    command: ["/app/gameserver_shard"]
-    restart: unless-stopped
-    depends_on:
-      - redis
-    environment:
-      - KUNGFU_SHARD_ID=gameserver-2
-      - KUNGFU_REDIS_HOST=redis
-      - KUNGFU_REDIS_PORT=6379
-
-volumes:
-  redis_data:
-  postgres_data:
-```
+      
