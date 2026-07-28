@@ -7,7 +7,7 @@
 #include "network/SessionManager.hpp"
 #include "match/MatchManager.hpp"
 #include "persistence/SqliteUserRepository.hpp"
-#include "persistence/RedisUserRepository.hpp"
+#include "persistence/PostgresUserRepository.hpp"
 #include "persistence/PasswordHasher.hpp"
 #include "ServerConfig.hpp"
 
@@ -21,12 +21,11 @@ int main() {
 
         std::shared_ptr<kungfu::IUserRepository> userRepository;
 
-        if (dbType == "redis") {
-            std::string redisConn = kungfu::ServerConfig::getRedisHost() + ":" + 
-                                    std::to_string(kungfu::ServerConfig::getRedisPort());
-            userRepository = std::make_shared<kungfu::RedisUserRepository>();
-            if (!userRepository->initialize(redisConn)) {
-                std::cerr << "Redis Repository initialization failed! Exiting." << std::endl;
+        if (dbType == "postgres") {
+            std::string postgresConn = kungfu::ServerConfig::getPostgresConn();
+            userRepository = std::make_shared<kungfu::PostgresUserRepository>();
+            if (!userRepository->initialize(postgresConn)) {
+                std::cerr << "PostgreSQL Repository initialization failed! Exiting." << std::endl;
                 return 1;
             }
         } else {

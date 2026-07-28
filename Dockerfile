@@ -3,7 +3,7 @@ FROM ubuntu:22.04 AS builder
 
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Install essential server build tools only
+# Install essential server build tools and database libraries
 RUN apt-get update && apt-get install -y \
     build-essential \
     cmake \
@@ -11,6 +11,8 @@ RUN apt-get update && apt-get install -y \
     libboost-thread-dev \
     libsodium-dev \
     libsqlite3-dev \
+    libpqxx-dev \
+    libpq-dev \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
@@ -33,6 +35,8 @@ RUN apt-get update && apt-get install -y \
     libboost-system1.74.0 \
     libsodium23 \
     libsqlite3-0 \
+    libpqxx-6.4 \
+    libpq5 \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
@@ -50,6 +54,7 @@ ENV KUNGFU_REDIS_HOST=redis
 ENV KUNGFU_REDIS_PORT=6379
 ENV KUNGFU_TCP_PORT=8080
 ENV KUNGFU_UDP_PORT=8080
+ENV KUNGFU_POSTGRES_CONN="host=postgres port=5432 dbname=kungfu user=postgres password=postgres"
 
 EXPOSE 8080/tcp
 EXPOSE 8080/udp

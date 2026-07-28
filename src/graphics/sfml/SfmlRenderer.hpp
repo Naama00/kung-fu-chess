@@ -127,9 +127,6 @@ public:
     }
 
     void beginFrame() override {
-        // ----------------------------------------------------
-        // Fix for the ghosting issue when stretching the screen (Pillarbox Ghosting)
-        // ----------------------------------------------------
         // 1. Reset the View to default to clear the entire physical window area (including borders)
         m_window.setView(m_window.getDefaultView());
         m_window.clear(sf::Color::Black); // Completely clear the entire buffer

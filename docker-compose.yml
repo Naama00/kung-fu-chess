@@ -1,15 +1,22 @@
-version: '3.8'
-
 services:
-  # 1. Central Redis Store & PubSub Messenger
-  redis:
-    image: redis:7-alpine
-    container_name: kungfu_chess_redis
+# 1b. Central PostgreSQL Database for User Persistence
+  postgres:
+    image: postgres:15-alpine
+    container_name: kungfu_chess_postgres
     restart: unless-stopped
+    environment:
+      - POSTGRES_DB=kungfu
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
     ports:
-      - "6379:6379"
+      - "5432:5432"
     volumes:
-      - redis_data:/data
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d kungfu"]
+      interval: 3s
+      timeout: 3s
+      retries: 5
 
   # 2. API & Realtime Gateway Service (Entry point for clients)
   gateway:
@@ -20,7 +27,10 @@ services:
     command: ["/app/gateway_service"]
     restart: unless-stopped
     depends_on:
-      - redis
+      redis:
+        condition: service_started
+      postgres:
+        condition: service_healthy
     ports:
       - "8080:8080/tcp"
       - "8080:8080/udp"
@@ -29,7 +39,8 @@ services:
       - KUNGFU_UDP_PORT=8080
       - KUNGFU_REDIS_HOST=redis
       - KUNGFU_REDIS_PORT=6379
-
+      - KUNGFU_POSTGRES_CONN=host=postgres port=5432 dbname=kungfu user=postgres password=postgres
+      
   # 3. Matchmaker & Game Allocator Service
   matchmaker:
     build:
@@ -76,3 +87,4 @@ services:
 
 volumes:
   redis_data:
+  postgres_data:

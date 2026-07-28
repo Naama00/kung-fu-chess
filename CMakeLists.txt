@@ -33,6 +33,30 @@ endif()
 # Find SQLite3
 find_package(SQLite3 REQUIRED)
 
+# Find PostgreSQL C & C++ libraries (libpq & libpqxx)
+find_package(PostgreSQL REQUIRED)
+
+find_package(libpqxx CONFIG QUIET)
+if(NOT libpqxx_FOUND)
+    find_package(pqxx CONFIG QUIET)
+endif()
+
+if(TARGET libpqxx::pqxx)
+    set(PQXX_TARGET libpqxx::pqxx)
+elseif(TARGET pqxx)
+    set(PQXX_TARGET pqxx)
+else()
+    find_library(PQXX_LIB NAMES pqxx REQUIRED)
+    find_path(PQXX_INCLUDE_DIR NAMES pqxx/pqxx REQUIRED)
+    add_library(pqxx_imported UNKNOWN IMPORTED)
+    set_target_properties(pqxx_imported PROPERTIES
+        IMPORTED_LOCATION "${PQXX_LIB}"
+        INTERFACE_INCLUDE_DIRECTORIES "${PQXX_INCLUDE_DIR}"
+        INTERFACE_LINK_LIBRARIES "PostgreSQL::PostgreSQL"
+    )
+    set(PQXX_TARGET pqxx_imported)
+endif()
+
 # Portable libsodium discovery (vcpkg unofficial-sodium vs standard system libsodium)
 find_package(unofficial-sodium CONFIG QUIET)
 if(NOT unofficial-sodium_FOUND)
@@ -110,6 +134,8 @@ target_link_libraries(kungfu_server_core PUBLIC
     kungfu_engine 
     SQLite::SQLite3 
     unofficial-sodium::sodium
+    PostgreSQL::PostgreSQL
+    ${PQXX_TARGET}
 )
 
 # ------------------------------------------------------------------------------
