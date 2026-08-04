@@ -8,6 +8,7 @@
 #include <vector>
 #include <chrono>
 #include <utility>
+#include <atomic>
 #include "server/persistence/IUserRepository.hpp"
 #include "server/persistence/PasswordHasher.hpp"
 #include "server/network/NetworkMessages.hpp"
@@ -36,8 +37,10 @@ public:
 
 private:
     std::unordered_map<std::uint64_t, std::shared_ptr<LiveMatch>> m_matches;
-    std::uint64_t m_nextMatchId = 1;
-    std::mutex m_mutex;
+    
+    // Atomic match counter for lock-free ID generation
+    std::atomic<std::uint64_t> m_nextMatchId{1};
+    mutable std::mutex m_mutex;
 
     std::vector<WaitingPlayer> m_waitingPool;
 
@@ -49,8 +52,8 @@ private:
 
     std::shared_ptr<DistributedMatchmaker> m_distributedMatchmaker;
     std::shared_ptr<RedisSessionRegistry> m_sessionRegistry;
+
 public:
-    // Default arguments ensure backward compatibility with tests using InMemory instances
     explicit MatchManager(boost::asio::io_context& ioContext,
                          std::shared_ptr<IUserRepository> userRepo = nullptr,
                          std::shared_ptr<IPasswordHasher> passwordHasher = nullptr);
@@ -73,18 +76,19 @@ public:
         m_sessionRegistry = std::make_shared<RedisSessionRegistry>();
         m_sessionRegistry->initialize(redisHost, redisPort);
     }
+
 private:
     void scheduleMatchmakingTick();
     void runMatchmakingCycle();
     void processMatchResultsAndElo(std::shared_ptr<LiveMatch> match);
 
-    // Helpers
-    void removeFromWaitingPool(const std::shared_ptr<PlayerSession>& session);
+    // Private thread-safe internal helpers (assumes caller holds lock if specified)
+    void removeFromWaitingPoolInternal(const std::shared_ptr<PlayerSession>& session);
+    
     bool tryReconnectExistingMatch(const std::shared_ptr<PlayerSession>& session);
     void detachFromCurrentMatch(const std::shared_ptr<PlayerSession>& session);
     std::pair<double, double> calculateMatchScores(const std::shared_ptr<LiveMatch>& match) const;
 
-    void removeTimedOutPlayers(std::chrono::steady_clock::time_point now);
     bool canPairPlayers(const WaitingPlayer& p1, const WaitingPlayer& p2, int waitDurationSec) const;
     bool isPrivateRoomMatch(const WaitingPlayer& p1, const WaitingPlayer& p2) const;
     bool isRatedMatch(const WaitingPlayer& p1, const WaitingPlayer& p2, int waitDurationSec) const;

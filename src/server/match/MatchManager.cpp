@@ -33,7 +33,8 @@ void MatchManager::scheduleMatchmakingTick() {
     });
 }
 
-void MatchManager::removeFromWaitingPool(const std::shared_ptr<PlayerSession>& session) {
+// Internal helper operating on m_waitingPool (Caller MUST hold m_mutex)
+void MatchManager::removeFromWaitingPoolInternal(const std::shared_ptr<PlayerSession>& session) {
     auto it = std::remove_if(m_waitingPool.begin(), m_waitingPool.end(),
         [&session](const WaitingPlayer& wp) {
             if (!wp.session || wp.session == session) return true;
@@ -100,21 +101,33 @@ void MatchManager::processMatchResultsAndElo(std::shared_ptr<LiveMatch> match) {
 }
 
 bool MatchManager::tryReconnectExistingMatch(const std::shared_ptr<PlayerSession>& session) {
-    if (session->username().empty()) return false;
+    if (!session || session->username().empty()) return false;
 
-    for (const auto& pair : m_matches) {
-        auto match = pair.second;
-        if (!match || match->hasEnded()) continue;
+    std::shared_ptr<LiveMatch> targetMatch;
+    
+    // Minimal lock scope: find active match and update pool internally
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        for (const auto& pair : m_matches) {
+            auto match = pair.second;
+            if (!match || match->hasEnded()) continue;
 
-        bool isWhiteReconnect = match->isWhiteDisconnected() && match->whiteUsername() == session->username();
-        bool isBlackReconnect = match->isBlackDisconnected() && match->blackUsername() == session->username();
-        if (isWhiteReconnect || isBlackReconnect) {
-            match->reconnectPlayer(session);
-            removeFromWaitingPool(session);
-            std::cout << "[MatchManager] Reconnected " << session->username()
-                      << " to match " << match->matchId() << std::endl;
-            return true;
+            bool isWhiteReconnect = match->isWhiteDisconnected() && match->whiteUsername() == session->username();
+            bool isBlackReconnect = match->isBlackDisconnected() && match->blackUsername() == session->username();
+            if (isWhiteReconnect || isBlackReconnect) {
+                targetMatch = match;
+                removeFromWaitingPoolInternal(session);
+                break;
+            }
         }
+    }
+
+    // Perform reconnection outside the manager lock
+    if (targetMatch) {
+        targetMatch->reconnectPlayer(session);
+        std::cout << "[MatchManager] Reconnected " << session->username()
+                  << " to match " << targetMatch->matchId() << std::endl;
+        return true;
     }
     return false;
 }
@@ -122,9 +135,18 @@ bool MatchManager::tryReconnectExistingMatch(const std::shared_ptr<PlayerSession
 void MatchManager::detachFromCurrentMatch(const std::shared_ptr<PlayerSession>& session) {
     std::uint64_t currentMatchId = session->matchId();
     if (currentMatchId != 0) {
-        auto matchIt = m_matches.find(currentMatchId);
-        if (matchIt != m_matches.end() && !matchIt->second->hasEnded()) {
-            matchIt->second->handlePlayerDisconnect(session);
+        std::shared_ptr<LiveMatch> activeMatch;
+        {
+            std::lock_guard<std::mutex> lock(m_mutex);
+            auto matchIt = m_matches.find(currentMatchId);
+            if (matchIt != m_matches.end() && !matchIt->second->hasEnded()) {
+                activeMatch = matchIt->second;
+            }
+        }
+        
+        // Notify active match outside the manager lock
+        if (activeMatch) {
+            activeMatch->handlePlayerDisconnect(session);
         }
         session->setMatchId(0);
     }
@@ -132,9 +154,6 @@ void MatchManager::detachFromCurrentMatch(const std::shared_ptr<PlayerSession>& 
 
 void MatchManager::registerPlayer(std::shared_ptr<PlayerSession> session, std::uint64_t roomCode) {
     if (!session) return;
-    std::lock_guard<std::mutex> lock(m_mutex);
-
-    removeFromWaitingPool(session);
 
     if (tryReconnectExistingMatch(session)) {
         return;
@@ -142,11 +161,18 @@ void MatchManager::registerPlayer(std::shared_ptr<PlayerSession> session, std::u
 
     detachFromCurrentMatch(session);
 
-    m_waitingPool.push_back({session, std::chrono::steady_clock::now(), session->rating(), roomCode});
+    // Minimal lock scope for pool registration
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        removeFromWaitingPoolInternal(session);
+        m_waitingPool.push_back({session, std::chrono::steady_clock::now(), session->rating(), roomCode});
+    }
+
+    // Console logging performed outside the lock
     std::cout << "[Lobby] Player " << (session->username().empty() ? "Guest" : session->username())
               << " entered matchmaking. (ELO: " << session->rating()
               << ", Room Code: " << roomCode
-              << "). Pool size: " << m_waitingPool.size() << std::endl;
+              << ")." << std::endl;
 }
 
 void MatchManager::unregisterPlayer(std::shared_ptr<PlayerSession> session) {
@@ -154,8 +180,7 @@ void MatchManager::unregisterPlayer(std::shared_ptr<PlayerSession> session) {
     std::shared_ptr<LiveMatch> activeMatch;
     {
         std::lock_guard<std::mutex> lock(m_mutex);
-
-        removeFromWaitingPool(session);
+        removeFromWaitingPoolInternal(session);
 
         std::uint64_t matchId = session->matchId();
         if (matchId != 0) {
@@ -165,33 +190,9 @@ void MatchManager::unregisterPlayer(std::shared_ptr<PlayerSession> session) {
             }
         }
     }
+
     if (activeMatch) {
         activeMatch->handlePlayerDisconnect(session);
-    }
-}
-
-void MatchManager::removeTimedOutPlayers(std::chrono::steady_clock::time_point now) {
-    std::vector<std::shared_ptr<PlayerSession>> timedOutSessions;
-
-    auto it = std::remove_if(m_waitingPool.begin(), m_waitingPool.end(),
-        [&timedOutSessions, now](const WaitingPlayer& player) {
-            auto waitDuration = std::chrono::duration_cast<std::chrono::seconds>(now - player.joinTime);
-            if (waitDuration >= ServerConfig::kMatchmakingTimeout) {
-                if (player.session) {
-                    timedOutSessions.push_back(player.session);
-                }
-                return true;
-            }
-            return false;
-        });
-
-    m_waitingPool.erase(it, m_waitingPool.end());
-
-    for (const auto& session : timedOutSessions) {
-        if (session) {
-            std::cout << "[Lobby] Matchmaking timeout for " << session->username() << std::endl;
-            session->sendPacket(NetworkMessageType::MATCH_TIMEOUT, {});
-        }
     }
 }
 
@@ -221,49 +222,82 @@ bool MatchManager::canPairPlayers(const WaitingPlayer& p1, const WaitingPlayer& 
 }
 
 void MatchManager::runMatchmakingCycle() {
-    std::lock_guard<std::mutex> lock(m_mutex);
-    if (m_waitingPool.empty()) return;
-
     auto now = std::chrono::steady_clock::now();
 
-    removeTimedOutPlayers(now);
+    // Phase 1: Collect timed-out players under minimal lock scope
+    std::vector<std::shared_ptr<PlayerSession>> timedOutSessions;
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        if (m_waitingPool.empty()) return;
 
-    if (m_waitingPool.empty()) return;
+        auto it = std::remove_if(m_waitingPool.begin(), m_waitingPool.end(),
+            [&timedOutSessions, now](const WaitingPlayer& player) {
+                auto waitDuration = std::chrono::duration_cast<std::chrono::seconds>(now - player.joinTime);
+                if (waitDuration >= ServerConfig::kMatchmakingTimeout) {
+                    if (player.session) {
+                        timedOutSessions.push_back(player.session);
+                    }
+                    return true;
+                }
+                return false;
+            });
 
-    std::vector<bool> matched(m_waitingPool.size(), false);
-    std::vector<WaitingPlayer> remainingPool;
+        m_waitingPool.erase(it, m_waitingPool.end());
+    }
 
-    for (size_t i = 0; i < m_waitingPool.size(); ++i) {
-        if (matched[i]) continue;
-
-        const auto& player1 = m_waitingPool[i];
-        auto waitDurationSec = std::chrono::duration_cast<std::chrono::seconds>(now - player1.joinTime).count();
-
-        for (size_t j = i + 1; j < m_waitingPool.size(); ++j) {
-            if (matched[j]) continue;
-
-            const auto& player2 = m_waitingPool[j];
-
-            if (canPairPlayers(player1, player2, static_cast<int>(waitDurationSec))) {
-                auto s1 = player1.session;
-                auto s2 = player2.session;
-
-                matched[i] = true;
-                matched[j] = true;
-
-                boost::asio::post(m_ioContext, [this, s1, s2]() {
-                    startNewMatch(s1, s2);
-                });
-                break;
-            }
-        }
-
-        if (!matched[i]) {
-            remainingPool.push_back(player1);
+    // Phase 2: Send timeout network packets OUTSIDE the lock
+    for (const auto& session : timedOutSessions) {
+        if (session) {
+            std::cout << "[Lobby] Matchmaking timeout for " << session->username() << std::endl;
+            session->sendPacket(NetworkMessageType::MATCH_TIMEOUT, {});
         }
     }
 
-    m_waitingPool = std::move(remainingPool);
+    // Phase 3: Perform matchmaking pairing logic under minimal lock scope
+    std::vector<std::pair<std::shared_ptr<PlayerSession>, std::shared_ptr<PlayerSession>>> matchedPairs;
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        if (m_waitingPool.empty()) return;
+
+        std::vector<bool> matched(m_waitingPool.size(), false);
+        std::vector<WaitingPlayer> remainingPool;
+
+        for (size_t i = 0; i < m_waitingPool.size(); ++i) {
+            if (matched[i]) continue;
+
+            const auto& player1 = m_waitingPool[i];
+            auto waitDurationSec = std::chrono::duration_cast<std::chrono::seconds>(now - player1.joinTime).count();
+
+            for (size_t j = i + 1; j < m_waitingPool.size(); ++j) {
+                if (matched[j]) continue;
+
+                const auto& player2 = m_waitingPool[j];
+
+                if (canPairPlayers(player1, player2, static_cast<int>(waitDurationSec))) {
+                    matched[i] = true;
+                    matched[j] = true;
+
+                    matchedPairs.emplace_back(player1.session, player2.session);
+                    break;
+                }
+            }
+
+            if (!matched[i]) {
+                remainingPool.push_back(player1);
+            }
+        }
+
+        m_waitingPool = std::move(remainingPool);
+    }
+
+    // Phase 4: Post match creation tasks OUTSIDE the lock
+    for (const auto& pair : matchedPairs) {
+        auto s1 = pair.first;
+        auto s2 = pair.second;
+        boost::asio::post(m_ioContext, [this, s1, s2]() {
+            startNewMatch(s1, s2);
+        });
+    }
 }
 
 std::shared_ptr<LiveMatch> MatchManager::getMatch(std::uint64_t matchId) {
@@ -300,8 +334,12 @@ std::shared_ptr<LiveMatch> MatchManager::findActiveMatchForUser(const std::strin
 
 std::shared_ptr<LiveMatch> MatchManager::startNewMatch(std::shared_ptr<PlayerSession> player1,
                                                        std::shared_ptr<PlayerSession> player2) {
-    std::uint64_t id = m_nextMatchId++;
+    if (!player1 || !player2) return nullptr;
 
+    // Atomic lock-free match ID increment
+    std::uint64_t id = m_nextMatchId.fetch_add(1);
+
+    // Match construction happens OUTSIDE the manager lock
     auto match = MatchFactory::createStandardMatch(m_ioContext, id, player1, player2);
 
     match->setOnMatchEnded([this, match](std::uint64_t finishedMatchId) {
@@ -315,6 +353,7 @@ std::shared_ptr<LiveMatch> MatchManager::startNewMatch(std::shared_ptr<PlayerSes
     player2->setMatchId(id);
     player2->setColor(PlayerColor::Black);
 
+    // Minimal lock duration: inserting match into active map
     {
         std::lock_guard<std::mutex> lock(m_mutex);
         m_matches[id] = match;
@@ -323,6 +362,7 @@ std::shared_ptr<LiveMatch> MatchManager::startNewMatch(std::shared_ptr<PlayerSes
     std::string p1Name = player1->username().empty() ? "Player 1" : player1->username();
     std::string p2Name = player2->username().empty() ? "Player 2" : player2->username();
 
+    // Sending network packet notifications OUTSIDE the lock
     player1->sendPacket(NetworkMessageType::MATCH_FOUND, 
         Serializer::serializeMatchFound(id, static_cast<std::uint8_t>(PlayerColor::White), p2Name, player2->rating()));
         

@@ -1,5 +1,15 @@
 services:
-# 1b. Central PostgreSQL Database for User Persistence
+  # 1a. Central Redis Cache & Pub/Sub
+  redis:
+    image: redis:7-alpine
+    container_name: kungfu_chess_redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+
+  # 1b. Central PostgreSQL Database for User Persistence
   postgres:
     image: postgres:15-alpine
     container_name: kungfu_chess_postgres
@@ -40,7 +50,7 @@ services:
       - KUNGFU_REDIS_HOST=redis
       - KUNGFU_REDIS_PORT=6379
       - KUNGFU_POSTGRES_CONN=host=postgres port=5432 dbname=kungfu user=postgres password=postgres
-      
+
   # 3. Matchmaker & Game Allocator Service
   matchmaker:
     build:

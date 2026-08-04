@@ -34,7 +34,7 @@ endif()
 find_package(SQLite3 REQUIRED)
 
 # Find PostgreSQL C & C++ libraries (libpq & libpqxx)
-find_package(PostgreSQL REQUIRED)
+#find_package(PostgreSQL REQUIRED)
 
 find_package(libpqxx CONFIG QUIET)
 if(NOT libpqxx_FOUND)
@@ -46,13 +46,13 @@ if(TARGET libpqxx::pqxx)
 elseif(TARGET pqxx)
     set(PQXX_TARGET pqxx)
 else()
-    find_library(PQXX_LIB NAMES pqxx REQUIRED)
-    find_path(PQXX_INCLUDE_DIR NAMES pqxx/pqxx REQUIRED)
+#    find_library(PQXX_LIB NAMES pqxx REQUIRED)
+#    find_path(PQXX_INCLUDE_DIR NAMES pqxx/pqxx REQUIRED)
     add_library(pqxx_imported UNKNOWN IMPORTED)
     set_target_properties(pqxx_imported PROPERTIES
         IMPORTED_LOCATION "${PQXX_LIB}"
         INTERFACE_INCLUDE_DIRECTORIES "${PQXX_INCLUDE_DIR}"
-        INTERFACE_LINK_LIBRARIES "PostgreSQL::PostgreSQL"
+#        INTERFACE_LINK_LIBRARIES "PostgreSQL::PostgreSQL"
     )
     set(PQXX_TARGET pqxx_imported)
 endif()
@@ -134,7 +134,7 @@ target_link_libraries(kungfu_server_core PUBLIC
     kungfu_engine 
     SQLite::SQLite3 
     unofficial-sodium::sodium
-    PostgreSQL::PostgreSQL
+#    PostgreSQL::PostgreSQL
     ${PQXX_TARGET}
 )
 
@@ -258,4 +258,19 @@ if(BUILD_CLIENTS)
             endforeach()
         endif()
     endif()
+    
+# --------------------------------------------------------------------------
+# Copy game assets next to the executables
+# --------------------------------------------------------------------------
+
+foreach(target kungfu_game_sfml kungfu_game_opencv)
+    if(TARGET ${target})
+        add_custom_command(TARGET ${target} POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_directory
+                "${CMAKE_SOURCE_DIR}/assets"
+                "$<TARGET_FILE_DIR:${target}>/assets"
+            COMMENT "Copying assets to output directory"
+        )
+    endif()
+endforeach()
 endif()
